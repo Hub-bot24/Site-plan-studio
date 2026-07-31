@@ -996,8 +996,12 @@ function polygonBounds(points){
   });
   return {minX,minY,maxX,maxY,width:maxX-minX,height:maxY-minY};
 }
+function currentPageElements(){
+  return state.elements.filter(e=>(e.page||1)===state.currentPage);
+}
 function zOrderedElements(){
-  return state.elements.filter(e=>!e.isCutout).concat(state.elements.filter(e=>e.isCutout));
+  const onPage = currentPageElements();
+  return onPage.filter(e=>!e.isCutout).concat(onPage.filter(e=>e.isCutout));
 }
 
 function updateUnitLabels(){
@@ -1042,7 +1046,7 @@ function populateParentSelect(selectEl, currentValue, excludeId){
   const noneOpt = document.createElement('option');
   noneOpt.value=''; noneOpt.textContent='Whole plan total';
   selectEl.appendChild(noneOpt);
-  state.elements.forEach(el=>{
+  currentPageElements().forEach(el=>{
     if(el.isCutout || el.isDimension || el.id===excludeId) return;
     const opt = document.createElement('option');
     opt.value = String(el.id);
@@ -1177,8 +1181,10 @@ async function renderPage(pageNum, opts){
     const ctx = bgCanvas.getContext('2d');
     await page.render({canvasContext:ctx, viewport}).promise;
     applyPdfMasks(ctx, pageNum);
+    const pageChanged = state.currentPage !== pageNum;
     state.currentPage = pageNum;
     state.bgLoaded = true;
+    if(pageChanged) state.selectedId = null;
     planStatusText.textContent = 'Loaded page ' + pageNum + ' of ' + state.numPages + '. Tip: use two fingers to pan around, even over placed elements.';
     calibratePanel.classList.remove('disabled');
     zoomBar.classList.add('visible');
@@ -1186,6 +1192,7 @@ async function renderPage(pageNum, opts){
       state.zoom = computeFitZoom();
     }
     applyZoomAndLayout();
+    if(pageChanged) renderElementsList();
     drawOverlay();
   } finally {
     state.rendering = false;
@@ -1329,6 +1336,7 @@ function finishDrawing(){
   if(state.drawing.points.length < minPts) return;
   const el = {
     id: state.nextId++,
+    page: state.currentPage,
     shape: state.drawing.shape,
     presetKey: state.drawing.presetKey,
     isDimension: !!state.drawing.isDimension,
@@ -1429,7 +1437,7 @@ function updateMagnifier(){
 }
 function getSnapCandidates(excludePointsOf){
   const pts = [];
-  state.elements.forEach(el=>{
+  currentPageElements().forEach(el=>{
     if(el.shape==='rect'){
       const wPx = el.wFt*state.scalePxPerFt, hPx = el.hFt*state.scalePxPerFt;
       const rad = el.rotationDeg*Math.PI/180;
@@ -2209,7 +2217,7 @@ function netAreaDisplay(el){
   return Math.max(0, raw - linkedCutoutAreaFor(el.id));
 }
 function getTotalAreaDisplay(){
-  return state.elements.reduce((sum,el)=>{
+  return currentPageElements().reduce((sum,el)=>{
     if(el.isCutout){
       // A cutout linked to a specific shape already reduced that shape's own
       // net area above — don't subtract it from the grand total a second time.
@@ -2220,10 +2228,10 @@ function getTotalAreaDisplay(){
   },0);
 }
 function getTotalCutoutAreaDisplay(){
-  return state.elements.reduce((sum,el)=> el.isCutout ? sum+elementAreaDisplay(el) : sum, 0);
+  return currentPageElements().reduce((sum,el)=> el.isCutout ? sum+elementAreaDisplay(el) : sum, 0);
 }
 function getTotalPathLengthDisplay(){
-  return state.elements.reduce((sum,el)=> (el.shape==='path' && !el.isDimension) ? sum+pathLengthDisplay(el.points) : sum, 0);
+  return currentPageElements().reduce((sum,el)=> (el.shape==='path' && !el.isDimension) ? sum+pathLengthDisplay(el.points) : sum, 0);
 }
 function elementCostDisplay(el){
   if(el.isDimension || !el.unitCost) return 0;
@@ -2231,7 +2239,7 @@ function elementCostDisplay(el){
   return el.unitCost * measure;
 }
 function getTotalCostDisplay(){
-  return state.elements.reduce((sum,el)=> sum + elementCostDisplay(el), 0);
+  return currentPageElements().reduce((sum,el)=> sum + elementCostDisplay(el), 0);
 }
 function formatCurrency(n){
   if(!isFinite(n)) return '$0.00';
@@ -2303,6 +2311,7 @@ addElBtn.addEventListener('click', ()=>{
   const label = typedLabel || uniqueLabel(preset.label);
   const el = {
     id: state.nextId++,
+    page: state.currentPage,
     shape: preset.quick,
     presetKey: typeSelect.value,
     label,
@@ -2341,8 +2350,12 @@ addElBtn.addEventListener('click', ()=>{
 
 function renderElementsList(){
   elementsList.innerHTML='';
-  emptyNote.style.display = state.elements.length ? 'none' : 'block';
-  state.elements.forEach(el=>{
+  const pageEls = currentPageElements();
+  emptyNote.style.display = pageEls.length ? 'none' : 'block';
+  emptyNote.textContent = state.numPages>1
+    ? 'No elements on this page yet — use the form above to add your first deck, patio, fence, or planting bed. (Elements on other pages of this PDF aren\'t shown here.)'
+    : 'No elements added yet — use the form above to add your first deck, patio, fence, or planting bed.';
+  pageEls.forEach(el=>{
     const row = document.createElement('div');
     row.className = 'elrow'+(el.id===state.selectedId?' selected':'');
     row.dataset.id = el.id;
@@ -2484,6 +2497,33 @@ function renderElementsList(){
     }
     details.appendChild(dims);
     row.appendChild(details);
+
+    if(state.numPages>1){
+      const moveSel = document.createElement('select');
+      moveSel.title = 'Move this element to a different page of the PDF';
+      moveSel.style.width='90px'; moveSel.style.fontSize='11px'; moveSel.style.flexShrink='0';
+      moveSel.style.background='var(--navy-mid)'; moveSel.style.border='1px solid var(--line)';
+      moveSel.style.color='var(--ink)'; moveSel.style.borderRadius='5px'; moveSel.style.padding='3px 4px';
+      const placeholderOpt = document.createElement('option');
+      placeholderOpt.value=''; placeholderOpt.textContent='Move to pg…';
+      moveSel.appendChild(placeholderOpt);
+      for(let p=1;p<=state.numPages;p++){
+        if(p===(el.page||1)) continue;
+        const opt = document.createElement('option');
+        opt.value=String(p); opt.textContent='→ Page '+p;
+        moveSel.appendChild(opt);
+      }
+      moveSel.addEventListener('click', e=>e.stopPropagation());
+      moveSel.addEventListener('change', ()=>{
+        const p = parseInt(moveSel.value,10);
+        if(!p) return;
+        pushUndo();
+        el.page = p;
+        if(state.selectedId===el.id) state.selectedId=null;
+        renderElementsList(); drawOverlay();
+      });
+      row.appendChild(moveSel);
+    }
 
     const dupBtn = document.createElement('button');
     dupBtn.className='icnbtn'; dupBtn.title='Duplicate';
