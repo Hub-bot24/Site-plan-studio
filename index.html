@@ -170,6 +170,11 @@
   }
   .precision-ctrl input[type=range]{width:70px;accent-color:var(--accent);}
   .precision-ctrl .pval{font-family:'Space Mono',monospace;color:var(--accent);min-width:32px;}
+  #cutBrushSizeSelect{
+    background:transparent;border:1px solid var(--line);color:var(--ink);
+    font-family:'Inter',sans-serif;font-weight:500;font-size:12px;
+    padding:8px 10px;border-radius:6px;cursor:pointer;
+  }
 
   #magnifierWrap{
     position:fixed;z-index:80;display:none;flex-direction:column;align-items:center;gap:6px;
@@ -274,10 +279,15 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l5.3 5.3a2 2 0 0 1 0 2.8L13 19"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
       <span class="btn-label">Erase</span>
     </button>
-    <button class="btn secondary" id="cutPdfBtn" title="Cut PDF — drag a box on the plan to permanently remove that area of the imported drawing (e.g. an unwanted existing feature). This edits the plan itself, not just placed elements.">
+    <button class="btn secondary" id="cutPdfBtn" title="Erase PDF — drag over the plan like a normal eraser to permanently remove that part of the imported drawing (e.g. an unwanted existing feature). This edits the plan itself, not just placed elements.">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg>
-      <span class="btn-label">Cut PDF</span>
+      <span class="btn-label">Erase PDF</span>
     </button>
+    <select id="cutBrushSizeSelect" title="Eraser brush size" style="display:none;">
+      <option value="9">Small brush</option>
+      <option value="18" selected>Medium brush</option>
+      <option value="32">Large brush</option>
+    </select>
     <div class="spacer"></div>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
   </div>
@@ -381,12 +391,6 @@
         <div class="field">
           <label>Type</label>
           <select id="typeSelect"></select>
-        </div>
-        <div class="field" id="furniturePresetWrap" style="display:none;">
-          <label>Furniture preset</label>
-          <select id="furniturePresetSelect">
-            <option value="">— choose an item, or leave for a custom size —</option>
-          </select>
         </div>
         <div class="field">
           <label>Label</label>
@@ -499,7 +503,7 @@ const state = {
   panning:null,
   eraseMode:false,
   cutMode:false,
-  cutDrag:null,
+  cutStroke:null,
   pdfMasks:[],
   rendering:false,
   nextId:1,
@@ -519,14 +523,18 @@ const PRESETS = {
   pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect'},
   tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
   custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
-  indoor:    {label:'Indoor furniture', color:'#8A7B6B', texture:'flat',    quick:'rect'},
+  indoor:    {label:'Indoor furniture (custom size)', color:'#8A7B6B', texture:'flat', quick:'rect'},
   fence:     {label:'Fence / line',    color:'#D8DEE5', texture:null,       quick:'none'},
   dimension: {label:'Dimension (measure distance)', color:'#3E7CB1', texture:null, quick:'none'},
 };
 
-// Standard real-world furniture footprints (inches), so picking one instantly
-// gives an accurately-scaled item instead of guessing dimensions by hand.
-const FURNITURE_PRESETS = {
+// Standard real-world furniture footprints (inches, width x depth as seen from
+// directly above -- these are TOP-VIEW/plan-view footprints, matching what a
+// site or floor plan actually shows, not front-elevation or diagonal sizes).
+// Merged directly into PRESETS below so each item is a normal, one-click Type
+// option that instantly fills in an accurately-scaled size -- no second
+// "which item" dropdown to find first.
+const FURNITURE_ITEMS = {
   bed_twin:      {name:'Twin bed',              label:'Bed — Twin (39×75 in)',              wIn:39, hIn:75},
   bed_full:      {name:'Full/Double bed',        label:'Bed — Full/Double (54×75 in)',       wIn:54, hIn:75},
   bed_queen:     {name:'Queen bed',              label:'Bed — Queen (60×80 in)',             wIn:60, hIn:80},
@@ -553,6 +561,10 @@ const FURNITURE_PRESETS = {
   bath_vanity:   {name:'Bathroom vanity',        label:'Bathroom vanity (36×22 in)',           wIn:36, hIn:22},
   toilet:        {name:'Toilet',                 label:'Toilet (20×28 in)',                    wIn:20, hIn:28},
 };
+Object.keys(FURNITURE_ITEMS).forEach(key=>{
+  const item = FURNITURE_ITEMS[key];
+  PRESETS[key] = {label:item.label, color:'#8A7B6B', texture:'flat', quick:'rect', name:item.name, wIn:item.wIn, hIn:item.hIn};
+});
 
 /* ============================ DOM refs ============================ */
 const pdfInput = document.getElementById('pdfInput');
@@ -594,8 +606,6 @@ const magCtx = magnifierCanvas.getContext('2d');
 const addPanel = document.getElementById('addPanel');
 const typeSelect = document.getElementById('typeSelect');
 const labelInput = document.getElementById('labelInput');
-const furniturePresetWrap = document.getElementById('furniturePresetWrap');
-const furniturePresetSelect = document.getElementById('furniturePresetSelect');
 const rectFields = document.getElementById('rectFields');
 const circleFields = document.getElementById('circleFields');
 const addRotationFieldWrap = document.getElementById('addRotationFieldWrap');
@@ -645,6 +655,7 @@ const eraseBtn = document.getElementById('eraseBtn');
 const eraseBtnLabel = eraseBtn.querySelector('.btn-label');
 const cutPdfBtn = document.getElementById('cutPdfBtn');
 const cutPdfBtnLabel = cutPdfBtn.querySelector('.btn-label');
+const cutBrushSizeSelect = document.getElementById('cutBrushSizeSelect');
 
 const ctxOverlay = overlayCanvas.getContext('2d');
 
@@ -656,7 +667,8 @@ function setEraseMode(on){
 function setCutMode(on){
   state.cutMode = on;
   cutPdfBtn.classList.toggle('active-cut', on);
-  cutPdfBtnLabel.textContent = on ? 'Cutting… drag a box' : 'Cut PDF';
+  cutPdfBtnLabel.textContent = on ? 'Erasing… drag to paint' : 'Erase PDF';
+  cutBrushSizeSelect.style.display = on ? '' : 'none';
 }
 eraseBtn.addEventListener('click', ()=>{
   setEraseMode(!state.eraseMode);
@@ -1055,48 +1067,35 @@ function updateUnitLabels(){
 }
 
 /* ============================ Type select population ============================ */
-Object.keys(PRESETS).forEach(key=>{
-  const opt = document.createElement('option');
-  opt.value = key;
-  opt.textContent = PRESETS[key].label;
-  typeSelect.appendChild(opt);
-});
-
-const FURNITURE_GROUPS = [
-  {label:'Beds', keys:['bed_twin','bed_full','bed_queen','bed_king','bed_calking']},
-  {label:'TVs', keys:['tv_32','tv_43','tv_55','tv_65','tv_75','tv_85']},
-  {label:'Tables & desks', keys:['table_side','table_coffee','table_dining4','table_dining6','desk']},
-  {label:'Seating', keys:['sofa_2seat','sofa_3seat','armchair']},
-  {label:'Storage', keys:['dresser','wardrobe']},
-  {label:'Kitchen & bath', keys:['fridge','kitchen_island','bath_vanity','toilet']},
+const TYPE_GROUPS = [
+  {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','pool','tree','custom']},
+  {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS)]},
+  {label:'Lines & measurement', keys:['fence','dimension']},
 ];
-FURNITURE_GROUPS.forEach(group=>{
+TYPE_GROUPS.forEach(group=>{
   const optgroup = document.createElement('optgroup');
   optgroup.label = group.label;
   group.keys.forEach(key=>{
-    const item = FURNITURE_PRESETS[key];
     const opt = document.createElement('option');
     opt.value = key;
-    opt.textContent = item.label;
+    opt.textContent = PRESETS[key].label;
     optgroup.appendChild(opt);
   });
-  furniturePresetSelect.appendChild(optgroup);
-});
-furniturePresetSelect.addEventListener('change', ()=>{
-  const item = FURNITURE_PRESETS[furniturePresetSelect.value];
-  if(!item) return;
-  widthInput.value = formatNum(fromFt(item.wIn/12, state.unit));
-  heightInput.value = formatNum(fromFt(item.hIn/12, state.unit));
-  if(!labelInput.value.trim()) labelInput.value = item.name;
+  typeSelect.appendChild(optgroup);
 });
 
 function updateAddFieldsForType(){
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
   const isDimension = typeSelect.value==='dimension';
-  const isIndoor = typeSelect.value==='indoor';
-  furniturePresetWrap.style.display = isIndoor ? 'block' : 'none';
-  if(!isIndoor) furniturePresetSelect.value = '';
+  // A furniture item (e.g. "TV -- 75in") carries its real-world size right on
+  // the preset -- fill it in immediately on selection, one step, no separate
+  // "which size" picker to dig for.
+  if(preset.wIn!=null){
+    widthInput.value = formatNum(fromFt(preset.wIn/12, state.unit));
+    heightInput.value = formatNum(fromFt(preset.hIn/12, state.unit));
+    if(!labelInput.value.trim()) labelInput.value = preset.name;
+  }
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
   addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') ? 'block' : 'none';
@@ -1457,7 +1456,7 @@ document.addEventListener('keydown',(e)=>{
     if(state.drawing) cancelDrawing();
     if(state.calibrating) cancelCalibration();
     if(state.eraseMode){ setEraseMode(false); drawOverlay(); }
-    if(state.cutMode){ setCutMode(false); state.cutDrag=null; drawOverlay(); }
+    if(state.cutMode){ setCutMode(false); state.cutStroke=null; drawOverlay(); }
   }
 });
 
@@ -1657,7 +1656,8 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
     return;
   }
   if(state.cutMode){
-    state.cutDrag = {startX:x, startY:y, x, y};
+    const radius = parseInt(cutBrushSizeSelect.value,10) / state.zoom;
+    state.cutStroke = {points:[{x,y}], radius};
     overlayCanvas.setPointerCapture(e.pointerId);
     drawOverlay();
     return;
@@ -1708,10 +1708,15 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
     canvasScroll.scrollTop = state.panning.startScrollTop - (e.clientY - state.panning.startClientY);
     return;
   }
-  if(state.cutDrag){
+  if(state.cutStroke){
     const {x,y} = getCanvasPos(e);
-    state.cutDrag.x = x;
-    state.cutDrag.y = y;
+    const pts = state.cutStroke.points;
+    const last = pts[pts.length-1];
+    // Skip points that are too close together to keep the stroke smooth
+    // without piling up more points than the brush radius needs.
+    if(Math.hypot(x-last.x, y-last.y) >= Math.max(state.cutStroke.radius/3, 2)){
+      pts.push({x,y});
+    }
     requestRedraw();
     return;
   }
@@ -1745,28 +1750,25 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
   }
   requestRedraw();
 });
-function commitCutDrag(){
-  const d = state.cutDrag;
-  state.cutDrag = null;
-  if(!d) return;
-  const x = Math.min(d.startX, d.x), y = Math.min(d.startY, d.y);
-  const w = Math.abs(d.x - d.startX), h = Math.abs(d.y - d.startY);
-  if(w < 4 || h < 4){ drawOverlay(); return; } // treat as an accidental tap, not a real cut
+function commitCutStroke(){
+  const s = state.cutStroke;
+  state.cutStroke = null;
+  if(!s || !s.points.length) return;
   pushUndo();
-  state.pdfMasks.push({page: state.currentPage, x, y, w, h});
+  state.pdfMasks.push({page: state.currentPage, type:'stroke', points: s.points, radius: s.radius});
   renderPage(state.currentPage, {preserveView:true});
 }
 function endDrag(e){
   if(e && !e.isPrimary) return;
   if(state.aiming){ commitAiming(); return; }
-  if(state.cutDrag){ commitCutDrag(); return; }
+  if(state.cutStroke){ commitCutStroke(); return; }
   if(state.dragging){ state.dragging = null; renderElementsList(); }
   state.panning = null;
 }
 function cancelPointerGesture(e){
   if(e && !e.isPrimary) return;
   if(state.aiming){ cancelAiming(); return; }
-  if(state.cutDrag){ state.cutDrag = null; drawOverlay(); return; }
+  if(state.cutStroke){ state.cutStroke = null; drawOverlay(); return; }
   state.dragging = null;
   state.panning = null;
 }
@@ -1886,17 +1888,29 @@ function drawOverlay(){
   if(state.aiming && state.aiming.kind==='cal'){
     drawAimMarker(ctxOverlay, state.aiming.x, state.aiming.y);
   }
-  if(state.cutDrag){
-    const d = state.cutDrag;
-    const x = Math.min(d.startX, d.x), y = Math.min(d.startY, d.y);
-    const w = Math.abs(d.x - d.startX), h = Math.abs(d.y - d.startY);
+  if(state.cutStroke){
+    const s = state.cutStroke;
     ctxOverlay.save();
-    ctxOverlay.fillStyle = 'rgba(196,100,92,0.22)';
-    ctxOverlay.fillRect(x, y, w, h);
+    ctxOverlay.lineCap = 'round';
+    ctxOverlay.lineJoin = 'round';
+    if(s.points.length===1){
+      ctxOverlay.beginPath();
+      ctxOverlay.arc(s.points[0].x, s.points[0].y, s.radius, 0, Math.PI*2);
+      ctxOverlay.fillStyle = 'rgba(196,100,92,0.45)';
+      ctxOverlay.fill();
+    } else {
+      ctxOverlay.strokeStyle = 'rgba(196,100,92,0.45)';
+      ctxOverlay.lineWidth = s.radius*2;
+      ctxOverlay.beginPath();
+      ctxOverlay.moveTo(s.points[0].x, s.points[0].y);
+      for(let i=1;i<s.points.length;i++) ctxOverlay.lineTo(s.points[i].x, s.points[i].y);
+      ctxOverlay.stroke();
+    }
     ctxOverlay.strokeStyle = '#C4645C';
     ctxOverlay.lineWidth = 1.5;
-    ctxOverlay.setLineDash([6,4]);
-    ctxOverlay.strokeRect(x, y, w, h);
+    ctxOverlay.beginPath();
+    ctxOverlay.arc(s.points[s.points.length-1].x, s.points[s.points.length-1].y, s.radius, 0, Math.PI*2);
+    ctxOverlay.stroke();
     ctxOverlay.restore();
   }
   if(state.bgLoaded) drawTitleBlock(ctxOverlay);
