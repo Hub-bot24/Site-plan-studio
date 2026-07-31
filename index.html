@@ -375,6 +375,12 @@
           <label>Type</label>
           <select id="typeSelect"></select>
         </div>
+        <div class="field" id="furniturePresetWrap" style="display:none;">
+          <label>Furniture preset</label>
+          <select id="furniturePresetSelect">
+            <option value="">— choose an item, or leave for a custom size —</option>
+          </select>
+        </div>
         <div class="field">
           <label>Label</label>
           <input type="text" id="labelInput" placeholder="e.g. Back deck">
@@ -506,8 +512,39 @@ const PRESETS = {
   pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect'},
   tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
   custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
+  indoor:    {label:'Indoor furniture', color:'#8A7B6B', texture:'flat',    quick:'rect'},
   fence:     {label:'Fence / line',    color:'#D8DEE5', texture:null,       quick:'none'},
   dimension: {label:'Dimension (measure distance)', color:'#3E7CB1', texture:null, quick:'none'},
+};
+
+// Standard real-world furniture footprints (inches), so picking one instantly
+// gives an accurately-scaled item instead of guessing dimensions by hand.
+const FURNITURE_PRESETS = {
+  bed_twin:      {name:'Twin bed',              label:'Bed — Twin (39×75 in)',              wIn:39, hIn:75},
+  bed_full:      {name:'Full/Double bed',        label:'Bed — Full/Double (54×75 in)',       wIn:54, hIn:75},
+  bed_queen:     {name:'Queen bed',              label:'Bed — Queen (60×80 in)',             wIn:60, hIn:80},
+  bed_king:      {name:'King bed',               label:'Bed — King (76×80 in)',              wIn:76, hIn:80},
+  bed_calking:   {name:'California King bed',    label:'Bed — California King (72×84 in)',   wIn:72, hIn:84},
+  tv_32:         {name:'32" TV',                 label:'TV — 32" (28×5 in)',                 wIn:28, hIn:5},
+  tv_43:         {name:'43" TV',                 label:'TV — 43" (37×5 in)',                 wIn:37, hIn:5},
+  tv_55:         {name:'55" TV',                 label:'TV — 55" (48×5 in)',                 wIn:48, hIn:5},
+  tv_65:         {name:'65" TV',                 label:'TV — 65" (57×5 in)',                 wIn:57, hIn:5},
+  tv_75:         {name:'75" TV',                 label:'TV — 75" (65×5 in)',                 wIn:65, hIn:5},
+  tv_85:         {name:'85" TV',                 label:'TV — 85" (74×5 in)',                 wIn:74, hIn:5},
+  table_side:    {name:'Side table',             label:'Side table (18×18 in)',              wIn:18, hIn:18},
+  table_coffee:  {name:'Coffee table',           label:'Coffee table (48×24 in)',             wIn:48, hIn:24},
+  table_dining4: {name:'Dining table (4-seat)',  label:'Dining table — 4 seat (36×36 in)',   wIn:36, hIn:36},
+  table_dining6: {name:'Dining table (6-seat)',  label:'Dining table — 6 seat (72×40 in)',   wIn:72, hIn:40},
+  desk:          {name:'Desk',                   label:'Desk (48×24 in)',                     wIn:48, hIn:24},
+  sofa_2seat:    {name:'2-seat sofa',             label:'Sofa — 2 seat (60×35 in)',            wIn:60, hIn:35},
+  sofa_3seat:    {name:'3-seat sofa',             label:'Sofa — 3 seat (84×35 in)',            wIn:84, hIn:35},
+  armchair:      {name:'Armchair',               label:'Armchair (33×34 in)',                  wIn:33, hIn:34},
+  dresser:       {name:'Dresser',                label:'Dresser (60×18 in)',                   wIn:60, hIn:18},
+  wardrobe:      {name:'Wardrobe',               label:'Wardrobe (48×24 in)',                  wIn:48, hIn:24},
+  fridge:        {name:'Refrigerator',           label:'Refrigerator (36×30 in)',              wIn:36, hIn:30},
+  kitchen_island:{name:'Kitchen island',         label:'Kitchen island (60×36 in)',            wIn:60, hIn:36},
+  bath_vanity:   {name:'Bathroom vanity',        label:'Bathroom vanity (36×22 in)',           wIn:36, hIn:22},
+  toilet:        {name:'Toilet',                 label:'Toilet (20×28 in)',                    wIn:20, hIn:28},
 };
 
 /* ============================ DOM refs ============================ */
@@ -550,6 +587,8 @@ const magCtx = magnifierCanvas.getContext('2d');
 const addPanel = document.getElementById('addPanel');
 const typeSelect = document.getElementById('typeSelect');
 const labelInput = document.getElementById('labelInput');
+const furniturePresetWrap = document.getElementById('furniturePresetWrap');
+const furniturePresetSelect = document.getElementById('furniturePresetSelect');
 const rectFields = document.getElementById('rectFields');
 const circleFields = document.getElementById('circleFields');
 const addRotationFieldWrap = document.getElementById('addRotationFieldWrap');
@@ -1015,10 +1054,42 @@ Object.keys(PRESETS).forEach(key=>{
   opt.textContent = PRESETS[key].label;
   typeSelect.appendChild(opt);
 });
+
+const FURNITURE_GROUPS = [
+  {label:'Beds', keys:['bed_twin','bed_full','bed_queen','bed_king','bed_calking']},
+  {label:'TVs', keys:['tv_32','tv_43','tv_55','tv_65','tv_75','tv_85']},
+  {label:'Tables & desks', keys:['table_side','table_coffee','table_dining4','table_dining6','desk']},
+  {label:'Seating', keys:['sofa_2seat','sofa_3seat','armchair']},
+  {label:'Storage', keys:['dresser','wardrobe']},
+  {label:'Kitchen & bath', keys:['fridge','kitchen_island','bath_vanity','toilet']},
+];
+FURNITURE_GROUPS.forEach(group=>{
+  const optgroup = document.createElement('optgroup');
+  optgroup.label = group.label;
+  group.keys.forEach(key=>{
+    const item = FURNITURE_PRESETS[key];
+    const opt = document.createElement('option');
+    opt.value = key;
+    opt.textContent = item.label;
+    optgroup.appendChild(opt);
+  });
+  furniturePresetSelect.appendChild(optgroup);
+});
+furniturePresetSelect.addEventListener('change', ()=>{
+  const item = FURNITURE_PRESETS[furniturePresetSelect.value];
+  if(!item) return;
+  widthInput.value = formatNum(fromFt(item.wIn/12, state.unit));
+  heightInput.value = formatNum(fromFt(item.hIn/12, state.unit));
+  if(!labelInput.value.trim()) labelInput.value = item.name;
+});
+
 function updateAddFieldsForType(){
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
   const isDimension = typeSelect.value==='dimension';
+  const isIndoor = typeSelect.value==='indoor';
+  furniturePresetWrap.style.display = isIndoor ? 'block' : 'none';
+  if(!isIndoor) furniturePresetSelect.value = '';
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
   addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') ? 'block' : 'none';
