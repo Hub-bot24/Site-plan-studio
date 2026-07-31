@@ -245,6 +245,7 @@
       <span class="pval" id="sensitivityLabel">35%</span>
     </div>
     <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
+    <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>↶ Undo</button>
     <div class="spacer"></div>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
   </div>
@@ -328,6 +329,10 @@
           <label>Label</label>
           <input type="text" id="labelInput" placeholder="e.g. Back deck">
         </div>
+        <div class="field">
+          <label>Est. cost (<span id="costUnitLabel">$ / sq ft</span>) — optional</label>
+          <input type="number" id="costInput" step="0.01" min="0" placeholder="0.00">
+        </div>
         <div id="rectFields" class="row2">
           <div class="field">
             <label>Width (<span class="unit-label">ft</span>)</label>
@@ -344,6 +349,10 @@
         </div>
         <div id="pathFields" style="display:none;">
           <p class="helptext" id="pathHint">Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.</p>
+          <div class="checkfield">
+            <input type="checkbox" id="snapToggleInput" checked>
+            <label for="snapToggleInput">Snap to existing corners &amp; 45° angles while drawing</label>
+          </div>
           <div class="checkfield" id="cutoutFieldWrap" style="display:none;">
             <input type="checkbox" id="cutoutInput">
             <label for="cutoutInput">Cutout — subtract this area from the total (e.g. a pool inside a tiled patio)</label>
@@ -368,6 +377,10 @@
         <div class="totalline" id="totalLengthRow" style="display:none;">
           <span>TOTAL FENCE / LINE LENGTH</span>
           <span id="totalLength">0 ft</span>
+        </div>
+        <div class="totalline" id="totalCostRow" style="display:none;">
+          <span>ESTIMATED COST</span>
+          <span id="totalCost">$0.00</span>
         </div>
       </div>
 
@@ -481,6 +494,7 @@ const pathFields = document.getElementById('pathFields');
 const pathHint = document.getElementById('pathHint');
 const cutoutFieldWrap = document.getElementById('cutoutFieldWrap');
 const cutoutInput = document.getElementById('cutoutInput');
+const snapToggleInput = document.getElementById('snapToggleInput');
 const startDrawBtn = document.getElementById('startDrawBtn');
 const drawBar = document.getElementById('drawBar');
 const drawStat = document.getElementById('drawStat');
@@ -496,12 +510,42 @@ const cutoutRow = document.getElementById('cutoutRow');
 const cutoutArea = document.getElementById('cutoutArea');
 const totalLengthRow = document.getElementById('totalLengthRow');
 const totalLength = document.getElementById('totalLength');
+const costInput = document.getElementById('costInput');
+const costUnitLabel = document.getElementById('costUnitLabel');
+const totalCostRow = document.getElementById('totalCostRow');
+const totalCost = document.getElementById('totalCost');
 
 const titleBlockPanel = document.getElementById('titleBlockPanel');
 const projectNameInput = document.getElementById('projectNameInput');
 const northInput = document.getElementById('northInput');
+const undoBtn = document.getElementById('undoBtn');
 
 const ctxOverlay = overlayCanvas.getContext('2d');
+
+/* ============================ Undo ============================ */
+const undoStack = [];
+function pushUndo(){
+  undoStack.push(JSON.parse(JSON.stringify(state.elements)));
+  if(undoStack.length>50) undoStack.shift();
+  undoBtn.disabled = false;
+}
+function performUndo(){
+  if(!undoStack.length) return;
+  state.elements = undoStack.pop();
+  state.selectedId = null;
+  state.dragging = null;
+  renderElementsList();
+  drawOverlay();
+  undoBtn.disabled = undoStack.length===0;
+}
+undoBtn.addEventListener('click', performUndo);
+document.addEventListener('keydown', (e)=>{
+  const tag = document.activeElement && document.activeElement.tagName;
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z' && tag!=='INPUT' && tag!=='TEXTAREA' && tag!=='SELECT'){
+    e.preventDefault();
+    performUndo();
+  }
+});
 
 /* ============================ helpers ============================ */
 function toFt(v,unit){return unit==='ft'? v : v*FT_PER_M;}
@@ -617,6 +661,7 @@ function updateAddFieldsForType(){
   pathHint.textContent = preset.shape==='path'
     ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
     : 'Tap "Start drawing", then tap each corner of the area — it closes automatically. Tap Finish when done (needs at least 3 points).';
+  costUnitLabel.textContent = preset.shape==='path' ? '$ / '+state.unit : '$ / sq '+state.unit;
 }
 typeSelect.addEventListener('change', updateAddFieldsForType);
 updateAddFieldsForType();
@@ -630,6 +675,7 @@ document.getElementById('unitToggle').addEventListener('click', (e)=>{
   state.unit = newUnit;
   document.querySelectorAll('#unitToggle button').forEach(b=>b.classList.toggle('active', b.dataset.unit===newUnit));
   updateUnitLabels();
+  updateAddFieldsForType();
   renderElementsList();
   drawOverlay();
 });
@@ -687,9 +733,9 @@ function showUploadError(msg){
 async function renderPage(pageNum){
   const page = await state.pdf.getPage(pageNum);
   const base = page.getViewport({scale:1});
-  const maxDim = 1800;
+  const maxDim = 2200;
   let factor = Math.min(maxDim/base.width, maxDim/base.height);
-  factor = Math.min(Math.max(factor, 0.4), 3);
+  factor = Math.min(Math.max(factor, 0.4), 4);
   const viewport = page.getViewport({scale:factor});
   bgCanvas.width = overlayCanvas.width = Math.round(viewport.width);
   bgCanvas.height = overlayCanvas.height = Math.round(viewport.height);
@@ -805,6 +851,7 @@ startDrawBtn.addEventListener('click', ()=>{
     label: typedLabel || uniqueLabel(preset.label),
     color: preset.color,
     isCutout: preset.shape==='polygon' && cutoutInput.checked,
+    unitCost: parseFloat(costInput.value) || 0,
     points: [],
   };
   state.selectedId = null;
@@ -836,13 +883,16 @@ drawFinishBtn.addEventListener('click', ()=>{
     label: state.drawing.label,
     color: state.drawing.color,
     isCutout: !!state.drawing.isCutout,
+    unitCost: state.drawing.unitCost || 0,
     points: state.drawing.points.map(p=>({x:p.x,y:p.y})),
   };
+  pushUndo();
   state.elements.push(el);
   state.selectedId = el.id;
   state.drawing = null;
   drawBar.classList.remove('visible');
   labelInput.value='';
+  costInput.value='';
   cutoutInput.checked=false;
   renderElementsList();
   drawOverlay();
@@ -929,13 +979,64 @@ function startAiming(e, x, y, kind){
   drawOverlay();
   updateMagnifier();
 }
+function getSnapCandidates(excludePointsOf){
+  const pts = [];
+  state.elements.forEach(el=>{
+    if(el.shape==='rect'){
+      const wPx = el.wFt*state.scalePxPerFt, hPx = el.hFt*state.scalePxPerFt;
+      const rad = el.rotationDeg*Math.PI/180;
+      [[-wPx/2,-hPx/2],[wPx/2,-hPx/2],[wPx/2,hPx/2],[-wPx/2,hPx/2]].forEach(([lx,ly])=>{
+        pts.push({
+          x: el.xPx + lx*Math.cos(rad) - ly*Math.sin(rad),
+          y: el.yPx + lx*Math.sin(rad) + ly*Math.cos(rad),
+        });
+      });
+      pts.push({x:el.xPx, y:el.yPx});
+    } else if(el.shape==='circle'){
+      pts.push({x:el.xPx, y:el.yPx});
+    } else if(el.points){
+      el.points.forEach(p=>pts.push({x:p.x, y:p.y}));
+    }
+  });
+  if(state.drawing && state.drawing.points !== excludePointsOf){
+    state.drawing.points.forEach(p=>pts.push({x:p.x, y:p.y}));
+  }
+  return pts;
+}
 function updateAiming(e){
   const a = state.aiming;
   const dxClient = e.clientX - a.startClientX;
   const dyClient = e.clientY - a.startClientY;
   const sens = getSensitivity();
-  a.x = a.baseX + (dxClient*sens)/state.zoom;
-  a.y = a.baseY + (dyClient*sens)/state.zoom;
+  let x = a.baseX + (dxClient*sens)/state.zoom;
+  let y = a.baseY + (dyClient*sens)/state.zoom;
+  a.snapped = null;
+  if(a.kind==='draw' && snapToggleInput.checked && state.drawing){
+    const threshPx = 10/state.zoom;
+    let best=null, bestDist=threshPx;
+    getSnapCandidates(state.drawing.points).forEach(c=>{
+      const d = Math.hypot(c.x-x, c.y-y);
+      if(d<bestDist){ bestDist=d; best=c; }
+    });
+    if(best){
+      x = best.x; y = best.y; a.snapped = 'point';
+    } else if(state.drawing.points.length){
+      const prev = state.drawing.points[state.drawing.points.length-1];
+      const dist = Math.hypot(x-prev.x, y-prev.y);
+      if(dist>2){
+        const ang = Math.atan2(y-prev.y, x-prev.x);
+        const step = Math.PI/4;
+        const snappedAng = Math.round(ang/step)*step;
+        const diff = Math.abs(((ang-snappedAng+Math.PI)%(2*Math.PI))-Math.PI);
+        if(diff < (6*Math.PI/180)){
+          x = prev.x + Math.cos(snappedAng)*dist;
+          y = prev.y + Math.sin(snappedAng)*dist;
+          a.snapped = 'angle';
+        }
+      }
+    }
+  }
+  a.x = x; a.y = y;
   positionMagnifier(e.clientX, e.clientY);
   drawOverlay();
   updateMagnifier();
@@ -1000,6 +1101,7 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
   const {x,y} = getCanvasPos(e);
   const el = getElementById(state.dragging.id);
   if(!el) return;
+  if(!state.dragging.pushed){ pushUndo(); state.dragging.pushed = true; }
   if(state.dragging.mode==='points'){
     const dx = x-state.dragging.anchorX, dy = y-state.dragging.anchorY;
     el.points = state.dragging.startPoints.map(p=>({x:p.x+dx,y:p.y+dy}));
@@ -1094,12 +1196,13 @@ function drawOverlay(){
   if(state.bgLoaded) drawTitleBlock(ctxOverlay);
 }
 
-function drawAimMarker(ctx, x, y){
+function drawAimMarker(ctx, x, y, snapped){
+  const ringColor = snapped==='point' ? '#7FC98A' : (snapped==='angle' ? '#3E7CB1' : '#F2A93B');
   ctx.save();
-  ctx.strokeStyle = '#F2A93B';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = ringColor;
+  ctx.lineWidth = snapped ? 2.5 : 1.5;
   ctx.beginPath();
-  ctx.arc(x, y, 9, 0, Math.PI*2);
+  ctx.arc(x, y, snapped ? 11 : 9, 0, Math.PI*2);
   ctx.stroke();
   ctx.beginPath();
   ctx.moveTo(x-14,y); ctx.lineTo(x-4,y);
@@ -1275,7 +1378,16 @@ function drawInProgress(ctx, drawing){
   });
   ctx.restore();
   if(aiming){
-    drawAimMarker(ctx, aiming.x, aiming.y);
+    drawAimMarker(ctx, aiming.x, aiming.y, aiming.snapped);
+    if(pts.length){
+      const prev = pts[pts.length-1];
+      const distFt = Math.hypot(aiming.x-prev.x, aiming.y-prev.y)/state.scalePxPerFt;
+      const angDeg = ((Math.atan2(aiming.y-prev.y, aiming.x-prev.x)*180/Math.PI)+360)%360;
+      let label = formatNum(fromFt(distFt, state.unit))+' '+state.unit+'  ∠'+Math.round(angDeg)+'°';
+      if(aiming.snapped==='point') label = '⊙ snapped to point';
+      else if(aiming.snapped==='angle') label += '  (snapped)';
+      drawLabelChip(ctx, aiming.x, aiming.y-24, label, aiming.snapped==='point' ? '#7FC98A' : (aiming.snapped==='angle' ? '#3E7CB1' : '#EAF2FB'));
+    }
   }
 }
 
@@ -1304,9 +1416,22 @@ function getTotalCutoutAreaDisplay(){
 function getTotalPathLengthDisplay(){
   return state.elements.reduce((sum,el)=> el.shape==='path' ? sum+pathLengthDisplay(el.points) : sum, 0);
 }
+function elementCostDisplay(el){
+  if(!el.unitCost) return 0;
+  const measure = el.shape==='path' ? pathLengthDisplay(el.points) : elementAreaDisplay(el);
+  return el.unitCost * measure;
+}
+function getTotalCostDisplay(){
+  return state.elements.reduce((sum,el)=> sum + elementCostDisplay(el), 0);
+}
+function formatCurrency(n){
+  if(!isFinite(n)) return '$0.00';
+  return '$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
+}
 
 function drawTitleBlock(ctx){
-  const w=260,h=110,margin=16;
+  const costTotal = getTotalCostDisplay();
+  const w=260, h=costTotal>0?126:110, margin=16;
   const x = overlayCanvas.width - w - margin;
   const y = overlayCanvas.height - h - margin;
   ctx.save();
@@ -1333,6 +1458,9 @@ function drawTitleBlock(ctx){
   ctx.fillText('SCALE:  '+scaleStr, x+10, y+36);
   ctx.fillText('ADDED AREA:  '+totalStr, x+10, y+52);
   ctx.fillText('DATE:  '+dateStr, x+10, y+68);
+  if(costTotal>0){
+    ctx.fillText('EST. COST:  '+formatCurrency(costTotal), x+10, y+84);
+  }
   const nx = x+w-30, ny=y+52, r=13;
   ctx.save();
   ctx.translate(nx,ny);
@@ -1370,6 +1498,7 @@ addElBtn.addEventListener('click', ()=>{
     label,
     color: preset.color,
     rotationDeg: 0,
+    unitCost: parseFloat(costInput.value) || 0,
   };
   if(preset.shape==='rect'){
     const w = parseFloat(widthInput.value), h = parseFloat(heightInput.value);
@@ -1387,10 +1516,11 @@ addElBtn.addEventListener('click', ()=>{
   const cy = cssY / state.zoom;
   el.xPx = Math.min(Math.max(cx,0), overlayCanvas.width);
   el.yPx = Math.min(Math.max(cy,0), overlayCanvas.height);
+  pushUndo();
   state.elements.push(el);
   state.selectedId = el.id;
   labelInput.value='';
-  widthInput.value=''; heightInput.value=''; diameterInput.value='';
+  widthInput.value=''; heightInput.value=''; diameterInput.value=''; costInput.value='';
   renderElementsList();
   drawOverlay();
 });
@@ -1422,7 +1552,7 @@ function renderElementsList(){
     labelEl.type='text';
     labelEl.value = el.label;
     labelEl.addEventListener('click', e=>e.stopPropagation());
-    labelEl.addEventListener('change', ()=>{ el.label = labelEl.value.trim()||el.label; drawOverlay(); });
+    labelEl.addEventListener('change', ()=>{ pushUndo(); el.label = labelEl.value.trim()||el.label; drawOverlay(); });
     details.appendChild(labelEl);
 
     const dims = document.createElement('div');
@@ -1431,29 +1561,29 @@ function renderElementsList(){
       const wIn = document.createElement('input'); wIn.type='number'; wIn.step='0.1';
       wIn.value = formatNum(fromFt(el.wFt,state.unit));
       wIn.addEventListener('click', e=>e.stopPropagation());
-      wIn.addEventListener('change', ()=>{ const v=parseFloat(wIn.value); if(v>0){el.wFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
+      wIn.addEventListener('change', ()=>{ const v=parseFloat(wIn.value); if(v>0){pushUndo(); el.wFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
       const hIn = document.createElement('input'); hIn.type='number'; hIn.step='0.1';
       hIn.value = formatNum(fromFt(el.hFt,state.unit));
       hIn.addEventListener('click', e=>e.stopPropagation());
-      hIn.addEventListener('change', ()=>{ const v=parseFloat(hIn.value); if(v>0){el.hFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
+      hIn.addEventListener('change', ()=>{ const v=parseFloat(hIn.value); if(v>0){pushUndo(); el.hFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
       dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn);
       dims.appendChild(document.createTextNode('H')); dims.appendChild(hIn);
       const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
       rotIn.value = el.rotationDeg;
       rotIn.addEventListener('click', e=>e.stopPropagation());
-      rotIn.addEventListener('change', ()=>{ let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
+      rotIn.addEventListener('change', ()=>{ pushUndo(); let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
       dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
       dims.appendChild(document.createTextNode(unitAbbrev()));
     } else if(el.shape==='circle'){
       const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
       dIn.value = formatNum(fromFt(el.dFt,state.unit));
       dIn.addEventListener('click', e=>e.stopPropagation());
-      dIn.addEventListener('change', ()=>{ const v=parseFloat(dIn.value); if(v>0){el.dFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
+      dIn.addEventListener('change', ()=>{ const v=parseFloat(dIn.value); if(v>0){pushUndo(); el.dFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
       dims.appendChild(document.createTextNode('⌀')); dims.appendChild(dIn);
       const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
       rotIn.value = el.rotationDeg;
       rotIn.addEventListener('click', e=>e.stopPropagation());
-      rotIn.addEventListener('change', ()=>{ let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
+      rotIn.addEventListener('change', ()=>{ pushUndo(); let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
       dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
       dims.appendChild(document.createTextNode(unitAbbrev()));
     } else if(el.shape==='path'){
@@ -1468,10 +1598,35 @@ function renderElementsList(){
       cutLabel.style.display='flex'; cutLabel.style.alignItems='center'; cutLabel.style.gap='3px'; cutLabel.style.marginLeft='4px';
       const cutChk = document.createElement('input'); cutChk.type='checkbox'; cutChk.checked=!!el.isCutout;
       cutChk.addEventListener('click', e=>e.stopPropagation());
-      cutChk.addEventListener('change', ()=>{ el.isCutout = cutChk.checked; drawOverlay(); renderElementsList(); });
+      cutChk.addEventListener('change', ()=>{ pushUndo(); el.isCutout = cutChk.checked; drawOverlay(); renderElementsList(); });
       cutLabel.appendChild(cutChk);
       cutLabel.appendChild(document.createTextNode('cutout'));
       dims.appendChild(cutLabel);
+    }
+    const costWrap = document.createElement('span');
+    costWrap.style.display='inline-flex'; costWrap.style.alignItems='center'; costWrap.style.gap='2px';
+    const costLbl = document.createElement('span');
+    costLbl.textContent = '$';
+    costLbl.title = el.shape==='path' ? 'Cost per '+unitAbbrev() : 'Cost per sq '+unitAbbrev();
+    const costEl = document.createElement('input'); costEl.type='number'; costEl.step='0.01'; costEl.min='0';
+    costEl.style.width='54px';
+    costEl.value = el.unitCost ? formatNum(el.unitCost) : '';
+    costEl.placeholder='0.00';
+    costEl.title = costLbl.title;
+    costEl.addEventListener('click', e=>e.stopPropagation());
+    costEl.addEventListener('change', ()=>{
+      pushUndo();
+      const v = parseFloat(costEl.value);
+      el.unitCost = (v>0) ? v : 0;
+      renderElementsList(); drawOverlay();
+    });
+    costWrap.appendChild(costLbl); costWrap.appendChild(costEl);
+    dims.appendChild(costWrap);
+    if(el.unitCost){
+      const costTotalSpan = document.createElement('span');
+      costTotalSpan.style.color = 'var(--accent)';
+      costTotalSpan.textContent = '= '+formatCurrency(elementCostDisplay(el));
+      dims.appendChild(costTotalSpan);
     }
     details.appendChild(dims);
     row.appendChild(details);
@@ -1486,6 +1641,7 @@ function renderElementsList(){
       } else {
         copy = Object.assign({}, el, {id:state.nextId++, points: el.points.map(p=>({x:p.x+24,y:p.y+24})), label: uniqueLabel(el.label)});
       }
+      pushUndo();
       state.elements.push(copy);
       state.selectedId = copy.id;
       renderElementsList(); drawOverlay();
@@ -1496,6 +1652,7 @@ function renderElementsList(){
     delBtn.className='icnbtn del'; delBtn.title='Delete'; delBtn.textContent='×';
     delBtn.addEventListener('click', (e)=>{
       e.stopPropagation();
+      pushUndo();
       state.elements = state.elements.filter(x=>x.id!==el.id);
       if(state.selectedId===el.id) state.selectedId=null;
       renderElementsList(); drawOverlay();
@@ -1523,6 +1680,13 @@ function renderElementsList(){
     totalLength.textContent = formatNum(lengthTotal)+' '+state.unit;
   } else {
     totalLengthRow.style.display='none';
+  }
+  const costTotal = getTotalCostDisplay();
+  if(costTotal>0){
+    totalCostRow.style.display='flex';
+    totalCost.textContent = formatCurrency(costTotal);
+  } else {
+    totalCostRow.style.display='none';
   }
 }
 
