@@ -2102,15 +2102,21 @@ function getRotationHandlePos(el){
   return { x: el.xPx + handleDist*Math.sin(rad), y: el.yPx - handleDist*Math.cos(rad) };
 }
 
-function drawLabelChip(ctx, x, y, text, textColor){
+function drawLabelChip(ctx, x, y, text, textColor, sizeMult){
   ctx.save();
-  ctx.font = '500 11px Inter, sans-serif';
+  // Text is drawn in raw canvas pixels, which get shrunk by CSS to whatever
+  // the current zoom is -- at a typical ~40% fit-to-view zoom, a fixed 11px
+  // font renders at well under 5 screen pixels tall and is unreadable. Scale
+  // inversely with zoom so every label stays a constant, legible on-screen
+  // size no matter how zoomed out the plan is.
+  const s = (sizeMult||1) / Math.max(state.zoom, 0.01);
+  ctx.font = '500 ' + Math.round(11*s) + 'px Inter, sans-serif';
   const tw = ctx.measureText(text).width;
-  const w = tw+10, h=17;
+  const w = tw+10*s, h=17*s;
   ctx.fillStyle = 'rgba(10,26,46,0.72)';
   ctx.strokeStyle = 'rgba(223,231,240,0.16)';
-  ctx.lineWidth = 1;
-  const rx = x-w/2, ry = y-h/2, rr = 3;
+  ctx.lineWidth = 1*s;
+  const rx = x-w/2, ry = y-h/2, rr = 3*s;
   ctx.beginPath();
   ctx.moveTo(rx+rr, ry);
   ctx.arcTo(rx+w, ry, rx+w, ry+h, rr);
@@ -2158,7 +2164,7 @@ function drawDimensionElement(ctx, el, selected){
   ctx.restore();
   const mid = {x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2};
   const text = formatNum(pathLengthDisplay(el.points))+' '+state.unit;
-  drawLabelChip(ctx, mid.x, mid.y, text, '#3E7CB1');
+  drawLabelChip(ctx, mid.x, mid.y, text, '#E7ECF2', 1.3);
   if(selected){
     ctx.save();
     ctx.setLineDash([6,4]);
