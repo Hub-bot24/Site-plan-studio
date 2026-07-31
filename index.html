@@ -1032,7 +1032,7 @@ function populateParentSelect(selectEl, currentValue, excludeId){
   noneOpt.value=''; noneOpt.textContent='Whole plan total';
   selectEl.appendChild(noneOpt);
   state.elements.forEach(el=>{
-    if(el.isCutout || el.id===excludeId) return;
+    if(el.isCutout || el.isDimension || el.id===excludeId) return;
     const opt = document.createElement('option');
     opt.value = String(el.id);
     opt.textContent = el.label;
@@ -1934,6 +1934,7 @@ function drawElement(ctx, el, selected){
   ctx.rotate(el.rotationDeg*Math.PI/180);
   ctx.strokeStyle = el.color;
   ctx.lineWidth = 1.4;
+  if(el.isCutout) ctx.setLineDash([5,4]);
   let wPx=0, hPx=0;
   if(el.shape==='rect'){
     wPx = el.wFt*state.scalePxPerFt;
@@ -1955,7 +1956,10 @@ function drawElement(ctx, el, selected){
     ctx.stroke();
   }
   ctx.restore();
-  drawLabelChip(ctx, el.xPx, el.yPx, el.label, '#E7ECF2');
+  const elLabelText = el.isCutout
+    ? '− '+el.label+' — '+formatNum(elementAreaDisplay(el))+' sq '+state.unit
+    : el.label;
+  drawLabelChip(ctx, el.xPx, el.yPx, elLabelText, el.isCutout ? '#B5934C' : '#E7ECF2');
   if(selected){
     ctx.save();
     ctx.translate(el.xPx, el.yPx);
@@ -2278,6 +2282,8 @@ addElBtn.addEventListener('click', ()=>{
     color: preset.color,
     rotationDeg: (()=>{ const v=parseFloat(addRotationInput.value); return isFinite(v) ? ((v%360)+360)%360 : 0; })(),
     unitCost: parseFloat(costInput.value) || 0,
+    isCutout: cutoutInput.checked,
+    parentId: (cutoutInput.checked && cutoutParentSelect.value) ? parseInt(cutoutParentSelect.value,10) : null,
   };
   if(preset.quick==='rect'){
     const w = parseFloat(widthInput.value), h = parseFloat(heightInput.value);
@@ -2300,6 +2306,8 @@ addElBtn.addEventListener('click', ()=>{
   state.selectedId = el.id;
   labelInput.value='';
   widthInput.value=''; heightInput.value=''; diameterInput.value=''; costInput.value=''; addRotationInput.value='';
+  cutoutInput.checked=false;
+  cutoutParentWrap.style.display='none';
   renderElementsList();
   drawOverlay();
 });
@@ -2340,47 +2348,7 @@ function renderElementsList(){
     labelEl.addEventListener('change', ()=>{ pushUndo(); el.label = labelEl.value.trim()||el.label; drawOverlay(); });
     details.appendChild(labelEl);
 
-    const dims = document.createElement('div');
-    dims.className='dims';
-    if(el.shape==='rect'){
-      const wIn = document.createElement('input'); wIn.type='number'; wIn.step='0.1';
-      wIn.value = formatNum(fromFt(el.wFt,state.unit));
-      wIn.addEventListener('click', e=>e.stopPropagation());
-      wIn.addEventListener('change', ()=>{ const v=parseFloat(wIn.value); if(v>0){pushUndo(); el.wFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
-      const hIn = document.createElement('input'); hIn.type='number'; hIn.step='0.1';
-      hIn.value = formatNum(fromFt(el.hFt,state.unit));
-      hIn.addEventListener('click', e=>e.stopPropagation());
-      hIn.addEventListener('change', ()=>{ const v=parseFloat(hIn.value); if(v>0){pushUndo(); el.hFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
-      dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn);
-      dims.appendChild(document.createTextNode('H')); dims.appendChild(hIn);
-      const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
-      rotIn.value = el.rotationDeg;
-      rotIn.addEventListener('click', e=>e.stopPropagation());
-      rotIn.addEventListener('change', ()=>{ pushUndo(); let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
-      dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
-      dims.appendChild(document.createTextNode(unitAbbrev()));
-    } else if(el.shape==='circle'){
-      const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
-      dIn.value = formatNum(fromFt(el.dFt,state.unit));
-      dIn.addEventListener('click', e=>e.stopPropagation());
-      dIn.addEventListener('change', ()=>{ const v=parseFloat(dIn.value); if(v>0){pushUndo(); el.dFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
-      dims.appendChild(document.createTextNode('⌀')); dims.appendChild(dIn);
-      const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
-      rotIn.value = el.rotationDeg;
-      rotIn.addEventListener('click', e=>e.stopPropagation());
-      rotIn.addEventListener('change', ()=>{ pushUndo(); let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
-      dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
-      dims.appendChild(document.createTextNode(unitAbbrev()));
-    } else if(el.shape==='path'){
-      const info = document.createElement('span');
-      info.textContent = el.isDimension
-        ? formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()
-        : formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
-      dims.appendChild(info);
-    } else if(el.shape==='polygon'){
-      const info = document.createElement('span');
-      info.textContent = formatNum(el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
-      dims.appendChild(info);
+    function appendCutoutControls(dims, el){
       const cutLabel = document.createElement('label');
       cutLabel.style.display='flex'; cutLabel.style.alignItems='center'; cutLabel.style.gap='3px'; cutLabel.style.marginLeft='4px';
       const cutChk = document.createElement('input'); cutChk.type='checkbox'; cutChk.checked=!!el.isCutout;
@@ -2406,6 +2374,59 @@ function renderElementsList(){
         populateParentSelect(parentSel, el.parentId, el.id);
         dims.appendChild(parentSel);
       }
+    }
+    const dims = document.createElement('div');
+    dims.className='dims';
+    if(el.shape==='rect'){
+      const wIn = document.createElement('input'); wIn.type='number'; wIn.step='0.1';
+      wIn.value = formatNum(fromFt(el.wFt,state.unit));
+      wIn.addEventListener('click', e=>e.stopPropagation());
+      wIn.addEventListener('change', ()=>{ const v=parseFloat(wIn.value); if(v>0){pushUndo(); el.wFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
+      const hIn = document.createElement('input'); hIn.type='number'; hIn.step='0.1';
+      hIn.value = formatNum(fromFt(el.hFt,state.unit));
+      hIn.addEventListener('click', e=>e.stopPropagation());
+      hIn.addEventListener('change', ()=>{ const v=parseFloat(hIn.value); if(v>0){pushUndo(); el.hFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
+      dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn);
+      dims.appendChild(document.createTextNode('H')); dims.appendChild(hIn);
+      const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
+      rotIn.value = el.rotationDeg;
+      rotIn.addEventListener('click', e=>e.stopPropagation());
+      rotIn.addEventListener('change', ()=>{ pushUndo(); let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
+      dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
+      dims.appendChild(document.createTextNode(unitAbbrev()));
+      const areaInfo = document.createElement('span');
+      areaInfo.style.marginLeft='4px'; areaInfo.style.color='var(--ink-dim)';
+      areaInfo.textContent = formatNum(el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
+      dims.appendChild(areaInfo);
+      appendCutoutControls(dims, el);
+    } else if(el.shape==='circle'){
+      const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
+      dIn.value = formatNum(fromFt(el.dFt,state.unit));
+      dIn.addEventListener('click', e=>e.stopPropagation());
+      dIn.addEventListener('change', ()=>{ const v=parseFloat(dIn.value); if(v>0){pushUndo(); el.dFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
+      dims.appendChild(document.createTextNode('⌀')); dims.appendChild(dIn);
+      const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
+      rotIn.value = el.rotationDeg;
+      rotIn.addEventListener('click', e=>e.stopPropagation());
+      rotIn.addEventListener('change', ()=>{ pushUndo(); let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
+      dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
+      dims.appendChild(document.createTextNode(unitAbbrev()));
+      const areaInfo = document.createElement('span');
+      areaInfo.style.marginLeft='4px'; areaInfo.style.color='var(--ink-dim)';
+      areaInfo.textContent = formatNum(el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
+      dims.appendChild(areaInfo);
+      appendCutoutControls(dims, el);
+    } else if(el.shape==='path'){
+      const info = document.createElement('span');
+      info.textContent = el.isDimension
+        ? formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()
+        : formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
+      dims.appendChild(info);
+    } else if(el.shape==='polygon'){
+      const info = document.createElement('span');
+      info.textContent = formatNum(el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
+      dims.appendChild(info);
+      appendCutoutControls(dims, el);
     }
     if(!el.isDimension){
     const costWrap = document.createElement('span');
