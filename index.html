@@ -397,6 +397,10 @@
           <label>Diameter (<span class="unit-label">ft</span>)</label>
           <input type="number" id="diameterInput" step="0.1" placeholder="6">
         </div>
+        <div class="field" id="addRotationFieldWrap">
+          <label>Rotation (°) — optional</label>
+          <input type="number" id="addRotationInput" step="1" min="0" max="359" placeholder="0">
+        </div>
         <p class="helptext" id="freeformDivider" style="border-top:1px solid var(--line);padding-top:10px;margin-top:2px;">— or trace an irregular shape —</p>
         <div id="pathFields">
           <p class="helptext" id="pathHint">Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.</p>
@@ -548,6 +552,8 @@ const typeSelect = document.getElementById('typeSelect');
 const labelInput = document.getElementById('labelInput');
 const rectFields = document.getElementById('rectFields');
 const circleFields = document.getElementById('circleFields');
+const addRotationFieldWrap = document.getElementById('addRotationFieldWrap');
+const addRotationInput = document.getElementById('addRotationInput');
 const widthInput = document.getElementById('widthInput');
 const heightInput = document.getElementById('heightInput');
 const diameterInput = document.getElementById('diameterInput');
@@ -994,6 +1000,7 @@ function updateAddFieldsForType(){
   const isDimension = typeSelect.value==='dimension';
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
+  addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') ? 'block' : 'none';
   addElBtn.style.display = isFence ? 'none' : '';
   pathFields.style.display = 'block';
   freeformDivider.style.display = isFence ? 'none' : 'block';
@@ -1544,8 +1551,7 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
       state.dragging = {
         id: selectedEl.id, mode:'rotate',
         centerX: selectedEl.xPx, centerY: selectedEl.yPx,
-        startAngle: Math.atan2(y-selectedEl.yPx, x-selectedEl.xPx),
-        startRotationDeg: selectedEl.rotationDeg,
+        lastAngle: Math.atan2(y-selectedEl.yPx, x-selectedEl.xPx),
       };
       overlayCanvas.setPointerCapture(e.pointerId);
       renderElementsList();
@@ -1600,11 +1606,19 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
     el.points = state.dragging.startPoints.map(p=>({x:p.x+dx,y:p.y+dy}));
   } else if(state.dragging.mode==='rotate'){
     const curAngle = Math.atan2(y-state.dragging.centerY, x-state.dragging.centerX);
-    const deltaDeg = (curAngle-state.dragging.startAngle)*180/Math.PI;
-    let deg = state.dragging.startRotationDeg + deltaDeg;
+    // Incremental angle change since the last frame, wrapped to (-180,180] so a
+    // pass through the atan2 branch cut doesn't register as a huge jump.
+    let stepDeg = (curAngle-state.dragging.lastAngle)*180/Math.PI;
+    stepDeg = ((stepDeg+180)%360+360)%360 - 180;
+    state.dragging.lastAngle = curAngle;
+    // Scale by the same Precision slider used elsewhere: a lower setting means
+    // a bigger physical turn of the mouse/finger produces a smaller rotation,
+    // making fine-degree adjustments actually achievable instead of the
+    // rotation snapping straight to wherever the pointer happens to be.
+    let deg = el.rotationDeg + stepDeg*getSensitivity()*2;
     deg = ((deg%360)+360)%360;
     const nearest15 = Math.round(deg/15)*15;
-    if(Math.abs(deg-nearest15) < 3) deg = nearest15%360;
+    if(Math.abs(deg-nearest15) < 1.5) deg = nearest15%360;
     el.rotationDeg = deg;
   } else {
     el.xPx = x - state.dragging.offsetX;
@@ -1959,6 +1973,10 @@ function drawElement(ctx, el, selected){
     ctx.lineWidth = 1.5;
     ctx.stroke();
     ctx.restore();
+    if(state.dragging && state.dragging.mode==='rotate' && state.dragging.id===el.id){
+      const hp = getRotationHandlePos(el);
+      drawLabelChip(ctx, hp.x, hp.y-20, Math.round(el.rotationDeg)+'°', '#B5934C');
+    }
   }
 }
 function getRotationHandlePos(el){
@@ -2252,7 +2270,7 @@ addElBtn.addEventListener('click', ()=>{
     presetKey: typeSelect.value,
     label,
     color: preset.color,
-    rotationDeg: 0,
+    rotationDeg: (()=>{ const v=parseFloat(addRotationInput.value); return isFinite(v) ? ((v%360)+360)%360 : 0; })(),
     unitCost: parseFloat(costInput.value) || 0,
   };
   if(preset.quick==='rect'){
@@ -2275,7 +2293,7 @@ addElBtn.addEventListener('click', ()=>{
   state.elements.push(el);
   state.selectedId = el.id;
   labelInput.value='';
-  widthInput.value=''; heightInput.value=''; diameterInput.value=''; costInput.value='';
+  widthInput.value=''; heightInput.value=''; diameterInput.value=''; costInput.value=''; addRotationInput.value='';
   renderElementsList();
   drawOverlay();
 });
