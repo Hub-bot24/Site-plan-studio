@@ -800,12 +800,23 @@ saveProjectBtn.addEventListener('click', async ()=>{
   try{
     await idbPutProject(record);
   }catch(e){
-    console.error(e);
-    const reason = e && e.name==='QuotaExceededError'
-      ? "your device's storage is full."
-      : (e && e.message) ? e.message : 'an unexpected storage error occurred.';
-    alert("Couldn't save this project — " + reason);
-    return;
+    console.error('Save failed, retrying once:', e);
+    // A single retry: some browsers' IndexedDB backing store throws a
+    // transient "Internal error" if it's momentarily busy (e.g. right after
+    // the DB was just opened) — this costs nothing and clears up a real
+    // fraction of these failures without the user having to do anything.
+    await new Promise(r=>setTimeout(r, 600));
+    try{
+      await idbPutProject(record);
+    }catch(e2){
+      console.error(e2);
+      const sizeMB = (record.pdfBytes.size/1048576).toFixed(1);
+      const reason = e2 && e2.name==='QuotaExceededError'
+        ? "your device's storage is full."
+        : `${(e2&&e2.name)||'Error'}: ${(e2&&e2.message)||'an unexpected storage error occurred.'} (plan size: ${sizeMB} MB) — this specific error usually means the device itself is low on free disk space, not just this browser's storage allowance. Freeing up space on the device and trying again usually fixes it.`;
+      alert("Couldn't save this project — " + reason);
+      return;
+    }
   }
   state.projectName = name;
   await refreshSavedProjectsSelect();
