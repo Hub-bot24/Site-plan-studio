@@ -596,6 +596,7 @@ function getCanvasPos(e){
   return {x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY};
 }
 overlayCanvas.addEventListener('pointerdown',(e)=>{
+  if(!e.isPrimary) return;
   const {x,y} = getCanvasPos(e);
   if(state.calibrating){
     state.calPoints.push({x,y});
@@ -625,7 +626,7 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
   drawOverlay();
 });
 overlayCanvas.addEventListener('pointermove',(e)=>{
-  if(!state.dragging) return;
+  if(!e.isPrimary || !state.dragging) return;
   const {x,y} = getCanvasPos(e);
   const el = getElementById(state.dragging.id);
   if(!el) return;
@@ -633,7 +634,8 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
   el.yPx = y - state.dragging.offsetY;
   drawOverlay();
 });
-function endDrag(){
+function endDrag(e){
+  if(e && !e.isPrimary) return;
   state.dragging = null;
   overlayCanvas.style.touchAction='auto';
 }
