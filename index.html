@@ -8,22 +8,15 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root{
-    --navy-deep:#0B2545;
-    --navy-mid:#123C63;
-    --navy-panel:#0F3159;
-    --line:rgba(234,242,251,0.14);
-    --ink:#EAF2FB;
-    --ink-dim:rgba(234,242,251,0.62);
-    --accent:#F2A93B;
-    --accent-dark:#C98A2A;
-    --danger:#D9605A;
-    --deck:#A9673C;
-    --patio:#9AA3AD;
-    --lawn:#5B8C5A;
-    --gardenbed:#3E6B4A;
-    --pool:#3E7CB1;
-    --tree:#2F5233;
-    --custom:#F2A93B;
+    --navy-deep:#0A1A2E;
+    --navy-mid:#122542;
+    --navy-panel:#0F2038;
+    --line:rgba(223,231,240,0.10);
+    --ink:#E7ECF2;
+    --ink-dim:rgba(223,231,240,0.56);
+    --accent:#B5934C;
+    --accent-dark:#9A7A3B;
+    --danger:#C4645C;
   }
   *{box-sizing:border-box;}
   body{
@@ -207,7 +200,7 @@
     padding:8px;border:1px solid var(--line);border-radius:6px;margin-bottom:8px;
     cursor:pointer;
   }
-  .elrow.selected{border-color:var(--accent);background:rgba(242,169,59,0.08);}
+  .elrow.selected{border-color:var(--accent);background:rgba(181,147,76,0.08);}
   .swatch{width:14px;height:14px;border-radius:3px;flex-shrink:0;}
   .elrow .details{flex:1;min-width:0;}
   .elrow .details input{width:100%;background:transparent;border:none;color:var(--ink);font-size:13px;font-family:'Inter',sans-serif;padding:0;margin-bottom:4px;}
@@ -454,14 +447,14 @@ const state = {
 };
 
 const PRESETS = {
-  deck:      {label:'Deck',        color:'#B87A48', texture:'wood',  quick:'rect'},
-  patio:     {label:'Patio',       color:'#ABB2B9', texture:'paver', quick:'rect'},
-  lawn:      {label:'Lawn',        color:'#5B9457', texture:'grass', quick:'rect'},
-  gardenbed: {label:'Garden bed',  color:'#4A3324', texture:'mulch', quick:'rect'},
-  pool:      {label:'Pool',        color:'#3E7CB1', texture:'water', quick:'rect'},
-  tree:      {label:'Tree',        color:'#375E30', texture:'leafy', quick:'circle'},
-  custom:    {label:'Custom area', color:'#F2A93B', texture:'flat',  quick:'rect'},
-  fence:     {label:'Fence / line',color:'#EAF2FB', texture:null,    quick:'none'},
+  deck:      {label:'Deck',        color:'#9C7A54', texture:'wood',  quick:'rect'},
+  patio:     {label:'Patio',       color:'#9AA0A6', texture:'paver', quick:'rect'},
+  lawn:      {label:'Lawn',        color:'#6C8F63', texture:'grass', quick:'rect'},
+  gardenbed: {label:'Garden bed',  color:'#5A4A38', texture:'mulch', quick:'rect'},
+  pool:      {label:'Pool',        color:'#4A7A9B', texture:'water', quick:'rect'},
+  tree:      {label:'Tree',        color:'#4A6B44', texture:'leafy', quick:'circle'},
+  custom:    {label:'Custom area', color:'#B5934C', texture:'flat',  quick:'rect'},
+  fence:     {label:'Fence / line',color:'#D8DEE5', texture:null,    quick:'none'},
 };
 
 /* ============================ DOM refs ============================ */
@@ -1174,7 +1167,7 @@ function updateMagnifier(){
     magCtx.drawImage(overlayCanvas, sx, sy, srcW, srcH, 0, 0, size, size);
   }
   magCtx.save();
-  magCtx.strokeStyle = 'rgba(242,169,59,0.85)';
+  magCtx.strokeStyle = 'rgba(181,147,76,0.85)';
   magCtx.lineWidth = 1.5;
   magCtx.beginPath();
   magCtx.moveTo(size/2, 0); magCtx.lineTo(size/2, size);
@@ -1182,7 +1175,7 @@ function updateMagnifier(){
   magCtx.stroke();
   magCtx.beginPath();
   magCtx.arc(size/2, size/2, 5, 0, Math.PI*2);
-  magCtx.strokeStyle = '#D9605A';
+  magCtx.strokeStyle = '#C4645C';
   magCtx.lineWidth = 2;
   magCtx.stroke();
   magCtx.restore();
@@ -1402,8 +1395,8 @@ function drawOverlay(){
   }
   if(state.calPoints.length || (state.aiming && state.aiming.kind==='cal')){
     ctxOverlay.save();
-    ctxOverlay.fillStyle = '#F2A93B';
-    ctxOverlay.strokeStyle = '#F2A93B';
+    ctxOverlay.fillStyle = '#B5934C';
+    ctxOverlay.strokeStyle = '#B5934C';
     ctxOverlay.lineWidth = 2;
     state.calPoints.forEach(p=>{
       ctxOverlay.beginPath();
@@ -1433,7 +1426,7 @@ function drawOverlay(){
 }
 
 function drawAimMarker(ctx, x, y, snapped){
-  const ringColor = snapped==='point' ? '#7FC98A' : (snapped==='angle' ? '#3E7CB1' : '#F2A93B');
+  const ringColor = snapped==='point' ? '#7FC98A' : (snapped==='angle' ? '#3E7CB1' : '#B5934C');
   ctx.save();
   ctx.strokeStyle = ringColor;
   ctx.lineWidth = snapped ? 2.5 : 1.5;
@@ -1448,7 +1441,7 @@ function drawAimMarker(ctx, x, y, snapped){
   ctx.stroke();
   ctx.beginPath();
   ctx.arc(x, y, 2.5, 0, Math.PI*2);
-  ctx.fillStyle = '#D9605A';
+  ctx.fillStyle = '#C4645C';
   ctx.fill();
   ctx.restore();
 }
@@ -1464,44 +1457,21 @@ function getTilePattern(ctx, texture, scalePxPerFt){
   if(texture==='wood'){
     size = Math.max(10, Math.round(scalePxPerFt*0.5));
     tile.width=size; tile.height=size;
-    tctx.fillStyle='#B87A48'; tctx.fillRect(0,0,size,size);
+    tctx.fillStyle='#9C7A54'; tctx.fillRect(0,0,size,size);
     const grad = tctx.createLinearGradient(0,0,0,size);
-    grad.addColorStop(0,'rgba(255,255,255,0.16)');
-    grad.addColorStop(0.55,'rgba(0,0,0,0)');
-    grad.addColorStop(1,'rgba(0,0,0,0.18)');
+    grad.addColorStop(0,'rgba(255,255,255,0.05)');
+    grad.addColorStop(0.6,'rgba(0,0,0,0)');
+    grad.addColorStop(1,'rgba(0,0,0,0.08)');
     tctx.fillStyle = grad; tctx.fillRect(0,0,size,size);
-    tctx.strokeStyle='rgba(50,25,8,0.5)'; tctx.lineWidth=1;
+    tctx.strokeStyle='rgba(35,22,10,0.28)'; tctx.lineWidth=1;
     tctx.beginPath(); tctx.moveTo(0,size-0.5); tctx.lineTo(size,size-0.5); tctx.stroke();
-    tctx.strokeStyle='rgba(50,25,8,0.14)';
-    for(let i=1;i<3;i++){
-      const yy=(i*size)/3;
-      tctx.beginPath(); tctx.moveTo(0,yy); tctx.lineTo(size,yy+(i%2?2:-2)); tctx.stroke();
-    }
   } else if(texture==='paver'){
-    size = Math.max(12, Math.round(scalePxPerFt*1.0));
+    size = Math.max(14, Math.round(scalePxPerFt*1.0));
     tile.width=size; tile.height=size;
-    tctx.fillStyle='#ABB2B9'; tctx.fillRect(0,0,size,size);
-    tctx.fillStyle='rgba(255,255,255,0.10)';
-    tctx.fillRect(1,1,size*0.42,size*0.42);
-    tctx.strokeStyle='rgba(60,68,76,0.55)';
-    tctx.lineWidth=Math.max(1,size*0.035);
+    tctx.fillStyle='#9AA0A6'; tctx.fillRect(0,0,size,size);
+    tctx.strokeStyle='rgba(55,60,66,0.35)';
+    tctx.lineWidth=Math.max(1,size*0.025);
     tctx.strokeRect(0.5,0.5,size-1,size-1);
-  } else if(texture==='grass'){
-    size = 14;
-    tile.width=size; tile.height=size;
-    tctx.fillStyle='#5B9457'; tctx.fillRect(0,0,size,size);
-    tctx.fillStyle='rgba(255,255,255,0.12)';
-    for(let i=0;i<6;i++){ tctx.fillRect((i*37)%size,(i*53)%size,1.3,1.3); }
-    tctx.fillStyle='rgba(0,0,0,0.10)';
-    for(let i=0;i<6;i++){ tctx.fillRect((i*29+7)%size,(i*41+5)%size,1.3,1.3); }
-  } else if(texture==='mulch'){
-    size = 12;
-    tile.width=size; tile.height=size;
-    tctx.fillStyle='#4A3324'; tctx.fillRect(0,0,size,size);
-    tctx.fillStyle='rgba(255,255,255,0.10)';
-    for(let i=0;i<5;i++){ tctx.fillRect((i*31)%size,(i*19)%size,2,1); }
-    tctx.fillStyle='rgba(0,0,0,0.20)';
-    for(let i=0;i<5;i++){ tctx.fillRect((i*23+3)%size,(i*11+2)%size,2,1); }
   } else {
     return null;
   }
@@ -1512,63 +1482,53 @@ function getTilePattern(ctx, texture, scalePxPerFt){
 function fillMaterial(ctx, presetKey, bounds){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
-  const fallbackColor = (preset ? preset.color : '#F2A93B')+'CC';
+  const baseColor = preset ? preset.color : '#B5934C';
+  const fallbackColor = baseColor+'CC';
   const scalePxPerFt = state.scalePxPerFt || 40;
-  if(texture==='wood' || texture==='paver' || texture==='grass' || texture==='mulch'){
+  if(texture==='wood' || texture==='paver'){
     const pat = getTilePattern(ctx, texture, scalePxPerFt);
     ctx.fillStyle = pat || fallbackColor;
     ctx.fill();
-    if(texture==='grass'){
-      ctx.save();
-      ctx.clip();
-      const stripeW = Math.max(8, scalePxPerFt*1.3);
-      ctx.fillStyle='rgba(255,255,255,0.045)';
-      for(let sx=bounds.minX-stripeW; sx<bounds.maxX+stripeW; sx+=stripeW*2){
-        ctx.fillRect(sx, bounds.minY, stripeW, bounds.maxY-bounds.minY);
-      }
-      ctx.restore();
+  } else if(texture==='grass'){
+    ctx.fillStyle = baseColor+'D8';
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    const stripeW = Math.max(10, scalePxPerFt*1.4);
+    ctx.fillStyle='rgba(255,255,255,0.035)';
+    for(let sx=bounds.minX-stripeW; sx<bounds.maxX+stripeW; sx+=stripeW*2){
+      ctx.fillRect(sx, bounds.minY, stripeW, bounds.maxY-bounds.minY);
     }
+    ctx.restore();
+  } else if(texture==='mulch'){
+    const grad = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
+    grad.addColorStop(0, baseColor+'F0');
+    grad.addColorStop(1, baseColor+'C8');
+    ctx.fillStyle = grad;
+    ctx.fill();
   } else if(texture==='water'){
     const grad = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
-    grad.addColorStop(0,'#6FB4E3');
-    grad.addColorStop(0.5,'#3E7CB1');
-    grad.addColorStop(1,'#2E5F8A');
+    grad.addColorStop(0,'#6E96AF');
+    grad.addColorStop(0.55, baseColor);
+    grad.addColorStop(1,'#345670');
     ctx.fillStyle = grad;
     ctx.fill();
     ctx.save();
     ctx.clip();
-    ctx.strokeStyle='rgba(255,255,255,0.4)';
-    ctx.lineWidth=1.3;
-    const step = Math.max(7, scalePxPerFt*0.7);
-    for(let wy=bounds.minY; wy<bounds.maxY; wy+=step){
-      ctx.beginPath();
-      let started=false;
-      for(let wx=bounds.minX; wx<=bounds.maxX; wx+=6){
-        const yy = wy + Math.sin((wx-bounds.minX)*0.35)*2.4;
-        if(!started){ ctx.moveTo(wx,yy); started=true; } else ctx.lineTo(wx,yy);
-      }
-      ctx.stroke();
-    }
+    const sheen = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.minY+(bounds.maxY-bounds.minY)*0.4);
+    sheen.addColorStop(0,'rgba(255,255,255,0.14)');
+    sheen.addColorStop(1,'rgba(255,255,255,0)');
+    ctx.fillStyle = sheen;
+    ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX-bounds.minX, bounds.maxY-bounds.minY);
     ctx.restore();
   } else if(texture==='leafy'){
     const cx=(bounds.minX+bounds.maxX)/2, cy=(bounds.minY+bounds.maxY)/2;
     const r = Math.max(bounds.maxX-bounds.minX, bounds.maxY-bounds.minY)/2 || 1;
-    const grad = ctx.createRadialGradient(cx-r*0.3, cy-r*0.3, r*0.1, cx, cy, r);
-    grad.addColorStop(0,'#557F49');
-    grad.addColorStop(1,'#22381F');
+    const grad = ctx.createRadialGradient(cx-r*0.3, cy-r*0.3, r*0.15, cx, cy, r);
+    grad.addColorStop(0,'#6B8F5F');
+    grad.addColorStop(1,'#33492E');
     ctx.fillStyle = grad;
     ctx.fill();
-    ctx.save();
-    ctx.clip();
-    ctx.fillStyle='rgba(255,255,255,0.12)';
-    for(let i=0;i<16;i++){
-      const ang=(i*137.5)*Math.PI/180;
-      const rad=r*Math.sqrt((i%10)/10);
-      ctx.beginPath();
-      ctx.arc(cx+Math.cos(ang)*rad, cy+Math.sin(ang)*rad, Math.max(1,r*0.045), 0, Math.PI*2);
-      ctx.fill();
-    }
-    ctx.restore();
   } else {
     ctx.fillStyle = fallbackColor;
     ctx.fill();
@@ -1582,7 +1542,7 @@ function drawElement(ctx, el, selected){
   ctx.translate(el.xPx, el.yPx);
   ctx.rotate(el.rotationDeg*Math.PI/180);
   ctx.strokeStyle = el.color;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.4;
   let wPx=0, hPx=0;
   if(el.shape==='rect'){
     wPx = el.wFt*state.scalePxPerFt;
@@ -1604,13 +1564,13 @@ function drawElement(ctx, el, selected){
     ctx.stroke();
   }
   ctx.restore();
-  drawLabelChip(ctx, el.xPx, el.yPx, el.label, '#EAF2FB');
+  drawLabelChip(ctx, el.xPx, el.yPx, el.label, '#E7ECF2');
   if(selected){
     ctx.save();
     ctx.translate(el.xPx, el.yPx);
     ctx.rotate(el.rotationDeg*Math.PI/180);
     ctx.setLineDash([6,4]);
-    ctx.strokeStyle = '#F2A93B';
+    ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
     const pad = 4;
     ctx.strokeRect(-wPx/2-pad, -hPx/2-pad, wPx+pad*2, hPx+pad*2);
@@ -1620,10 +1580,22 @@ function drawElement(ctx, el, selected){
 
 function drawLabelChip(ctx, x, y, text, textColor){
   ctx.save();
-  ctx.font = '600 12px Inter, sans-serif';
+  ctx.font = '500 11px Inter, sans-serif';
   const tw = ctx.measureText(text).width;
-  ctx.fillStyle = 'rgba(11,37,69,0.85)';
-  ctx.fillRect(x-tw/2-4, y-10, tw+8, 20);
+  const w = tw+10, h=17;
+  ctx.fillStyle = 'rgba(10,26,46,0.72)';
+  ctx.strokeStyle = 'rgba(223,231,240,0.16)';
+  ctx.lineWidth = 1;
+  const rx = x-w/2, ry = y-h/2, rr = 3;
+  ctx.beginPath();
+  ctx.moveTo(rx+rr, ry);
+  ctx.arcTo(rx+w, ry, rx+w, ry+h, rr);
+  ctx.arcTo(rx+w, ry+h, rx, ry+h, rr);
+  ctx.arcTo(rx, ry+h, rx, ry, rr);
+  ctx.arcTo(rx, ry, rx+w, ry, rr);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
   ctx.fillStyle = textColor;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -1643,24 +1615,24 @@ function drawPathElement(ctx, el, selected){
   if(el.points.length<2) return;
   ctx.save();
   ctx.strokeStyle = el.color;
-  ctx.lineWidth = selected ? 4 : 3;
+  ctx.lineWidth = selected ? 2.6 : 1.8;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   strokePolyline(ctx, el.points, false);
   ctx.fillStyle = el.color;
   el.points.forEach(p=>{
     ctx.beginPath();
-    ctx.arc(p.x,p.y,3,0,Math.PI*2);
+    ctx.arc(p.x,p.y,2,0,Math.PI*2);
     ctx.fill();
   });
   ctx.restore();
   const mid = pointAtPathFraction(el.points, 0.5);
   const text = el.label+' — '+formatNum(pathLengthDisplay(el.points))+' '+state.unit;
-  drawLabelChip(ctx, mid.x, mid.y, text, '#EAF2FB');
+  drawLabelChip(ctx, mid.x, mid.y, text, '#E7ECF2');
   if(selected){
     ctx.save();
     ctx.setLineDash([6,4]);
-    ctx.strokeStyle = '#F2A93B';
+    ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
     strokePolyline(ctx, el.points, false);
     ctx.restore();
@@ -1676,17 +1648,17 @@ function drawPolygonElement(ctx, el, selected){
   ctx.closePath();
   fillMaterial(ctx, el.presetKey, polygonBounds(el.points));
   ctx.strokeStyle = el.color;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.4;
   if(el.isCutout) ctx.setLineDash([5,4]);
   strokePolyline(ctx, el.points, true);
   ctx.restore();
   const c = polygonCentroid(el.points);
   const text = (el.isCutout?'− ':'')+el.label+' — '+formatNum(polygonAreaDisplay(el.points))+' sq '+state.unit;
-  drawLabelChip(ctx, c.x, c.y, text, el.isCutout ? '#F2A93B' : '#EAF2FB');
+  drawLabelChip(ctx, c.x, c.y, text, el.isCutout ? '#B5934C' : '#E7ECF2');
   if(selected){
     ctx.save();
     ctx.setLineDash([6,4]);
-    ctx.strokeStyle = '#F2A93B';
+    ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
     strokePolyline(ctx, el.points, true);
     ctx.restore();
@@ -1721,7 +1693,7 @@ function drawInProgress(ctx, drawing){
       let label = formatNum(fromFt(distFt, state.unit))+' '+state.unit+'  ∠'+Math.round(angDeg)+'°';
       if(aiming.snapped==='point') label = '⊙ snapped to point';
       else if(aiming.snapped==='angle') label += '  (snapped)';
-      drawLabelChip(ctx, aiming.x, aiming.y-24, label, aiming.snapped==='point' ? '#7FC98A' : (aiming.snapped==='angle' ? '#3E7CB1' : '#EAF2FB'));
+      drawLabelChip(ctx, aiming.x, aiming.y-24, label, aiming.snapped==='point' ? '#7FC98A' : (aiming.snapped==='angle' ? '#3E7CB1' : '#E7ECF2'));
     }
   }
 }
@@ -1771,7 +1743,7 @@ function drawTitleBlock(ctx){
   const y = overlayCanvas.height - h - margin;
   ctx.save();
   ctx.fillStyle = 'rgba(11,37,69,0.92)';
-  ctx.strokeStyle = '#EAF2FB';
+  ctx.strokeStyle = '#E7ECF2';
   ctx.lineWidth = 1.5;
   ctx.fillRect(x,y,w,h);
   ctx.strokeRect(x,y,w,h);
@@ -1779,7 +1751,7 @@ function drawTitleBlock(ctx){
   ctx.moveTo(x,y+28);
   ctx.lineTo(x+w,y+28);
   ctx.stroke();
-  ctx.fillStyle = '#EAF2FB';
+  ctx.fillStyle = '#E7ECF2';
   ctx.textAlign='left';
   ctx.textBaseline='top';
   ctx.font = '700 14px "Space Mono", monospace';
@@ -1803,7 +1775,7 @@ function drawTitleBlock(ctx){
   ctx.beginPath();
   ctx.moveTo(0,-r); ctx.lineTo(6,r*0.6); ctx.lineTo(0,r*0.15); ctx.lineTo(-6,r*0.6);
   ctx.closePath();
-  ctx.fillStyle = '#F2A93B';
+  ctx.fillStyle = '#B5934C';
   ctx.fill();
   ctx.restore();
   ctx.font = '700 10px "Space Mono", monospace';
