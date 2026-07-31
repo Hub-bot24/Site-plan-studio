@@ -250,8 +250,8 @@
     </div>
     <div class="precision-ctrl" title="How much a finger/mouse movement moves a calibration or drawing point — lower is finer control, magnified live while you press.">
       <span>Precision</span>
-      <input type="range" id="sensitivityInput" min="8" max="100" value="35">
-      <span class="pval" id="sensitivityLabel">35%</span>
+      <input type="range" id="sensitivityInput" min="8" max="100" value="50">
+      <span class="pval" id="sensitivityLabel">50%</span>
     </div>
     <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
     <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>
@@ -476,14 +476,17 @@ const state = {
 };
 
 const PRESETS = {
-  deck:      {label:'Deck',        color:'#9C7A54', texture:'wood',  quick:'rect'},
-  patio:     {label:'Patio',       color:'#9AA0A6', texture:'paver', quick:'rect'},
-  lawn:      {label:'Lawn',        color:'#6C8F63', texture:'grass', quick:'rect'},
-  gardenbed: {label:'Garden bed',  color:'#5A4A38', texture:'mulch', quick:'rect'},
-  pool:      {label:'Pool',        color:'#4A7A9B', texture:'water', quick:'rect'},
-  tree:      {label:'Tree',        color:'#4A6B44', texture:'leafy', quick:'circle'},
-  custom:    {label:'Custom area', color:'#B5934C', texture:'flat',  quick:'rect'},
-  fence:     {label:'Fence / line',color:'#D8DEE5', texture:null,    quick:'none'},
+  deck:      {label:'Deck',            color:'#9C7A54', texture:'wood',     quick:'rect'},
+  patio:     {label:'Patio (pavers)',  color:'#9AA0A6', texture:'paver',    quick:'rect'},
+  concrete:  {label:'Concrete',        color:'#A8ACAE', texture:'concrete', quick:'rect'},
+  gravel:    {label:'Gravel',          color:'#9C9284', texture:'gravel',   quick:'rect'},
+  lawn:      {label:'Lawn (grass)',    color:'#6C8F63', texture:'grass',    quick:'rect'},
+  turf:      {label:'Artificial turf', color:'#4F8F52', texture:'turf',     quick:'rect'},
+  gardenbed: {label:'Garden bed',      color:'#5A4A38', texture:'mulch',    quick:'rect'},
+  pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect'},
+  tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
+  custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
+  fence:     {label:'Fence / line',    color:'#D8DEE5', texture:null,       quick:'none'},
 };
 
 /* ============================ DOM refs ============================ */
@@ -1034,7 +1037,7 @@ async function renderPage(pageNum){
     await page.render({canvasContext:ctx, viewport}).promise;
     state.currentPage = pageNum;
     state.bgLoaded = true;
-    planStatusText.textContent = 'Loaded page ' + pageNum + ' of ' + state.numPages + '.';
+    planStatusText.textContent = 'Loaded page ' + pageNum + ' of ' + state.numPages + '. Tip: use two fingers to pan around, even over placed elements.';
     calibratePanel.classList.remove('disabled');
     zoomBar.classList.add('visible');
     state.zoom = computeFitZoom();
@@ -1232,7 +1235,7 @@ function isAimable(){
 }
 function getSensitivity(){
   const v = parseFloat(sensitivityInput.value);
-  return (isFinite(v) ? v : 35) / 100;
+  return (isFinite(v) ? v : 50) / 100;
 }
 sensitivityInput.addEventListener('input', ()=>{
   sensitivityLabel.textContent = sensitivityInput.value+'%';
@@ -1342,7 +1345,8 @@ function updateAiming(e){
     }
   }
   a.x = x; a.y = y;
-  positionMagnifier(e.clientX, e.clientY);
+  a.lastClientX = e.clientX;
+  a.lastClientY = e.clientY;
   requestRedraw();
   requestMagnifierUpdate();
 }
@@ -1392,6 +1396,23 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
     }
     return;
   }
+  const selectedEl = state.selectedId!=null ? getElementById(state.selectedId) : null;
+  if(selectedEl && (selectedEl.shape==='rect' || selectedEl.shape==='circle')){
+    const hp = getRotationHandlePos(selectedEl);
+    const handleThresh = 14/state.zoom;
+    if(Math.hypot(x-hp.x, y-hp.y) <= handleThresh){
+      state.dragging = {
+        id: selectedEl.id, mode:'rotate',
+        centerX: selectedEl.xPx, centerY: selectedEl.yPx,
+        startAngle: Math.atan2(y-selectedEl.yPx, x-selectedEl.xPx),
+        startRotationDeg: selectedEl.rotationDeg,
+      };
+      overlayCanvas.setPointerCapture(e.pointerId);
+      renderElementsList();
+      drawOverlay();
+      return;
+    }
+  }
   const hit = findElementAt(x,y);
   if(hit){
     state.selectedId = hit.id;
@@ -1430,6 +1451,14 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
   if(state.dragging.mode==='points'){
     const dx = x-state.dragging.anchorX, dy = y-state.dragging.anchorY;
     el.points = state.dragging.startPoints.map(p=>({x:p.x+dx,y:p.y+dy}));
+  } else if(state.dragging.mode==='rotate'){
+    const curAngle = Math.atan2(y-state.dragging.centerY, x-state.dragging.centerX);
+    const deltaDeg = (curAngle-state.dragging.startAngle)*180/Math.PI;
+    let deg = state.dragging.startRotationDeg + deltaDeg;
+    deg = ((deg%360)+360)%360;
+    const nearest15 = Math.round(deg/15)*15;
+    if(Math.abs(deg-nearest15) < 3) deg = nearest15%360;
+    el.rotationDeg = deg;
   } else {
     el.xPx = x - state.dragging.offsetX;
     el.yPx = y - state.dragging.offsetY;
@@ -1439,7 +1468,7 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
 function endDrag(e){
   if(e && !e.isPrimary) return;
   if(state.aiming){ commitAiming(); return; }
-  state.dragging = null;
+  if(state.dragging){ state.dragging = null; renderElementsList(); }
   state.panning = null;
 }
 function cancelPointerGesture(e){
@@ -1450,6 +1479,35 @@ function cancelPointerGesture(e){
 }
 overlayCanvas.addEventListener('pointerup', endDrag);
 overlayCanvas.addEventListener('pointercancel', cancelPointerGesture);
+
+/* Two-finger pan: works no matter what's underneath the fingers (an element, empty
+   space, doesn't matter), so you can always scroll the plan even once it's covered
+   in placed elements — single-finger drag on an element still moves that element. */
+let twoFingerPan = null;
+overlayCanvas.addEventListener('touchstart', (e)=>{
+  if(e.touches.length===2){
+    if(state.aiming) cancelAiming();
+    state.dragging = null;
+    state.panning = null;
+    const [t1,t2] = e.touches;
+    twoFingerPan = {
+      startMidX:(t1.clientX+t2.clientX)/2, startMidY:(t1.clientY+t2.clientY)/2,
+      startScrollLeft:canvasScroll.scrollLeft, startScrollTop:canvasScroll.scrollTop,
+    };
+    e.preventDefault();
+  }
+}, {passive:false});
+overlayCanvas.addEventListener('touchmove', (e)=>{
+  if(twoFingerPan && e.touches.length===2){
+    const [t1,t2] = e.touches;
+    const midX=(t1.clientX+t2.clientX)/2, midY=(t1.clientY+t2.clientY)/2;
+    canvasScroll.scrollLeft = twoFingerPan.startScrollLeft - (midX-twoFingerPan.startMidX);
+    canvasScroll.scrollTop = twoFingerPan.startScrollTop - (midY-twoFingerPan.startMidY);
+    e.preventDefault();
+  }
+}, {passive:false});
+overlayCanvas.addEventListener('touchend', (e)=>{ if(e.touches.length<2) twoFingerPan=null; });
+overlayCanvas.addEventListener('touchcancel', ()=>{ twoFingerPan=null; });
 
 function hitTest(el,px,py){
   if(el.shape==='path'){
@@ -1493,7 +1551,12 @@ let magnifierUpdatePending = false;
 function requestMagnifierUpdate(){
   if(magnifierUpdatePending) return;
   magnifierUpdatePending = true;
-  requestAnimationFrame(()=>{ magnifierUpdatePending = false; updateMagnifier(); });
+  requestAnimationFrame(()=>{
+    magnifierUpdatePending = false;
+    if(!state.aiming) return;
+    positionMagnifier(state.aiming.lastClientX, state.aiming.lastClientY);
+    updateMagnifier();
+  });
 }
 function drawOverlay(){
   ctxOverlay.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
@@ -1580,6 +1643,33 @@ function getTilePattern(ctx, texture, scalePxPerFt){
     tctx.strokeStyle='rgba(55,60,66,0.35)';
     tctx.lineWidth=Math.max(1,size*0.025);
     tctx.strokeRect(0.5,0.5,size-1,size-1);
+  } else if(texture==='concrete'){
+    size = Math.max(30, Math.round(scalePxPerFt*4));
+    tile.width=size; tile.height=size;
+    tctx.fillStyle='#A8ACAE'; tctx.fillRect(0,0,size,size);
+    tctx.fillStyle='rgba(255,255,255,0.05)';
+    tctx.fillRect(0,0,size,size/2);
+    tctx.strokeStyle='rgba(58,62,66,0.22)'; tctx.lineWidth=1;
+    tctx.strokeRect(0.5,0.5,size-1,size-1);
+  } else if(texture==='gravel'){
+    size = 13;
+    tile.width=size; tile.height=size;
+    tctx.fillStyle='#9C9284'; tctx.fillRect(0,0,size,size);
+    const shades = ['rgba(255,255,255,0.16)','rgba(0,0,0,0.16)','rgba(120,108,90,0.28)'];
+    for(let i=0;i<9;i++){
+      tctx.fillStyle = shades[i%3];
+      tctx.beginPath();
+      tctx.arc((i*13+3)%size, (i*7+4)%size, 1.1, 0, Math.PI*2);
+      tctx.fill();
+    }
+  } else if(texture==='turf'){
+    size = 11;
+    tile.width=size; tile.height=size;
+    tctx.fillStyle='#4F8F52'; tctx.fillRect(0,0,size,size);
+    tctx.strokeStyle='rgba(255,255,255,0.07)'; tctx.lineWidth=1;
+    tctx.beginPath(); tctx.moveTo(0,size); tctx.lineTo(size,0); tctx.stroke();
+    tctx.strokeStyle='rgba(0,0,0,0.06)';
+    tctx.beginPath(); tctx.moveTo(size*0.5,size); tctx.lineTo(size,size*0.5); tctx.stroke();
   } else {
     return null;
   }
@@ -1593,7 +1683,7 @@ function fillMaterial(ctx, presetKey, bounds){
   const baseColor = preset ? preset.color : '#B5934C';
   const fallbackColor = baseColor+'CC';
   const scalePxPerFt = state.scalePxPerFt || 40;
-  if(texture==='wood' || texture==='paver'){
+  if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='gravel' || texture==='turf'){
     const pat = getTilePattern(ctx, texture, scalePxPerFt);
     ctx.fillStyle = pat || fallbackColor;
     ctx.fill();
@@ -1682,8 +1772,27 @@ function drawElement(ctx, el, selected){
     ctx.lineWidth = 1.5;
     const pad = 4;
     ctx.strokeRect(-wPx/2-pad, -hPx/2-pad, wPx+pad*2, hPx+pad*2);
+    ctx.setLineDash([]);
+    const handleDist = hPx/2 + 26;
+    ctx.beginPath();
+    ctx.moveTo(0, -hPx/2-pad);
+    ctx.lineTo(0, -handleDist);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -handleDist, 7, 0, Math.PI*2);
+    ctx.fillStyle = '#B5934C';
+    ctx.fill();
+    ctx.strokeStyle = '#0A1A2E';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
     ctx.restore();
   }
+}
+function getRotationHandlePos(el){
+  const halfH = el.shape==='rect' ? (el.hFt*state.scalePxPerFt)/2 : (el.dFt*state.scalePxPerFt)/2;
+  const handleDist = halfH + 26;
+  const rad = el.rotationDeg*Math.PI/180;
+  return { x: el.xPx + handleDist*Math.sin(rad), y: el.yPx - handleDist*Math.cos(rad) };
 }
 
 function drawLabelChip(ctx, x, y, text, textColor){
