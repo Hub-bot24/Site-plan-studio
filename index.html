@@ -148,6 +148,30 @@
     letter-spacing:0.5px;
   }
 
+  /* ---------- Precision aiming: magnifier + fine-drag placement ---------- */
+  .precision-ctrl{
+    display:flex;align-items:center;gap:7px;
+    font-family:'Space Mono',monospace;font-size:11px;color:var(--ink-dim);
+    border:1px solid var(--line);border-radius:6px;padding:5px 10px;
+  }
+  .precision-ctrl input[type=range]{width:70px;accent-color:var(--accent);}
+  .precision-ctrl .pval{color:var(--accent);min-width:32px;}
+
+  #magnifierWrap{
+    position:fixed;z-index:80;display:none;flex-direction:column;align-items:center;gap:6px;
+  }
+  #magnifierWrap.visible{display:flex;}
+  #magnifierCanvas{
+    width:150px;height:150px;border-radius:50%;
+    border:3px solid var(--accent);box-shadow:0 6px 20px rgba(0,0,0,0.5);
+    background:#fff;
+  }
+  #magnifierWrap .maghint{
+    font-family:'Space Mono',monospace;font-size:10px;color:var(--ink);
+    background:rgba(11,37,69,0.9);border:1px solid var(--line);border-radius:5px;
+    padding:3px 8px;white-space:nowrap;
+  }
+
   /* ---------- Sidebar ---------- */
   #sidebar{
     width:340px;flex-shrink:0;
@@ -215,6 +239,11 @@
       <button data-unit="ft" class="active">FEET</button>
       <button data-unit="m">METERS</button>
     </div>
+    <div class="precision-ctrl" title="How much a finger/mouse movement moves a calibration or drawing point — lower is finer control, magnified live while you press.">
+      <span>PRECISION</span>
+      <input type="range" id="sensitivityInput" min="8" max="100" value="35">
+      <span class="pval" id="sensitivityLabel">35%</span>
+    </div>
     <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
     <div class="spacer"></div>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
@@ -266,13 +295,23 @@
 
       <div class="panel disabled" id="calibratePanel">
         <p class="eyebrow">02 — Calibrate scale</p>
-        <p class="helptext">Click both ends of something on the plan whose real length you know — a wall, a door (usually 3 ft / 0.9 m), a fence line, or a printed dimension.</p>
+        <p class="helptext">Tap both ends of something on the plan whose real length you know — a wall, a door (usually 3 ft / 0.9 m), a fence line, or a printed dimension. Press and drag before releasing to fine-tune each point under the magnifier.</p>
         <button class="btn secondary" id="calibrateBtn">Set scale</button>
         <button class="btn secondary" id="cancelCalibrateBtn" style="display:none;">Cancel</button>
         <div id="calInputRow" style="display:none;margin-top:10px;">
           <div class="field">
-            <label>Real length of that line (<span class="unit-label">ft</span>)</label>
-            <input type="number" id="calLengthInput" step="0.1" placeholder="e.g. 10">
+            <label>Real length of that line</label>
+            <div class="row2">
+              <input type="number" id="calLengthInput" step="0.01" placeholder="e.g. 10" style="flex:2;">
+              <select id="calUnitSelect" style="flex:1;">
+                <option value="ft">ft</option>
+                <option value="m">m</option>
+                <option value="cm">cm</option>
+                <option value="mm">mm</option>
+                <option value="in">in</option>
+                <option value="yd">yd</option>
+              </select>
+            </div>
           </div>
           <button class="btn" id="confirmCalBtn">Confirm scale</button>
         </div>
@@ -348,12 +387,18 @@
   </div>
 </div>
 
+<div id="magnifierWrap">
+  <canvas id="magnifierCanvas" width="150" height="150"></canvas>
+  <span class="maghint">drag to fine-tune, release to place</span>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
 /* ============================ STATE ============================ */
 const FT_PER_M = 3.28084;
+const UNIT_TO_FT = { ft:1, m:FT_PER_M, cm:FT_PER_M/100, mm:FT_PER_M/1000, in:1/12, yd:3 };
 const state = {
   unit:'ft',
   pdf:null,
@@ -368,6 +413,7 @@ const state = {
   selectedId:null,
   dragging:null,
   drawing:null,
+  aiming:null,
   nextId:1,
   projectName:'Untitled Site Plan',
   northRotationDeg:0,
@@ -413,8 +459,14 @@ const calibrateBtn = document.getElementById('calibrateBtn');
 const cancelCalibrateBtn = document.getElementById('cancelCalibrateBtn');
 const calInputRow = document.getElementById('calInputRow');
 const calLengthInput = document.getElementById('calLengthInput');
+const calUnitSelect = document.getElementById('calUnitSelect');
 const confirmCalBtn = document.getElementById('confirmCalBtn');
 const scaleStatus = document.getElementById('scaleStatus');
+const sensitivityInput = document.getElementById('sensitivityInput');
+const sensitivityLabel = document.getElementById('sensitivityLabel');
+const magnifierWrap = document.getElementById('magnifierWrap');
+const magnifierCanvas = document.getElementById('magnifierCanvas');
+const magCtx = magnifierCanvas.getContext('2d');
 
 const addPanel = document.getElementById('addPanel');
 const typeSelect = document.getElementById('typeSelect');
@@ -698,10 +750,11 @@ calibrateBtn.addEventListener('click', ()=>{
   state.calPoints = [];
   state.calPendingPx = null;
   calLengthInput.value='';
+  calUnitSelect.value = state.unit;
   calInputRow.style.display='none';
   cancelCalibrateBtn.style.display='inline-block';
   scaleStatus.classList.remove('ok');
-  scaleStatus.textContent = 'Click the first point…';
+  scaleStatus.textContent = 'Tap the first point…';
   drawOverlay();
 });
 cancelCalibrateBtn.addEventListener('click', cancelCalibration);
@@ -709,6 +762,7 @@ function cancelCalibration(){
   state.calibrating=false;
   state.calPoints=[];
   state.calPendingPx=null;
+  if(state.aiming && state.aiming.kind==='cal'){ state.aiming=null; magnifierWrap.classList.remove('visible'); }
   calInputRow.style.display='none';
   cancelCalibrateBtn.style.display='none';
   scaleStatus.textContent = state.scalePxPerFt ? scaleStatusText() : 'Not calibrated';
@@ -720,7 +774,7 @@ confirmCalBtn.addEventListener('click', ()=>{
     calLengthInput.focus();
     return;
   }
-  const lengthFt = toFt(val, state.unit);
+  const lengthFt = val * (UNIT_TO_FT[calUnitSelect.value] || 1);
   state.scalePxPerFt = state.calPendingPx / lengthFt;
   state.calPoints=[];
   state.calPendingPx=null;
@@ -768,6 +822,7 @@ drawUndoBtn.addEventListener('click', ()=>{
 drawCancelBtn.addEventListener('click', cancelDrawing);
 function cancelDrawing(){
   state.drawing = null;
+  if(state.aiming && state.aiming.kind==='draw'){ state.aiming=null; magnifierWrap.classList.remove('visible'); }
   drawBar.classList.remove('visible');
   drawOverlay();
 }
@@ -820,11 +875,76 @@ function getCanvasPos(e){
   const scaleY = overlayCanvas.height / rect.height;
   return {x:(e.clientX-rect.left)*scaleX, y:(e.clientY-rect.top)*scaleY};
 }
-overlayCanvas.addEventListener('pointerdown',(e)=>{
-  if(!e.isPrimary) return;
-  const {x,y} = getCanvasPos(e);
-  if(state.calibrating){
-    state.calPoints.push({x,y});
+function isAimable(){
+  return state.calibrating || !!state.drawing;
+}
+function getSensitivity(){
+  const v = parseFloat(sensitivityInput.value);
+  return (isFinite(v) ? v : 35) / 100;
+}
+sensitivityInput.addEventListener('input', ()=>{
+  sensitivityLabel.textContent = sensitivityInput.value+'%';
+});
+function positionMagnifier(clientX, clientY){
+  const size = 150;
+  let left = clientX - size/2;
+  let top = clientY - size - 40;
+  if(top < 8) top = clientY + 40;
+  left = Math.max(8, Math.min(window.innerWidth-size-8, left));
+  magnifierWrap.style.left = left+'px';
+  magnifierWrap.style.top = top+'px';
+}
+function updateMagnifier(){
+  if(!state.aiming) return;
+  const ZOOM = 3.5, size = 150;
+  const srcW = size/ZOOM, srcH = size/ZOOM;
+  const sx = state.aiming.x - srcW/2, sy = state.aiming.y - srcH/2;
+  magCtx.clearRect(0,0,size,size);
+  magCtx.fillStyle = '#ffffff';
+  magCtx.fillRect(0,0,size,size);
+  if(state.bgLoaded){
+    magCtx.drawImage(bgCanvas, sx, sy, srcW, srcH, 0, 0, size, size);
+    magCtx.drawImage(overlayCanvas, sx, sy, srcW, srcH, 0, 0, size, size);
+  }
+  magCtx.save();
+  magCtx.strokeStyle = 'rgba(242,169,59,0.85)';
+  magCtx.lineWidth = 1.5;
+  magCtx.beginPath();
+  magCtx.moveTo(size/2, 0); magCtx.lineTo(size/2, size);
+  magCtx.moveTo(0, size/2); magCtx.lineTo(size, size/2);
+  magCtx.stroke();
+  magCtx.beginPath();
+  magCtx.arc(size/2, size/2, 5, 0, Math.PI*2);
+  magCtx.strokeStyle = '#D9605A';
+  magCtx.lineWidth = 2;
+  magCtx.stroke();
+  magCtx.restore();
+}
+function startAiming(e, x, y, kind){
+  state.aiming = { kind, startClientX:e.clientX, startClientY:e.clientY, baseX:x, baseY:y, x, y };
+  overlayCanvas.setPointerCapture(e.pointerId);
+  overlayCanvas.style.touchAction = 'none';
+  magnifierWrap.classList.add('visible');
+  positionMagnifier(e.clientX, e.clientY);
+  drawOverlay();
+  updateMagnifier();
+}
+function updateAiming(e){
+  const a = state.aiming;
+  const dxClient = e.clientX - a.startClientX;
+  const dyClient = e.clientY - a.startClientY;
+  const sens = getSensitivity();
+  a.x = a.baseX + (dxClient*sens)/state.zoom;
+  a.y = a.baseY + (dyClient*sens)/state.zoom;
+  positionMagnifier(e.clientX, e.clientY);
+  drawOverlay();
+  updateMagnifier();
+}
+function commitAiming(){
+  const a = state.aiming;
+  if(!a) return;
+  if(a.kind==='cal'){
+    state.calPoints.push({x:a.x, y:a.y});
     if(state.calPoints.length===2){
       const [p1,p2] = state.calPoints;
       state.calPendingPx = Math.hypot(p2.x-p1.x, p2.y-p1.y);
@@ -833,15 +953,28 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
       scaleStatus.textContent = 'Enter the real length of that line:';
       calLengthInput.focus();
     } else {
-      scaleStatus.textContent = 'Click the second point…';
+      scaleStatus.textContent = 'Tap (and drag to fine-tune) the second point…';
     }
-    drawOverlay();
-    return;
-  }
-  if(state.drawing){
-    state.drawing.points.push({x,y});
+  } else if(a.kind==='draw' && state.drawing){
+    state.drawing.points.push({x:a.x, y:a.y});
     updateDrawBar();
-    drawOverlay();
+  }
+  state.aiming = null;
+  magnifierWrap.classList.remove('visible');
+  overlayCanvas.style.touchAction = 'auto';
+  drawOverlay();
+}
+function cancelAiming(){
+  state.aiming = null;
+  magnifierWrap.classList.remove('visible');
+  overlayCanvas.style.touchAction = 'auto';
+  drawOverlay();
+}
+overlayCanvas.addEventListener('pointerdown',(e)=>{
+  if(!e.isPrimary) return;
+  const {x,y} = getCanvasPos(e);
+  if(isAimable()){
+    startAiming(e, x, y, state.calibrating ? 'cal' : 'draw');
     return;
   }
   const hit = findElementAt(x,y);
@@ -861,7 +994,9 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
   drawOverlay();
 });
 overlayCanvas.addEventListener('pointermove',(e)=>{
-  if(!e.isPrimary || !state.dragging) return;
+  if(!e.isPrimary) return;
+  if(state.aiming){ updateAiming(e); return; }
+  if(!state.dragging) return;
   const {x,y} = getCanvasPos(e);
   const el = getElementById(state.dragging.id);
   if(!el) return;
@@ -876,11 +1011,18 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
 });
 function endDrag(e){
   if(e && !e.isPrimary) return;
+  if(state.aiming){ commitAiming(); return; }
+  state.dragging = null;
+  overlayCanvas.style.touchAction='auto';
+}
+function cancelPointerGesture(e){
+  if(e && !e.isPrimary) return;
+  if(state.aiming){ cancelAiming(); return; }
   state.dragging = null;
   overlayCanvas.style.touchAction='auto';
 }
 overlayCanvas.addEventListener('pointerup', endDrag);
-overlayCanvas.addEventListener('pointercancel', endDrag);
+overlayCanvas.addEventListener('pointercancel', cancelPointerGesture);
 
 function hitTest(el,px,py){
   if(el.shape==='path'){
@@ -920,7 +1062,7 @@ function drawOverlay(){
   if(state.drawing){
     drawInProgress(ctxOverlay, state.drawing);
   }
-  if(state.calPoints.length){
+  if(state.calPoints.length || (state.aiming && state.aiming.kind==='cal')){
     ctxOverlay.save();
     ctxOverlay.fillStyle = '#F2A93B';
     ctxOverlay.strokeStyle = '#F2A93B';
@@ -935,10 +1077,41 @@ function drawOverlay(){
       ctxOverlay.moveTo(state.calPoints[0].x, state.calPoints[0].y);
       ctxOverlay.lineTo(state.calPoints[1].x, state.calPoints[1].y);
       ctxOverlay.stroke();
+    } else if(state.calPoints.length===1 && state.aiming && state.aiming.kind==='cal'){
+      ctxOverlay.save();
+      ctxOverlay.setLineDash([5,4]);
+      ctxOverlay.beginPath();
+      ctxOverlay.moveTo(state.calPoints[0].x, state.calPoints[0].y);
+      ctxOverlay.lineTo(state.aiming.x, state.aiming.y);
+      ctxOverlay.stroke();
+      ctxOverlay.restore();
     }
     ctxOverlay.restore();
   }
+  if(state.aiming && state.aiming.kind==='cal'){
+    drawAimMarker(ctxOverlay, state.aiming.x, state.aiming.y);
+  }
   if(state.bgLoaded) drawTitleBlock(ctxOverlay);
+}
+
+function drawAimMarker(ctx, x, y){
+  ctx.save();
+  ctx.strokeStyle = '#F2A93B';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y, 9, 0, Math.PI*2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x-14,y); ctx.lineTo(x-4,y);
+  ctx.moveTo(x+4,y); ctx.lineTo(x+14,y);
+  ctx.moveTo(x,y-14); ctx.lineTo(x,y-4);
+  ctx.moveTo(x,y+4); ctx.lineTo(x,y+14);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, 2.5, 0, Math.PI*2);
+  ctx.fillStyle = '#D9605A';
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawElement(ctx, el, selected){
@@ -1084,13 +1257,15 @@ function drawPolygonElement(ctx, el, selected){
 
 function drawInProgress(ctx, drawing){
   const pts = drawing.points;
+  const aiming = state.aiming && state.aiming.kind==='draw' ? state.aiming : null;
+  const previewPts = aiming ? pts.concat([{x:aiming.x,y:aiming.y}]) : pts;
   ctx.save();
   ctx.strokeStyle = drawing.color;
   ctx.fillStyle = drawing.color;
   ctx.lineWidth = 2;
   ctx.setLineDash([4,3]);
-  if(pts.length>=2){
-    strokePolyline(ctx, pts, drawing.shape==='polygon');
+  if(previewPts.length>=2){
+    strokePolyline(ctx, previewPts, drawing.shape==='polygon');
   }
   ctx.setLineDash([]);
   pts.forEach((p,i)=>{
@@ -1099,6 +1274,9 @@ function drawInProgress(ctx, drawing){
     ctx.fill();
   });
   ctx.restore();
+  if(aiming){
+    drawAimMarker(ctx, aiming.x, aiming.y);
+  }
 }
 
 function elementAreaDisplay(el){
