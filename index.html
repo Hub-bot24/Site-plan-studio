@@ -68,7 +68,7 @@
   .btn.secondary:hover{border-color:var(--ink-dim);}
   .btn.danger{background:transparent;color:var(--danger);border:1px solid var(--danger);}
   .btn:disabled{opacity:0.4;cursor:not-allowed;}
-  .btn.active-erase{background:var(--danger);color:#fff;border-color:var(--danger);}
+  .btn.active-erase,.btn.active-cut{background:var(--danger);color:#fff;border-color:var(--danger);}
 
   /* ---------- Main layout ---------- */
   #main{flex:1;display:flex;min-height:0;}
@@ -154,6 +154,11 @@
   .cutout-badge{
     font-family:'Inter',sans-serif;font-weight:600;font-size:9px;color:var(--danger);
     border:1px solid var(--danger);border-radius:4px;padding:2px 5px;flex-shrink:0;
+    letter-spacing:0.4px;
+  }
+  .dimension-badge{
+    font-family:'Inter',sans-serif;font-weight:600;font-size:9px;color:#6FA8D6;
+    border:1px solid #3E7CB1;border-radius:4px;padding:2px 5px;flex-shrink:0;
     letter-spacing:0.4px;
   }
 
@@ -261,6 +266,10 @@
     <button class="btn secondary" id="eraseBtn" title="Erase mode — tap any element on the plan to delete it">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l5.3 5.3a2 2 0 0 1 0 2.8L13 19"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
       <span class="btn-label">Erase</span>
+    </button>
+    <button class="btn secondary" id="cutPdfBtn" title="Cut PDF — drag a box on the plan to permanently remove that area of the imported drawing (e.g. an unwanted existing feature). This edits the plan itself, not just placed elements.">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg>
+      <span class="btn-label">Cut PDF</span>
     </button>
     <div class="spacer"></div>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
@@ -370,7 +379,7 @@
           <label>Label</label>
           <input type="text" id="labelInput" placeholder="e.g. Back deck">
         </div>
-        <div class="field">
+        <div class="field" id="costFieldWrap">
           <label>Est. cost (<span id="costUnitLabel">$ / sq ft</span>) — optional</label>
           <input type="number" id="costInput" step="0.01" min="0" placeholder="0.00">
         </div>
@@ -398,6 +407,10 @@
           <div class="checkfield" id="cutoutFieldWrap" style="display:none;">
             <input type="checkbox" id="cutoutInput">
             <label for="cutoutInput">Cutout — subtract this area from the total (e.g. a pool inside a tiled patio)</label>
+          </div>
+          <div class="field" id="cutoutParentWrap" style="display:none;margin-top:6px;">
+            <label>Subtract from</label>
+            <select id="cutoutParentSelect"><option value="">Whole plan total</option></select>
           </div>
           <button class="btn" id="startDrawBtn" type="button">Start drawing on plan</button>
         </div>
@@ -468,6 +481,9 @@ const state = {
   aiming:null,
   panning:null,
   eraseMode:false,
+  cutMode:false,
+  cutDrag:null,
+  pdfMasks:[],
   rendering:false,
   nextId:1,
   projectName:'Untitled Site Plan',
@@ -487,6 +503,7 @@ const PRESETS = {
   tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
   custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
   fence:     {label:'Fence / line',    color:'#D8DEE5', texture:null,       quick:'none'},
+  dimension: {label:'Dimension (measure distance)', color:'#3E7CB1', texture:null, quick:'none'},
 };
 
 /* ============================ DOM refs ============================ */
@@ -540,6 +557,8 @@ const freeformDivider = document.getElementById('freeformDivider');
 const pathHint = document.getElementById('pathHint');
 const cutoutFieldWrap = document.getElementById('cutoutFieldWrap');
 const cutoutInput = document.getElementById('cutoutInput');
+const cutoutParentWrap = document.getElementById('cutoutParentWrap');
+const cutoutParentSelect = document.getElementById('cutoutParentSelect');
 const snapToggleInput = document.getElementById('snapToggleInput');
 const startDrawBtn = document.getElementById('startDrawBtn');
 const drawBar = document.getElementById('drawBar');
@@ -556,6 +575,7 @@ const cutoutRow = document.getElementById('cutoutRow');
 const cutoutArea = document.getElementById('cutoutArea');
 const totalLengthRow = document.getElementById('totalLengthRow');
 const totalLength = document.getElementById('totalLength');
+const costFieldWrap = document.getElementById('costFieldWrap');
 const costInput = document.getElementById('costInput');
 const costUnitLabel = document.getElementById('costUnitLabel');
 const totalCostRow = document.getElementById('totalCostRow');
@@ -571,14 +591,36 @@ const deleteProjectBtn = document.getElementById('deleteProjectBtn');
 const undoBtn = document.getElementById('undoBtn');
 const eraseBtn = document.getElementById('eraseBtn');
 const eraseBtnLabel = eraseBtn.querySelector('.btn-label');
+const cutPdfBtn = document.getElementById('cutPdfBtn');
+const cutPdfBtnLabel = cutPdfBtn.querySelector('.btn-label');
 
 const ctxOverlay = overlayCanvas.getContext('2d');
 
+function setEraseMode(on){
+  state.eraseMode = on;
+  eraseBtn.classList.toggle('active-erase', on);
+  eraseBtnLabel.textContent = on ? 'Erasing… tap plan' : 'Erase';
+}
+function setCutMode(on){
+  state.cutMode = on;
+  cutPdfBtn.classList.toggle('active-cut', on);
+  cutPdfBtnLabel.textContent = on ? 'Cutting… drag a box' : 'Cut PDF';
+}
 eraseBtn.addEventListener('click', ()=>{
-  state.eraseMode = !state.eraseMode;
-  eraseBtn.classList.toggle('active-erase', state.eraseMode);
-  eraseBtnLabel.textContent = state.eraseMode ? 'Erasing… tap plan' : 'Erase';
+  setEraseMode(!state.eraseMode);
   if(state.eraseMode){
+    setCutMode(false);
+    if(state.drawing) cancelDrawing();
+    if(state.calibrating) cancelCalibration();
+    state.selectedId = null;
+    renderElementsList();
+    drawOverlay();
+  }
+});
+cutPdfBtn.addEventListener('click', ()=>{
+  setCutMode(!state.cutMode);
+  if(state.cutMode){
+    setEraseMode(false);
     if(state.drawing) cancelDrawing();
     if(state.calibrating) cancelCalibration();
     state.selectedId = null;
@@ -590,17 +632,27 @@ eraseBtn.addEventListener('click', ()=>{
 /* ============================ Undo ============================ */
 const undoStack = [];
 function pushUndo(){
-  undoStack.push(JSON.parse(JSON.stringify(state.elements)));
+  undoStack.push({
+    elements: JSON.parse(JSON.stringify(state.elements)),
+    pdfMasks: JSON.parse(JSON.stringify(state.pdfMasks)),
+  });
   if(undoStack.length>50) undoStack.shift();
   undoBtn.disabled = false;
 }
 function performUndo(){
   if(!undoStack.length) return;
-  state.elements = undoStack.pop();
+  const snap = undoStack.pop();
+  const masksChanged = JSON.stringify(snap.pdfMasks) !== JSON.stringify(state.pdfMasks);
+  state.elements = snap.elements;
+  state.pdfMasks = snap.pdfMasks;
   state.selectedId = null;
   state.dragging = null;
   renderElementsList();
-  drawOverlay();
+  if(masksChanged && state.pdf){
+    renderPage(state.currentPage, {preserveView:true});
+  } else {
+    drawOverlay();
+  }
   undoBtn.disabled = undoStack.length===0;
 }
 undoBtn.addEventListener('click', performUndo);
@@ -714,6 +766,7 @@ saveProjectBtn.addEventListener('click', async ()=>{
     northRotationDeg: state.northRotationDeg,
     nextId: state.nextId,
     elements: JSON.parse(JSON.stringify(state.elements)),
+    pdfMasks: JSON.parse(JSON.stringify(state.pdfMasks)),
   };
   try{
     await idbPutProject(record);
@@ -757,12 +810,15 @@ async function loadProjectByName(name){
     state.northRotationDeg = rec.northRotationDeg || 0;
     northInput.value = state.northRotationDeg;
     state.elements = (rec.elements||[]).map(el=>JSON.parse(JSON.stringify(el)));
+    state.pdfMasks = (rec.pdfMasks||[]).map(m=>({...m}));
     state.nextId = rec.nextId || (state.elements.reduce((m,e)=>Math.max(m,e.id||0),0)+1);
     state.selectedId = null;
     state.projectName = name;
     projectNameInput.value = name;
     undoStack.length = 0;
     undoBtn.disabled = true;
+    setEraseMode(false);
+    setCutMode(false);
 
     await renderPage(rec.currentPage || 1);
     newPlanBtn.style.display='inline-block';
@@ -913,20 +969,46 @@ Object.keys(PRESETS).forEach(key=>{
 function updateAddFieldsForType(){
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
+  const isDimension = typeSelect.value==='dimension';
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
   addElBtn.style.display = isFence ? 'none' : '';
   pathFields.style.display = 'block';
   freeformDivider.style.display = isFence ? 'none' : 'block';
   cutoutFieldWrap.style.display = isFence ? 'none' : 'flex';
-  startDrawBtn.textContent = isFence ? 'Start drawing on plan' : 'Trace freeform outline';
-  pathHint.textContent = isFence
-    ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
-    : 'For an irregular '+preset.label.toLowerCase()+' — not just a rectangle — tap "Trace freeform outline", then tap each corner (it closes automatically, needs at least 3 points). Renders with a realistic, to-scale '+preset.label.toLowerCase()+' texture either way.';
+  if(isFence){ cutoutInput.checked = false; cutoutParentWrap.style.display = 'none'; }
+  costFieldWrap.style.display = isDimension ? 'none' : 'block';
+  startDrawBtn.textContent = isDimension ? 'Start measuring on plan' : (isFence ? 'Start drawing on plan' : 'Trace freeform outline');
+  pathHint.textContent = isDimension
+    ? 'Tap one point, then a second point, to measure the straight-line distance between them (e.g. between two buildings, or a setback from the boundary). Doesn\'t count toward area or cost totals.'
+    : (isFence
+      ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
+      : 'For an irregular '+preset.label.toLowerCase()+' — not just a rectangle — tap "Trace freeform outline", then tap each corner (it closes automatically, needs at least 3 points). Renders with a realistic, to-scale '+preset.label.toLowerCase()+' texture either way.');
   costUnitLabel.textContent = isFence ? '$ / '+state.unit : '$ / sq '+state.unit;
 }
 typeSelect.addEventListener('change', updateAddFieldsForType);
 updateAddFieldsForType();
+
+/* ============================ Linked cutouts (boolean subtract) ============================ */
+function populateParentSelect(selectEl, currentValue, excludeId){
+  const prev = currentValue!=null ? String(currentValue) : selectEl.value;
+  selectEl.innerHTML = '';
+  const noneOpt = document.createElement('option');
+  noneOpt.value=''; noneOpt.textContent='Whole plan total';
+  selectEl.appendChild(noneOpt);
+  state.elements.forEach(el=>{
+    if(el.isCutout || el.id===excludeId) return;
+    const opt = document.createElement('option');
+    opt.value = String(el.id);
+    opt.textContent = el.label;
+    selectEl.appendChild(opt);
+  });
+  selectEl.value = prev && [...selectEl.options].some(o=>o.value===prev) ? prev : '';
+}
+cutoutInput.addEventListener('change', ()=>{
+  cutoutParentWrap.style.display = cutoutInput.checked ? 'block' : 'none';
+  if(cutoutInput.checked) populateParentSelect(cutoutParentSelect);
+});
 
 /* ============================ Unit toggle ============================ */
 document.getElementById('unitToggle').addEventListener('click', (e)=>{
@@ -966,9 +1048,12 @@ newPlanBtn.addEventListener('click', ()=>{
   state.bgLoaded = false;
   state.scalePxPerFt = null;
   state.elements = [];
+  state.pdfMasks = [];
   state.selectedId = null;
   state.calibrating = false;
   state.drawing = null;
+  setEraseMode(false);
+  setCutMode(false);
   state.projectName = 'Untitled Site Plan';
   projectNameInput.value = state.projectName;
   calibratePanel.classList.add('disabled');
@@ -993,6 +1078,7 @@ async function loadFile(file){
   try{
     const buf = await file.arrayBuffer();
     state.pdfBytes = buf.slice(0);
+    state.pdfMasks = [];
     const pdf = await pdfjsLib.getDocument({data:buf}).promise;
     state.pdf = pdf;
     state.numPages = pdf.numPages;
@@ -1015,7 +1101,16 @@ function showUploadError(msg){
   uploadError.style.display='block';
 }
 
-async function renderPage(pageNum){
+function applyPdfMasks(ctx, pageNum){
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  state.pdfMasks.forEach(m=>{
+    if(m.page !== pageNum) return;
+    ctx.fillRect(m.x, m.y, m.w, m.h);
+  });
+  ctx.restore();
+}
+async function renderPage(pageNum, opts){
   // Guard against overlapping renders (e.g. rapid next/prev clicks on a large multi-page
   // PDF) — pdf.js throws if render() is called again on the same canvas mid-render.
   if(state.rendering) return;
@@ -1035,12 +1130,15 @@ async function renderPage(pageNum){
     bgCanvas.height = overlayCanvas.height = Math.round(viewport.height);
     const ctx = bgCanvas.getContext('2d');
     await page.render({canvasContext:ctx, viewport}).promise;
+    applyPdfMasks(ctx, pageNum);
     state.currentPage = pageNum;
     state.bgLoaded = true;
     planStatusText.textContent = 'Loaded page ' + pageNum + ' of ' + state.numPages + '. Tip: use two fingers to pan around, even over placed elements.';
     calibratePanel.classList.remove('disabled');
     zoomBar.classList.add('visible');
-    state.zoom = computeFitZoom();
+    if(!(opts && opts.preserveView)){
+      state.zoom = computeFitZoom();
+    }
     applyZoomAndLayout();
     drawOverlay();
   } finally {
@@ -1147,14 +1245,17 @@ startDrawBtn.addEventListener('click', ()=>{
   if(state.calibrating) cancelCalibration();
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
+  const isDimension = typeSelect.value==='dimension';
   const typedLabel = labelInput.value.trim();
   state.drawing = {
     shape: isFence ? 'path' : 'polygon',
     presetKey: typeSelect.value,
+    isDimension,
     label: typedLabel || uniqueLabel(preset.label),
     color: preset.color,
     isCutout: !isFence && cutoutInput.checked,
-    unitCost: parseFloat(costInput.value) || 0,
+    parentId: (!isFence && cutoutInput.checked && cutoutParentSelect.value) ? parseInt(cutoutParentSelect.value,10) : null,
+    unitCost: isDimension ? 0 : (parseFloat(costInput.value) || 0),
     points: [],
   };
   state.selectedId = null;
@@ -1176,7 +1277,7 @@ function cancelDrawing(){
   drawBar.classList.remove('visible');
   drawOverlay();
 }
-drawFinishBtn.addEventListener('click', ()=>{
+function finishDrawing(){
   if(!state.drawing) return;
   const minPts = state.drawing.shape==='path' ? 2 : 3;
   if(state.drawing.points.length < minPts) return;
@@ -1184,9 +1285,11 @@ drawFinishBtn.addEventListener('click', ()=>{
     id: state.nextId++,
     shape: state.drawing.shape,
     presetKey: state.drawing.presetKey,
+    isDimension: !!state.drawing.isDimension,
     label: state.drawing.label,
     color: state.drawing.color,
     isCutout: !!state.drawing.isCutout,
+    parentId: state.drawing.parentId || null,
     unitCost: state.drawing.unitCost || 0,
     points: state.drawing.points.map(p=>({x:p.x,y:p.y})),
   };
@@ -1198,9 +1301,11 @@ drawFinishBtn.addEventListener('click', ()=>{
   labelInput.value='';
   costInput.value='';
   cutoutInput.checked=false;
+  cutoutParentWrap.style.display='none';
   renderElementsList();
   drawOverlay();
-});
+}
+drawFinishBtn.addEventListener('click', finishDrawing);
 function updateDrawBar(){
   if(!state.drawing) return;
   const n = state.drawing.points.length;
@@ -1219,7 +1324,8 @@ document.addEventListener('keydown',(e)=>{
   if(e.key==='Escape'){
     if(state.drawing) cancelDrawing();
     if(state.calibrating) cancelCalibration();
-    if(state.eraseMode){ state.eraseMode=false; eraseBtn.classList.remove('active-erase'); eraseBtnLabel.textContent='Erase'; drawOverlay(); }
+    if(state.eraseMode){ setEraseMode(false); drawOverlay(); }
+    if(state.cutMode){ setCutMode(false); state.cutDrag=null; drawOverlay(); }
   }
 });
 
@@ -1368,6 +1474,12 @@ function commitAiming(){
   } else if(a.kind==='draw' && state.drawing){
     state.drawing.points.push({x:a.x, y:a.y});
     updateDrawBar();
+    if(state.drawing.isDimension && state.drawing.points.length>=2){
+      state.aiming = null;
+      magnifierWrap.classList.remove('visible');
+      finishDrawing();
+      return;
+    }
   }
   state.aiming = null;
   magnifierWrap.classList.remove('visible');
@@ -1394,6 +1506,12 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
       renderElementsList();
       drawOverlay();
     }
+    return;
+  }
+  if(state.cutMode){
+    state.cutDrag = {startX:x, startY:y, x, y};
+    overlayCanvas.setPointerCapture(e.pointerId);
+    drawOverlay();
     return;
   }
   const selectedEl = state.selectedId!=null ? getElementById(state.selectedId) : null;
@@ -1443,6 +1561,13 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
     canvasScroll.scrollTop = state.panning.startScrollTop - (e.clientY - state.panning.startClientY);
     return;
   }
+  if(state.cutDrag){
+    const {x,y} = getCanvasPos(e);
+    state.cutDrag.x = x;
+    state.cutDrag.y = y;
+    requestRedraw();
+    return;
+  }
   if(!state.dragging) return;
   const {x,y} = getCanvasPos(e);
   const el = getElementById(state.dragging.id);
@@ -1465,15 +1590,28 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
   }
   requestRedraw();
 });
+function commitCutDrag(){
+  const d = state.cutDrag;
+  state.cutDrag = null;
+  if(!d) return;
+  const x = Math.min(d.startX, d.x), y = Math.min(d.startY, d.y);
+  const w = Math.abs(d.x - d.startX), h = Math.abs(d.y - d.startY);
+  if(w < 4 || h < 4){ drawOverlay(); return; } // treat as an accidental tap, not a real cut
+  pushUndo();
+  state.pdfMasks.push({page: state.currentPage, x, y, w, h});
+  renderPage(state.currentPage, {preserveView:true});
+}
 function endDrag(e){
   if(e && !e.isPrimary) return;
   if(state.aiming){ commitAiming(); return; }
+  if(state.cutDrag){ commitCutDrag(); return; }
   if(state.dragging){ state.dragging = null; renderElementsList(); }
   state.panning = null;
 }
 function cancelPointerGesture(e){
   if(e && !e.isPrimary) return;
   if(state.aiming){ cancelAiming(); return; }
+  if(state.cutDrag){ state.cutDrag = null; drawOverlay(); return; }
   state.dragging = null;
   state.panning = null;
 }
@@ -1592,6 +1730,19 @@ function drawOverlay(){
   }
   if(state.aiming && state.aiming.kind==='cal'){
     drawAimMarker(ctxOverlay, state.aiming.x, state.aiming.y);
+  }
+  if(state.cutDrag){
+    const d = state.cutDrag;
+    const x = Math.min(d.startX, d.x), y = Math.min(d.startY, d.y);
+    const w = Math.abs(d.x - d.startX), h = Math.abs(d.y - d.startY);
+    ctxOverlay.save();
+    ctxOverlay.fillStyle = 'rgba(196,100,92,0.22)';
+    ctxOverlay.fillRect(x, y, w, h);
+    ctxOverlay.strokeStyle = '#C4645C';
+    ctxOverlay.lineWidth = 1.5;
+    ctxOverlay.setLineDash([6,4]);
+    ctxOverlay.strokeRect(x, y, w, h);
+    ctxOverlay.restore();
   }
   if(state.bgLoaded) drawTitleBlock(ctxOverlay);
 }
@@ -1828,8 +1979,44 @@ function strokePolyline(ctx, points, closed){
   ctx.stroke();
 }
 
+function drawDimensionElement(ctx, el, selected){
+  const [p1,p2] = el.points;
+  const ang = Math.atan2(p2.y-p1.y, p2.x-p1.x);
+  const headLen = 9, headAng = Math.PI/7;
+  ctx.save();
+  ctx.strokeStyle = el.color;
+  ctx.fillStyle = el.color;
+  ctx.lineWidth = selected ? 2.2 : 1.6;
+  ctx.setLineDash([1,0]);
+  ctx.beginPath();
+  ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
+  ctx.stroke();
+  [[p1,ang],[p2,ang+Math.PI]].forEach(([p,a])=>{
+    ctx.beginPath();
+    ctx.moveTo(p.x,p.y);
+    ctx.lineTo(p.x-headLen*Math.cos(a-headAng), p.y-headLen*Math.sin(a-headAng));
+    ctx.lineTo(p.x-headLen*Math.cos(a+headAng), p.y-headLen*Math.sin(a+headAng));
+    ctx.closePath();
+    ctx.fill();
+  });
+  ctx.restore();
+  const mid = {x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2};
+  const text = formatNum(pathLengthDisplay(el.points))+' '+state.unit;
+  drawLabelChip(ctx, mid.x, mid.y, text, '#3E7CB1');
+  if(selected){
+    ctx.save();
+    ctx.setLineDash([6,4]);
+    ctx.strokeStyle = '#B5934C';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
 function drawPathElement(ctx, el, selected){
   if(el.points.length<2) return;
+  if(el.isDimension){ drawDimensionElement(ctx, el, selected); return; }
   ctx.save();
   ctx.strokeStyle = el.color;
   ctx.lineWidth = selected ? 2.6 : 1.8;
@@ -1870,7 +2057,13 @@ function drawPolygonElement(ctx, el, selected){
   strokePolyline(ctx, el.points, true);
   ctx.restore();
   const c = polygonCentroid(el.points);
-  const text = (el.isCutout?'− ':'')+el.label+' — '+formatNum(polygonAreaDisplay(el.points))+' sq '+state.unit;
+  let text;
+  if(el.isCutout){
+    const parent = el.parentId!=null ? getElementById(el.parentId) : null;
+    text = '− '+el.label+' — '+formatNum(polygonAreaDisplay(el.points))+' sq '+state.unit + (parent ? '  (from '+parent.label+')' : '');
+  } else {
+    text = el.label+' — '+formatNum(netAreaDisplay(el))+' sq '+state.unit;
+  }
   drawLabelChip(ctx, c.x, c.y, text, el.isCutout ? '#B5934C' : '#E7ECF2');
   if(selected){
     ctx.save();
@@ -1928,21 +2121,36 @@ function elementAreaDisplay(el){
   }
   return 0;
 }
+function linkedCutoutAreaFor(parentId){
+  return state.elements.reduce((sum,el)=> (el.isCutout && el.parentId===parentId) ? sum+elementAreaDisplay(el) : sum, 0);
+}
+// The area of a shape after subtracting any cutouts specifically linked to it
+// (e.g. a pool traced as a cutout and linked to a paving slab it sits inside).
+function netAreaDisplay(el){
+  const raw = elementAreaDisplay(el);
+  if(el.isCutout) return raw;
+  return Math.max(0, raw - linkedCutoutAreaFor(el.id));
+}
 function getTotalAreaDisplay(){
   return state.elements.reduce((sum,el)=>{
-    const a = elementAreaDisplay(el);
-    return sum + (el.isCutout ? -a : a);
+    if(el.isCutout){
+      // A cutout linked to a specific shape already reduced that shape's own
+      // net area above — don't subtract it from the grand total a second time.
+      if(el.parentId!=null && getElementById(el.parentId)) return sum;
+      return sum - elementAreaDisplay(el);
+    }
+    return sum + netAreaDisplay(el);
   },0);
 }
 function getTotalCutoutAreaDisplay(){
   return state.elements.reduce((sum,el)=> el.isCutout ? sum+elementAreaDisplay(el) : sum, 0);
 }
 function getTotalPathLengthDisplay(){
-  return state.elements.reduce((sum,el)=> el.shape==='path' ? sum+pathLengthDisplay(el.points) : sum, 0);
+  return state.elements.reduce((sum,el)=> (el.shape==='path' && !el.isDimension) ? sum+pathLengthDisplay(el.points) : sum, 0);
 }
 function elementCostDisplay(el){
-  if(!el.unitCost) return 0;
-  const measure = el.shape==='path' ? pathLengthDisplay(el.points) : elementAreaDisplay(el);
+  if(el.isDimension || !el.unitCost) return 0;
+  const measure = el.shape==='path' ? pathLengthDisplay(el.points) : netAreaDisplay(el);
   return el.unitCost * measure;
 }
 function getTotalCostDisplay(){
@@ -2069,6 +2277,12 @@ function renderElementsList(){
       badge.textContent='CUTOUT';
       row.appendChild(badge);
     }
+    if(el.isDimension){
+      const badge = document.createElement('span');
+      badge.className='dimension-badge';
+      badge.textContent='DIMENSION';
+      row.appendChild(badge);
+    }
 
     const details = document.createElement('div');
     details.className='details';
@@ -2113,21 +2327,41 @@ function renderElementsList(){
       dims.appendChild(document.createTextNode(unitAbbrev()));
     } else if(el.shape==='path'){
       const info = document.createElement('span');
-      info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
+      info.textContent = el.isDimension
+        ? formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()
+        : formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
       dims.appendChild(info);
     } else if(el.shape==='polygon'){
       const info = document.createElement('span');
-      info.textContent = formatNum(elementAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
+      info.textContent = formatNum(el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
       dims.appendChild(info);
       const cutLabel = document.createElement('label');
       cutLabel.style.display='flex'; cutLabel.style.alignItems='center'; cutLabel.style.gap='3px'; cutLabel.style.marginLeft='4px';
       const cutChk = document.createElement('input'); cutChk.type='checkbox'; cutChk.checked=!!el.isCutout;
       cutChk.addEventListener('click', e=>e.stopPropagation());
-      cutChk.addEventListener('change', ()=>{ pushUndo(); el.isCutout = cutChk.checked; drawOverlay(); renderElementsList(); });
+      cutChk.addEventListener('change', ()=>{
+        pushUndo();
+        el.isCutout = cutChk.checked;
+        if(!el.isCutout) el.parentId = null;
+        drawOverlay(); renderElementsList();
+      });
       cutLabel.appendChild(cutChk);
       cutLabel.appendChild(document.createTextNode('cutout'));
       dims.appendChild(cutLabel);
+      if(el.isCutout){
+        const parentSel = document.createElement('select');
+        parentSel.style.marginLeft='4px'; parentSel.title='Subtract this cutout from a specific shape\'s area (instead of just the whole-plan total)';
+        parentSel.addEventListener('click', e=>e.stopPropagation());
+        parentSel.addEventListener('change', ()=>{
+          pushUndo();
+          el.parentId = parentSel.value ? parseInt(parentSel.value,10) : null;
+          drawOverlay(); renderElementsList();
+        });
+        populateParentSelect(parentSel, el.parentId, el.id);
+        dims.appendChild(parentSel);
+      }
     }
+    if(!el.isDimension){
     const costWrap = document.createElement('span');
     costWrap.style.display='inline-flex'; costWrap.style.alignItems='center'; costWrap.style.gap='2px';
     const costLbl = document.createElement('span');
@@ -2147,7 +2381,8 @@ function renderElementsList(){
     });
     costWrap.appendChild(costLbl); costWrap.appendChild(costEl);
     dims.appendChild(costWrap);
-    if(el.unitCost){
+    }
+    if(el.unitCost && !el.isDimension){
       const costTotalSpan = document.createElement('span');
       costTotalSpan.style.color = 'var(--accent)';
       costTotalSpan.textContent = '= '+formatCurrency(elementCostDisplay(el));
