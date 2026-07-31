@@ -226,6 +226,7 @@
   .elrow .details input{width:100%;background:transparent;border:none;color:var(--ink);font-size:13px;font-family:'Inter',sans-serif;padding:0;margin-bottom:4px;}
   .elrow .dims{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--ink-dim);flex-wrap:wrap;}
   .elrow .dims input{width:46px;background:var(--navy-mid);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px;}
+  .elrow select{background:var(--navy-mid);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px;font-family:'Inter',sans-serif;}
   .icnbtn{background:transparent;border:1px solid var(--line);color:var(--ink-dim);border-radius:5px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;}
   .icnbtn:hover{border-color:var(--ink);color:var(--ink);}
   .icnbtn.del:hover{border-color:var(--danger);color:var(--danger);}
@@ -2578,9 +2579,7 @@ function renderElementsList(){
     if(state.numPages>1){
       const moveSel = document.createElement('select');
       moveSel.title = 'Move this element to a different page of the PDF';
-      moveSel.style.width='90px'; moveSel.style.fontSize='11px'; moveSel.style.flexShrink='0';
-      moveSel.style.background='var(--navy-mid)'; moveSel.style.border='1px solid var(--line)';
-      moveSel.style.color='var(--ink)'; moveSel.style.borderRadius='5px'; moveSel.style.padding='3px 4px';
+      moveSel.style.width='90px'; moveSel.style.flexShrink='0';
       const placeholderOpt = document.createElement('option');
       placeholderOpt.value=''; placeholderOpt.textContent='Move to pg…';
       moveSel.appendChild(placeholderOpt);
