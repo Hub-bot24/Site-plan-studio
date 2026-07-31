@@ -1452,24 +1452,40 @@ function getSnapCandidates(excludePointsOf){
   return pts;
 }
 function startAiming(e, x, y, kind){
-  state.aiming = { kind, startClientX:e.clientX, startClientY:e.clientY, baseX:x, baseY:y, x, y };
+  // A mouse gives exact, occlusion-free positioning already — the fine-tuning
+  // offset-drag and magnifier exist to work around a finger covering the very
+  // point you're trying to place, which isn't a problem for a mouse cursor.
+  // Applying that same offset to a mouse just makes the crosshair visibly
+  // drift away from the actual pointer as you drag, which reads as broken.
+  const isMouse = e.pointerType==='mouse';
+  state.aiming = { kind, startClientX:e.clientX, startClientY:e.clientY, baseX:x, baseY:y, x, y, isMouse };
   // Other elements can't change mid-gesture (we hold pointer capture), so compute the
   // snap candidate list once per gesture instead of on every pointermove frame.
   state.aiming.snapCandidates = (kind==='draw' && snapToggleInput.checked && state.drawing)
     ? getSnapCandidates(state.drawing.points) : null;
   overlayCanvas.setPointerCapture(e.pointerId);
-  magnifierWrap.classList.add('visible');
-  positionMagnifier(e.clientX, e.clientY);
+  if(!isMouse){
+    magnifierWrap.classList.add('visible');
+    positionMagnifier(e.clientX, e.clientY);
+    updateMagnifier();
+  }
   drawOverlay();
-  updateMagnifier();
 }
 function updateAiming(e){
   const a = state.aiming;
-  const dxClient = e.clientX - a.startClientX;
-  const dyClient = e.clientY - a.startClientY;
-  const sens = getSensitivity();
-  let x = a.baseX + (dxClient*sens)/state.zoom;
-  let y = a.baseY + (dyClient*sens)/state.zoom;
+  let x, y;
+  if(a.isMouse){
+    // Track the cursor exactly — no lag, no offset, no ambiguity about where
+    // the point will land.
+    const pos = getCanvasPos(e);
+    x = pos.x; y = pos.y;
+  } else {
+    const dxClient = e.clientX - a.startClientX;
+    const dyClient = e.clientY - a.startClientY;
+    const sens = getSensitivity();
+    x = a.baseX + (dxClient*sens)/state.zoom;
+    y = a.baseY + (dyClient*sens)/state.zoom;
+  }
   a.snapped = null;
   if(a.snapCandidates && state.drawing){
     const threshPx = 10/state.zoom;
@@ -1500,7 +1516,7 @@ function updateAiming(e){
   a.lastClientX = e.clientX;
   a.lastClientY = e.clientY;
   requestRedraw();
-  requestMagnifierUpdate();
+  if(!a.isMouse) requestMagnifierUpdate();
 }
 function commitAiming(){
   const a = state.aiming;
