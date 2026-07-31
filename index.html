@@ -239,9 +239,15 @@
   .pagerow input{width:50px;text-align:center;}
 
   @media (max-width:880px){
-    #main{flex-direction:column;}
-    #sidebar{width:100%;border-left:none;border-top:1px solid var(--line);max-height:52vh;}
-    #canvasArea{min-height:44vh;}
+    /* vh-based sizing here would be relative to the FULL viewport, not what's
+       actually left after the topbar (which can wrap to 2-3 rows on a narrow
+       phone) -- that mismatch let the two panels' heights add up to more
+       room than #main actually had, overflowing the whole page instead of
+       scrolling just the sidebar. Flex-grow ratios with min-height:0 instead
+       divide up whatever space genuinely remains, so it always fits. */
+    #main{flex-direction:column;min-height:0;}
+    #canvasArea{flex:5;min-height:0;}
+    #sidebar{flex:6;min-height:0;max-height:none;width:100%;border-left:none;border-top:1px solid var(--line);}
   }
 </style>
 </head>
