@@ -425,7 +425,7 @@ const UNIT_TO_FT = { ft:1, m:FT_PER_M, cm:FT_PER_M/100, mm:FT_PER_M/1000, in:1/1
 const state = {
   unit:'ft',
   pdf:null,
-  pdfBase64:null,
+  pdfBytes:null,
   numPages:1,
   currentPage:1,
   bgLoaded:false,
@@ -578,32 +578,64 @@ document.addEventListener('keydown', (e)=>{
   }
 });
 
-/* ============================ Projects (save/load, localStorage) ============================ */
-const PROJECTS_KEY = 'sitePlanStudio_projects_v1';
-function arrayBufferToBase64(buf){
-  let binary = '';
-  const bytes = new Uint8Array(buf);
-  const chunkSize = 0x8000;
-  for(let i=0;i<bytes.length;i+=chunkSize){
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i+chunkSize));
-  }
-  return btoa(binary);
+/* ============================ Projects (save/load, IndexedDB) ============================ */
+const IDB_NAME = 'sitePlanStudioDB';
+const IDB_VERSION = 1;
+const IDB_STORE = 'projects';
+let idbPromise = null;
+function openProjectsDB(){
+  if(idbPromise) return idbPromise;
+  idbPromise = new Promise((resolve, reject)=>{
+    if(!window.indexedDB){ reject(new Error('IndexedDB not available')); return; }
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = ()=>{
+      const db = req.result;
+      if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE, {keyPath:'name'});
+    };
+    req.onsuccess = ()=>resolve(req.result);
+    req.onerror = ()=>reject(req.error);
+  });
+  return idbPromise;
 }
-function base64ToArrayBuffer(b64){
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for(let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
-  return bytes.buffer;
+async function idbPutProject(record){
+  const db = await openProjectsDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(record);
+    tx.oncomplete = ()=>resolve();
+    tx.onerror = ()=>reject(tx.error);
+  });
 }
-function loadProjectsIndex(){
-  try{ return JSON.parse(localStorage.getItem(PROJECTS_KEY)) || {}; }catch(e){ return {}; }
+async function idbGetProject(name){
+  const db = await openProjectsDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(name);
+    req.onsuccess = ()=>resolve(req.result || null);
+    req.onerror = ()=>reject(req.error);
+  });
 }
-function saveProjectsIndex(idx){
-  localStorage.setItem(PROJECTS_KEY, JSON.stringify(idx));
+async function idbGetAllProjectNames(){
+  const db = await openProjectsDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).getAllKeys();
+    req.onsuccess = ()=>resolve(req.result || []);
+    req.onerror = ()=>reject(req.error);
+  });
 }
-function refreshSavedProjectsSelect(){
-  const idx = loadProjectsIndex();
-  const names = Object.keys(idx).sort((a,b)=>a.localeCompare(b));
+async function idbDeleteProject(name){
+  const db = await openProjectsDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(name);
+    tx.oncomplete = ()=>resolve();
+    tx.onerror = ()=>reject(tx.error);
+  });
+}
+async function refreshSavedProjectsSelect(){
+  let names = [];
+  try{ names = (await idbGetAllProjectNames()).sort((a,b)=>a.localeCompare(b)); }catch(e){ console.error(e); }
   savedProjectsSelect.innerHTML = '';
   if(!names.length){
     const opt = document.createElement('option');
@@ -628,44 +660,52 @@ function flashButtonText(btn, text, ms){
   btn.disabled = true;
   setTimeout(()=>{ btn.textContent = orig; btn.disabled = false; }, ms||1400);
 }
-saveProjectBtn.addEventListener('click', ()=>{
-  if(!state.pdfBase64){
+saveProjectBtn.addEventListener('click', async ()=>{
+  if(!state.pdfBytes){
     alert('Upload a plan PDF first, then save the project.');
     return;
   }
   const name = (projectNameInput.value||'').trim() || 'Untitled Site Plan';
-  const idx = loadProjectsIndex();
-  if(idx[name] && !confirm('A saved project named "'+name+'" already exists. Overwrite it?')) return;
-  idx[name] = {
+  let existingNames = [];
+  try{ existingNames = await idbGetAllProjectNames(); }catch(e){ console.error(e); }
+  if(existingNames.includes(name) && !confirm('A saved project named "'+name+'" already exists. Overwrite it?')) return;
+  const record = {
+    name,
     savedAt: Date.now(),
-    pdfBase64: state.pdfBase64,
+    pdfBytes: state.pdfBytes.slice(0),
     currentPage: state.currentPage,
     scalePxPerFt: state.scalePxPerFt,
     unit: state.unit,
     northRotationDeg: state.northRotationDeg,
     nextId: state.nextId,
-    elements: state.elements,
+    elements: JSON.parse(JSON.stringify(state.elements)),
   };
   try{
-    saveProjectsIndex(idx);
+    await idbPutProject(record);
   }catch(e){
     console.error(e);
-    alert("Couldn't save — your browser's local storage may be full. Try freeing up space or use a smaller PDF.");
+    alert("Couldn't save this project — " + (e && e.name==='QuotaExceededError' ? "your device's storage is full." : "an unexpected storage error occurred.") + " Try freeing up device storage.");
     return;
   }
   state.projectName = name;
-  refreshSavedProjectsSelect();
+  await refreshSavedProjectsSelect();
   flashButtonText(saveProjectBtn, '✓ Saved', 1400);
 });
 async function loadProjectByName(name){
-  const idx = loadProjectsIndex();
-  const rec = idx[name];
+  let rec;
+  try{
+    rec = await idbGetProject(name);
+  }catch(err){
+    console.error(err);
+    alert("Couldn't load that saved project — its data may be corrupted.");
+    return;
+  }
   if(!rec) return;
   try{
-    const bytes = base64ToArrayBuffer(rec.pdfBase64);
+    const bytes = rec.pdfBytes;
+    state.pdfBytes = bytes.slice(0);
     const pdf = await pdfjsLib.getDocument({data:bytes}).promise;
     state.pdf = pdf;
-    state.pdfBase64 = rec.pdfBase64;
     state.numPages = pdf.numPages;
     pageOfText.textContent = 'of ' + pdf.numPages;
     pageNav.style.display = pdf.numPages>1 ? 'block' : 'none';
@@ -716,17 +756,21 @@ loadProjectBtn.addEventListener('click', ()=>{
   if(state.elements.length && !confirm('Load "'+name+'"? Any unsaved changes to the current project will be lost.')) return;
   loadProjectByName(name);
 });
-deleteProjectBtn.addEventListener('click', ()=>{
+deleteProjectBtn.addEventListener('click', async ()=>{
   const name = savedProjectsSelect.value;
   if(!name) return;
   if(!confirm('Delete saved project "'+name+'"? This cannot be undone.')) return;
-  const idx = loadProjectsIndex();
-  delete idx[name];
-  saveProjectsIndex(idx);
+  try{
+    await idbDeleteProject(name);
+  }catch(e){
+    console.error(e);
+    alert("Couldn't delete that saved project.");
+    return;
+  }
   refreshSavedProjectsSelect();
 });
 projectNameInput.addEventListener('input', ()=>{ state.projectName = projectNameInput.value; drawOverlay(); });
-refreshSavedProjectsSelect();
+refreshSavedProjectsSelect().catch(err=>console.error('Could not load saved project list:', err));
 
 /* ============================ helpers ============================ */
 function toFt(v,unit){return unit==='ft'? v : v*FT_PER_M;}
@@ -883,7 +927,7 @@ newPlanBtn.addEventListener('click', ()=>{
   exportBtn.disabled = true;
   pdfInput.value='';
   state.pdf = null;
-  state.pdfBase64 = null;
+  state.pdfBytes = null;
   state.bgLoaded = false;
   state.scalePxPerFt = null;
   state.elements = [];
@@ -913,7 +957,7 @@ async function loadFile(file){
   }
   try{
     const buf = await file.arrayBuffer();
-    state.pdfBase64 = arrayBufferToBase64(buf);
+    state.pdfBytes = buf.slice(0);
     const pdf = await pdfjsLib.getDocument({data:buf}).promise;
     state.pdf = pdf;
     state.numPages = pdf.numPages;
