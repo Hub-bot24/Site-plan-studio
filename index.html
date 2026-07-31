@@ -784,7 +784,11 @@ saveProjectBtn.addEventListener('click', async ()=>{
   const record = {
     name,
     savedAt: Date.now(),
-    pdfBytes: state.pdfBytes.slice(0),
+    // Stored as a Blob rather than a raw ArrayBuffer: some browsers (notably
+    // Chrome) can throw a generic "Internal error" from IndexedDB's storage
+    // engine when a large ArrayBuffer is inlined directly into a record —
+    // Blobs are handled by a separate, more robust disk-backed code path.
+    pdfBytes: new Blob([state.pdfBytes]),
     currentPage: state.currentPage,
     scalePxPerFt: state.scalePxPerFt,
     unit: state.unit,
@@ -818,7 +822,9 @@ async function loadProjectByName(name){
   }
   if(!rec) return;
   try{
-    const bytes = rec.pdfBytes;
+    // Older saved projects (before this fix) stored a raw ArrayBuffer directly;
+    // newer ones store a Blob — support loading either.
+    const bytes = (rec.pdfBytes instanceof Blob) ? await rec.pdfBytes.arrayBuffer() : rec.pdfBytes;
     state.pdfBytes = bytes.slice(0);
     const pdf = await pdfjsLib.getDocument({data:bytes}).promise;
     state.pdf = pdf;
