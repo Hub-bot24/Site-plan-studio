@@ -672,14 +672,33 @@ let idbPromise = null;
 function openProjectsDB(){
   if(idbPromise) return idbPromise;
   idbPromise = new Promise((resolve, reject)=>{
-    if(!window.indexedDB){ reject(new Error('IndexedDB not available')); return; }
-    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    if(!window.indexedDB){
+      reject(new Error(location.protocol==='file:'
+        ? 'This browser blocks saved-project storage when the page is opened directly from a file — open it from the hosted link instead.'
+        : 'This browser does not support saved-project storage.'));
+      return;
+    }
+    // A slow/blocked open (e.g. another tab holding the DB open during a version
+    // change) would otherwise hang forever with no feedback — give up after 8s.
+    const timeout = setTimeout(()=>{ reject(new Error('Timed out opening storage — try closing other tabs with this app open, then retry.')); }, 8000);
+    let req;
+    try{
+      req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    }catch(err){
+      // Some desktop browsers (notably Safari) throw synchronously here instead
+      // of going through onerror — e.g. when the page is opened via file:// or
+      // storage is disabled by a privacy setting.
+      clearTimeout(timeout);
+      reject(err);
+      return;
+    }
     req.onupgradeneeded = ()=>{
       const db = req.result;
       if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE, {keyPath:'name'});
     };
-    req.onsuccess = ()=>resolve(req.result);
-    req.onerror = ()=>reject(req.error);
+    req.onblocked = ()=>{ /* another tab is holding an older version open; keep waiting until the timeout */ };
+    req.onsuccess = ()=>{ clearTimeout(timeout); resolve(req.result); };
+    req.onerror = ()=>{ clearTimeout(timeout); reject(req.error); };
   });
   return idbPromise;
 }
@@ -772,7 +791,10 @@ saveProjectBtn.addEventListener('click', async ()=>{
     await idbPutProject(record);
   }catch(e){
     console.error(e);
-    alert("Couldn't save this project — " + (e && e.name==='QuotaExceededError' ? "your device's storage is full." : "an unexpected storage error occurred.") + " Try freeing up device storage.");
+    const reason = e && e.name==='QuotaExceededError'
+      ? "your device's storage is full."
+      : (e && e.message) ? e.message : 'an unexpected storage error occurred.';
+    alert("Couldn't save this project — " + reason);
     return;
   }
   state.projectName = name;
