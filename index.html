@@ -39,27 +39,30 @@
     flex-wrap:wrap;
   }
   #topbar h1{
-    font-family:'Space Mono',monospace;
+    font-family:'Inter',sans-serif;
+    font-weight:600;
     font-size:15px;
-    letter-spacing:1.5px;
+    letter-spacing:-0.1px;
     margin:0;
-    text-transform:uppercase;
+    color:var(--ink);
     white-space:nowrap;
   }
-  #topbar h1 span{color:var(--accent);}
+  #topbar h1 span{color:var(--ink-dim);font-weight:500;}
   .spacer{flex:1;}
   .unit-toggle{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;}
   .unit-toggle button{
     background:transparent;border:none;color:var(--ink-dim);
-    font-family:'Space Mono',monospace;font-size:12px;padding:7px 12px;cursor:pointer;
+    font-family:'Inter',sans-serif;font-weight:500;font-size:12px;padding:7px 12px;cursor:pointer;
   }
-  .unit-toggle button.active{background:var(--accent);color:var(--navy-deep);font-weight:700;}
+  .unit-toggle button.active{background:var(--accent);color:var(--navy-deep);font-weight:600;}
   .btn{
+    display:inline-flex;align-items:center;gap:6px;justify-content:center;
     font-family:'Inter',sans-serif;font-weight:600;font-size:13px;
     background:var(--accent);color:var(--navy-deep);border:none;
     padding:8px 14px;border-radius:6px;cursor:pointer;
     white-space:nowrap;
   }
+  .btn svg{flex-shrink:0;}
   .btn:hover{background:var(--accent-dark);}
   .btn.secondary{background:transparent;color:var(--ink);border:1px solid var(--line);}
   .btn.secondary:hover{border-color:var(--ink-dim);}
@@ -80,7 +83,7 @@
       repeating-linear-gradient(90deg, var(--line) 0, var(--line) 1px, transparent 1px, transparent 28px);
   }
   #placeholder.hidden{display:none;}
-  #placeholder h2{font-family:'Space Mono',monospace;font-size:18px;margin:0;letter-spacing:0.5px;}
+  #placeholder h2{font-family:'Inter',sans-serif;font-weight:600;font-size:18px;margin:0;color:var(--ink);}
   #placeholder p{color:var(--ink-dim);font-size:13px;max-width:340px;margin:0;line-height:1.5;}
   #placeholder .error{color:var(--danger);font-size:13px;max-width:340px;}
   input[type=file]{display:none;}
@@ -114,6 +117,18 @@
   #zoomBar .fitbtn{width:auto;padding:0 8px;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;}
   #zoomLabel{font-family:'Space Mono',monospace;font-size:12px;color:var(--ink-dim);min-width:42px;text-align:center;}
 
+  #renderingIndicator{
+    position:absolute;top:16px;right:16px;z-index:6;
+    display:none;align-items:center;gap:8px;
+    background:rgba(15,32,56,0.96);border:1px solid var(--line);
+    border-radius:8px;padding:7px 12px;
+    font-family:'Inter',sans-serif;font-size:12px;color:var(--ink-dim);
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  }
+  #renderingIndicator.visible{display:flex;}
+  #renderingIndicator svg{animation:spin 0.8s linear infinite;color:var(--accent);}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
   #drawBar{
     position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:6;
     display:none;align-items:center;gap:10px;flex-wrap:wrap;
@@ -137,19 +152,19 @@
   .checkfield{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;color:var(--ink-dim);line-height:1.4;}
   .checkfield input{width:auto;margin-top:2px;}
   .cutout-badge{
-    font-family:'Space Mono',monospace;font-size:9px;color:var(--danger);
+    font-family:'Inter',sans-serif;font-weight:600;font-size:9px;color:var(--danger);
     border:1px solid var(--danger);border-radius:4px;padding:2px 5px;flex-shrink:0;
-    letter-spacing:0.5px;
+    letter-spacing:0.4px;
   }
 
   /* ---------- Precision aiming: magnifier + fine-drag placement ---------- */
   .precision-ctrl{
     display:flex;align-items:center;gap:7px;
-    font-family:'Space Mono',monospace;font-size:11px;color:var(--ink-dim);
+    font-family:'Inter',sans-serif;font-weight:500;font-size:11px;color:var(--ink-dim);
     border:1px solid var(--line);border-radius:6px;padding:5px 10px;
   }
   .precision-ctrl input[type=range]{width:70px;accent-color:var(--accent);}
-  .precision-ctrl .pval{color:var(--accent);min-width:32px;}
+  .precision-ctrl .pval{font-family:'Space Mono',monospace;color:var(--accent);min-width:32px;}
 
   #magnifierWrap{
     position:fixed;z-index:80;display:none;flex-direction:column;align-items:center;gap:6px;
@@ -180,8 +195,8 @@
   }
   .panel.disabled{opacity:0.42;pointer-events:none;}
   .eyebrow{
-    font-family:'Space Mono',monospace;font-size:11px;color:var(--accent);
-    letter-spacing:1.2px;text-transform:uppercase;margin:0 0 8px 0;
+    font-family:'Inter',sans-serif;font-weight:600;font-size:11px;color:var(--ink-dim);
+    letter-spacing:0.6px;text-transform:uppercase;margin:0 0 8px 0;
   }
   .field{margin-bottom:10px;}
   .field label{display:block;font-size:12px;color:var(--ink-dim);margin-bottom:4px;}
@@ -206,7 +221,7 @@
   .elrow .details input{width:100%;background:transparent;border:none;color:var(--ink);font-size:13px;font-family:'Inter',sans-serif;padding:0;margin-bottom:4px;}
   .elrow .dims{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--ink-dim);flex-wrap:wrap;}
   .elrow .dims input{width:46px;background:var(--navy-mid);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px;}
-  .icnbtn{background:transparent;border:1px solid var(--line);color:var(--ink-dim);border-radius:5px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;flex-shrink:0;}
+  .icnbtn{background:transparent;border:1px solid var(--line);color:var(--ink-dim);border-radius:5px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;}
   .icnbtn:hover{border-color:var(--ink);color:var(--ink);}
   .icnbtn.del:hover{border-color:var(--danger);color:var(--danger);}
   .empty-note{color:var(--ink-dim);font-size:12px;line-height:1.5;}
@@ -228,19 +243,25 @@
 <div id="app">
 
   <div id="topbar">
-    <h1>SITE<span>PLAN</span>STUDIO</h1>
+    <h1>Site Plan <span>Studio</span></h1>
     <div class="unit-toggle" id="unitToggle">
       <button data-unit="ft" class="active">FEET</button>
       <button data-unit="m">METERS</button>
     </div>
     <div class="precision-ctrl" title="How much a finger/mouse movement moves a calibration or drawing point — lower is finer control, magnified live while you press.">
-      <span>PRECISION</span>
+      <span>Precision</span>
       <input type="range" id="sensitivityInput" min="8" max="100" value="35">
       <span class="pval" id="sensitivityLabel">35%</span>
     </div>
     <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
-    <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>↶ Undo</button>
-    <button class="btn secondary" id="eraseBtn" title="Erase mode — tap any element on the plan to delete it">✂ Erase</button>
+    <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+      <span class="btn-label">Undo</span>
+    </button>
+    <button class="btn secondary" id="eraseBtn" title="Erase mode — tap any element on the plan to delete it">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l5.3 5.3a2 2 0 0 1 0 2.8L13 19"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+      <span class="btn-label">Erase</span>
+    </button>
     <div class="spacer"></div>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
   </div>
@@ -259,6 +280,10 @@
         <span id="zoomLabel">100%</span>
         <button id="zoomInBtn" title="Zoom in">+</button>
         <button id="zoomFitBtn" class="fitbtn" title="Fit to view">Fit</button>
+      </div>
+      <div id="renderingIndicator">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>
+        Rendering page…
       </div>
       <div id="drawBar">
         <span class="drawstat" id="drawStat">Tap the first point…</span>
@@ -282,7 +307,10 @@
           <label>Project name</label>
           <input type="text" id="projectNameInput" value="Untitled Site Plan">
         </div>
-        <button class="btn secondary" id="saveProjectBtn" type="button" style="width:100%;">💾 Save project</button>
+        <button class="btn secondary" id="saveProjectBtn" type="button" style="width:100%;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
+          <span class="btn-label">Save project</span>
+        </button>
         <div class="field" style="margin-top:10px;">
           <label>Saved projects</label>
           <select id="savedProjectsSelect"><option value="">— none saved —</option></select>
@@ -440,6 +468,7 @@ const state = {
   aiming:null,
   panning:null,
   eraseMode:false,
+  rendering:false,
   nextId:1,
   projectName:'Untitled Site Plan',
   northRotationDeg:0,
@@ -472,6 +501,7 @@ const zoomInBtn = document.getElementById('zoomInBtn');
 const zoomOutBtn = document.getElementById('zoomOutBtn');
 const zoomFitBtn = document.getElementById('zoomFitBtn');
 const zoomLabel = document.getElementById('zoomLabel');
+const renderingIndicator = document.getElementById('renderingIndicator');
 const planStatusText = document.getElementById('planStatusText');
 const pageNav = document.getElementById('pageNav');
 const pageInput = document.getElementById('pageInput');
@@ -537,13 +567,14 @@ const loadProjectBtn = document.getElementById('loadProjectBtn');
 const deleteProjectBtn = document.getElementById('deleteProjectBtn');
 const undoBtn = document.getElementById('undoBtn');
 const eraseBtn = document.getElementById('eraseBtn');
+const eraseBtnLabel = eraseBtn.querySelector('.btn-label');
 
 const ctxOverlay = overlayCanvas.getContext('2d');
 
 eraseBtn.addEventListener('click', ()=>{
   state.eraseMode = !state.eraseMode;
   eraseBtn.classList.toggle('active-erase', state.eraseMode);
-  eraseBtn.textContent = state.eraseMode ? '✂ Erasing… tap plan' : '✂ Erase';
+  eraseBtnLabel.textContent = state.eraseMode ? 'Erasing… tap plan' : 'Erase';
   if(state.eraseMode){
     if(state.drawing) cancelDrawing();
     if(state.calibrating) cancelCalibration();
@@ -655,10 +686,11 @@ async function refreshSavedProjectsSelect(){
   deleteProjectBtn.disabled = false;
 }
 function flashButtonText(btn, text, ms){
-  const orig = btn.textContent;
-  btn.textContent = text;
+  const labelEl = btn.querySelector('.btn-label') || btn;
+  const orig = labelEl.textContent;
+  labelEl.textContent = text;
   btn.disabled = true;
-  setTimeout(()=>{ btn.textContent = orig; btn.disabled = false; }, ms||1400);
+  setTimeout(()=>{ labelEl.textContent = orig; btn.disabled = false; }, ms||1400);
 }
 saveProjectBtn.addEventListener('click', async ()=>{
   if(!state.pdfBytes){
@@ -981,24 +1013,40 @@ function showUploadError(msg){
 }
 
 async function renderPage(pageNum){
-  const page = await state.pdf.getPage(pageNum);
-  const base = page.getViewport({scale:1});
-  const maxDim = 2200;
-  let factor = Math.min(maxDim/base.width, maxDim/base.height);
-  factor = Math.min(Math.max(factor, 0.4), 4);
-  const viewport = page.getViewport({scale:factor});
-  bgCanvas.width = overlayCanvas.width = Math.round(viewport.width);
-  bgCanvas.height = overlayCanvas.height = Math.round(viewport.height);
-  const ctx = bgCanvas.getContext('2d');
-  await page.render({canvasContext:ctx, viewport}).promise;
-  state.currentPage = pageNum;
-  state.bgLoaded = true;
-  planStatusText.textContent = 'Loaded page ' + pageNum + ' of ' + state.numPages + '.';
-  calibratePanel.classList.remove('disabled');
-  zoomBar.classList.add('visible');
-  state.zoom = computeFitZoom();
-  applyZoomAndLayout();
-  drawOverlay();
+  // Guard against overlapping renders (e.g. rapid next/prev clicks on a large multi-page
+  // PDF) — pdf.js throws if render() is called again on the same canvas mid-render.
+  if(state.rendering) return;
+  state.rendering = true;
+  prevPageBtn.disabled = true;
+  nextPageBtn.disabled = true;
+  pageInput.disabled = true;
+  renderingIndicator.classList.add('visible');
+  try{
+    const page = await state.pdf.getPage(pageNum);
+    const base = page.getViewport({scale:1});
+    const maxDim = 2200;
+    let factor = Math.min(maxDim/base.width, maxDim/base.height);
+    factor = Math.min(Math.max(factor, 0.4), 4);
+    const viewport = page.getViewport({scale:factor});
+    bgCanvas.width = overlayCanvas.width = Math.round(viewport.width);
+    bgCanvas.height = overlayCanvas.height = Math.round(viewport.height);
+    const ctx = bgCanvas.getContext('2d');
+    await page.render({canvasContext:ctx, viewport}).promise;
+    state.currentPage = pageNum;
+    state.bgLoaded = true;
+    planStatusText.textContent = 'Loaded page ' + pageNum + ' of ' + state.numPages + '.';
+    calibratePanel.classList.remove('disabled');
+    zoomBar.classList.add('visible');
+    state.zoom = computeFitZoom();
+    applyZoomAndLayout();
+    drawOverlay();
+  } finally {
+    state.rendering = false;
+    prevPageBtn.disabled = false;
+    nextPageBtn.disabled = false;
+    pageInput.disabled = false;
+    renderingIndicator.classList.remove('visible');
+  }
 }
 
 function computeFitZoom(){
@@ -1168,7 +1216,7 @@ document.addEventListener('keydown',(e)=>{
   if(e.key==='Escape'){
     if(state.drawing) cancelDrawing();
     if(state.calibrating) cancelCalibration();
-    if(state.eraseMode){ state.eraseMode=false; eraseBtn.classList.remove('active-erase'); eraseBtn.textContent='✂ Erase'; drawOverlay(); }
+    if(state.eraseMode){ state.eraseMode=false; eraseBtn.classList.remove('active-erase'); eraseBtnLabel.textContent='Erase'; drawOverlay(); }
   }
 });
 
@@ -1224,14 +1272,6 @@ function updateMagnifier(){
   magCtx.stroke();
   magCtx.restore();
 }
-function startAiming(e, x, y, kind){
-  state.aiming = { kind, startClientX:e.clientX, startClientY:e.clientY, baseX:x, baseY:y, x, y };
-  overlayCanvas.setPointerCapture(e.pointerId);
-  magnifierWrap.classList.add('visible');
-  positionMagnifier(e.clientX, e.clientY);
-  drawOverlay();
-  updateMagnifier();
-}
 function getSnapCandidates(excludePointsOf){
   const pts = [];
   state.elements.forEach(el=>{
@@ -1256,6 +1296,18 @@ function getSnapCandidates(excludePointsOf){
   }
   return pts;
 }
+function startAiming(e, x, y, kind){
+  state.aiming = { kind, startClientX:e.clientX, startClientY:e.clientY, baseX:x, baseY:y, x, y };
+  // Other elements can't change mid-gesture (we hold pointer capture), so compute the
+  // snap candidate list once per gesture instead of on every pointermove frame.
+  state.aiming.snapCandidates = (kind==='draw' && snapToggleInput.checked && state.drawing)
+    ? getSnapCandidates(state.drawing.points) : null;
+  overlayCanvas.setPointerCapture(e.pointerId);
+  magnifierWrap.classList.add('visible');
+  positionMagnifier(e.clientX, e.clientY);
+  drawOverlay();
+  updateMagnifier();
+}
 function updateAiming(e){
   const a = state.aiming;
   const dxClient = e.clientX - a.startClientX;
@@ -1264,10 +1316,10 @@ function updateAiming(e){
   let x = a.baseX + (dxClient*sens)/state.zoom;
   let y = a.baseY + (dyClient*sens)/state.zoom;
   a.snapped = null;
-  if(a.kind==='draw' && snapToggleInput.checked && state.drawing){
+  if(a.snapCandidates && state.drawing){
     const threshPx = 10/state.zoom;
     let best=null, bestDist=threshPx;
-    getSnapCandidates(state.drawing.points).forEach(c=>{
+    a.snapCandidates.forEach(c=>{
       const d = Math.hypot(c.x-x, c.y-y);
       if(d<bestDist){ bestDist=d; best=c; }
     });
@@ -1291,8 +1343,8 @@ function updateAiming(e){
   }
   a.x = x; a.y = y;
   positionMagnifier(e.clientX, e.clientY);
-  drawOverlay();
-  updateMagnifier();
+  requestRedraw();
+  requestMagnifierUpdate();
 }
 function commitAiming(){
   const a = state.aiming;
@@ -1382,7 +1434,7 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
     el.xPx = x - state.dragging.offsetX;
     el.yPx = y - state.dragging.offsetY;
   }
-  drawOverlay();
+  requestRedraw();
 });
 function endDrag(e){
   if(e && !e.isPrimary) return;
@@ -1431,6 +1483,18 @@ function findElementAt(x,y){
 }
 
 /* ============================ Drawing ============================ */
+let redrawPending = false;
+function requestRedraw(){
+  if(redrawPending) return;
+  redrawPending = true;
+  requestAnimationFrame(()=>{ redrawPending = false; drawOverlay(); });
+}
+let magnifierUpdatePending = false;
+function requestMagnifierUpdate(){
+  if(magnifierUpdatePending) return;
+  magnifierUpdatePending = true;
+  requestAnimationFrame(()=>{ magnifierUpdatePending = false; updateMagnifier(); });
+}
 function drawOverlay(){
   ctxOverlay.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
   zOrderedElements().forEach(el=>drawElement(ctxOverlay, el, el.id===state.selectedId));
@@ -1984,7 +2048,8 @@ function renderElementsList(){
     row.appendChild(details);
 
     const dupBtn = document.createElement('button');
-    dupBtn.className='icnbtn'; dupBtn.title='Duplicate'; dupBtn.textContent='⧉';
+    dupBtn.className='icnbtn'; dupBtn.title='Duplicate';
+    dupBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
     dupBtn.addEventListener('click', (e)=>{
       e.stopPropagation();
       let copy;
