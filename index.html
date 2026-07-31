@@ -120,6 +120,34 @@
   #zoomBar .fitbtn{width:auto;padding:0 8px;font-family:'Inter',sans-serif;font-size:12px;font-weight:600;}
   #zoomLabel{font-family:'Space Mono',monospace;font-size:12px;color:var(--ink-dim);min-width:42px;text-align:center;}
 
+  #drawBar{
+    position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:6;
+    display:none;align-items:center;gap:10px;flex-wrap:wrap;
+    background:rgba(15,49,89,0.96);border:1px solid var(--accent);
+    border-radius:8px;padding:8px 12px;
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+    max-width:calc(100% - 32px);
+  }
+  #drawBar.visible{display:flex;}
+  #drawBar .drawstat{font-family:'Space Mono',monospace;font-size:12px;color:var(--accent);white-space:nowrap;}
+  #drawBar button{
+    font-family:'Inter',sans-serif;font-weight:600;font-size:12px;
+    border:1px solid var(--line);background:transparent;color:var(--ink);
+    padding:5px 10px;border-radius:5px;cursor:pointer;white-space:nowrap;
+  }
+  #drawBar button:hover{border-color:var(--ink);}
+  #drawBar button.primary{background:var(--accent);color:var(--navy-deep);border-color:var(--accent);}
+  #drawBar button.primary:hover{background:var(--accent-dark);}
+  #drawBar button:disabled{opacity:0.35;cursor:not-allowed;}
+
+  .checkfield{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;color:var(--ink-dim);line-height:1.4;}
+  .checkfield input{width:auto;margin-top:2px;}
+  .cutout-badge{
+    font-family:'Space Mono',monospace;font-size:9px;color:var(--danger);
+    border:1px solid var(--danger);border-radius:4px;padding:2px 5px;flex-shrink:0;
+    letter-spacing:0.5px;
+  }
+
   /* ---------- Sidebar ---------- */
   #sidebar{
     width:340px;flex-shrink:0;
@@ -207,6 +235,12 @@
         <button id="zoomInBtn" title="Zoom in">+</button>
         <button id="zoomFitBtn" class="fitbtn" title="Fit to view">Fit</button>
       </div>
+      <div id="drawBar">
+        <span class="drawstat" id="drawStat">Tap the first point…</span>
+        <button id="drawUndoBtn" type="button">Undo point</button>
+        <button id="drawFinishBtn" type="button" class="primary">Finish</button>
+        <button id="drawCancelBtn" type="button">Cancel</button>
+      </div>
       <div id="canvasScroll">
         <div id="canvasWrap">
           <canvas id="bgCanvas"></canvas>
@@ -269,16 +303,32 @@
           <label>Diameter (<span class="unit-label">ft</span>)</label>
           <input type="number" id="diameterInput" step="0.1" placeholder="6">
         </div>
+        <div id="pathFields" style="display:none;">
+          <p class="helptext" id="pathHint">Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.</p>
+          <div class="checkfield" id="cutoutFieldWrap" style="display:none;">
+            <input type="checkbox" id="cutoutInput">
+            <label for="cutoutInput">Cutout — subtract this area from the total (e.g. a pool inside a tiled patio)</label>
+          </div>
+          <button class="btn" id="startDrawBtn" type="button">Start drawing on plan</button>
+        </div>
         <button class="btn" id="addElBtn" style="margin-top:4px;">Add to plan</button>
       </div>
 
       <div class="panel disabled" id="elementsPanel">
         <p class="eyebrow">04 — Elements &amp; totals</p>
         <div id="elementsList"></div>
-        <p class="empty-note" id="emptyNote">No elements added yet — use the form above to add your first deck, patio, or planting bed.</p>
+        <p class="empty-note" id="emptyNote">No elements added yet — use the form above to add your first deck, patio, fence, or planting bed.</p>
+        <div class="totalline" id="cutoutRow" style="display:none;">
+          <span>CUTOUT AREA (SUBTRACTED)</span>
+          <span id="cutoutArea">0 sq ft</span>
+        </div>
         <div class="totalline">
-          <span>TOTAL ADDED AREA</span>
+          <span>TOTAL AREA (NET)</span>
           <span id="totalArea">0 sq ft</span>
+        </div>
+        <div class="totalline" id="totalLengthRow" style="display:none;">
+          <span>TOTAL FENCE / LINE LENGTH</span>
+          <span id="totalLength">0 ft</span>
         </div>
       </div>
 
@@ -317,6 +367,7 @@ const state = {
   elements:[],
   selectedId:null,
   dragging:null,
+  drawing:null,
   nextId:1,
   projectName:'Untitled Site Plan',
   northRotationDeg:0,
@@ -331,6 +382,8 @@ const PRESETS = {
   pool:      {label:'Pool',        color:'#3E7CB1', shape:'rect'},
   tree:      {label:'Tree',        color:'#2F5233', shape:'circle'},
   custom:    {label:'Custom area', color:'#F2A93B', shape:'rect'},
+  fence:     {label:'Fence / line',        color:'#EAF2FB', shape:'path'},
+  areapoly:  {label:'Custom area (outline)', color:'#F2A93B', shape:'polygon'},
 };
 
 /* ============================ DOM refs ============================ */
@@ -372,11 +425,25 @@ const widthInput = document.getElementById('widthInput');
 const heightInput = document.getElementById('heightInput');
 const diameterInput = document.getElementById('diameterInput');
 const addElBtn = document.getElementById('addElBtn');
+const pathFields = document.getElementById('pathFields');
+const pathHint = document.getElementById('pathHint');
+const cutoutFieldWrap = document.getElementById('cutoutFieldWrap');
+const cutoutInput = document.getElementById('cutoutInput');
+const startDrawBtn = document.getElementById('startDrawBtn');
+const drawBar = document.getElementById('drawBar');
+const drawStat = document.getElementById('drawStat');
+const drawUndoBtn = document.getElementById('drawUndoBtn');
+const drawFinishBtn = document.getElementById('drawFinishBtn');
+const drawCancelBtn = document.getElementById('drawCancelBtn');
 
 const elementsPanel = document.getElementById('elementsPanel');
 const elementsList = document.getElementById('elementsList');
 const emptyNote = document.getElementById('emptyNote');
 const totalArea = document.getElementById('totalArea');
+const cutoutRow = document.getElementById('cutoutRow');
+const cutoutArea = document.getElementById('cutoutArea');
+const totalLengthRow = document.getElementById('totalLengthRow');
+const totalLength = document.getElementById('totalLength');
 
 const titleBlockPanel = document.getElementById('titleBlockPanel');
 const projectNameInput = document.getElementById('projectNameInput');
@@ -387,12 +454,94 @@ const ctxOverlay = overlayCanvas.getContext('2d');
 /* ============================ helpers ============================ */
 function toFt(v,unit){return unit==='ft'? v : v*FT_PER_M;}
 function fromFt(vFt,unit){return unit==='ft'? vFt : vFt/FT_PER_M;}
+function areaFromFt(ftArea,unit){return unit==='ft'? ftArea : ftArea/(FT_PER_M*FT_PER_M);}
 function unitAbbrev(){return state.unit;}
 function formatNum(n){
   if(!isFinite(n)) return '0';
   return (Math.round(n*100)/100).toString();
 }
 function getElementById(id){return state.elements.find(e=>e.id===id);}
+
+/* ---- path (fence) / polygon (custom area) geometry, working in canvas px ---- */
+function pathLengthPx(points){
+  let sum=0;
+  for(let i=1;i<points.length;i++){
+    sum += Math.hypot(points[i].x-points[i-1].x, points[i].y-points[i-1].y);
+  }
+  return sum;
+}
+function pathLengthDisplay(points){
+  if(!state.scalePxPerFt) return 0;
+  return fromFt(pathLengthPx(points)/state.scalePxPerFt, state.unit);
+}
+function polygonAreaPx(points){
+  let a=0;
+  for(let i=0;i<points.length;i++){
+    const p1=points[i], p2=points[(i+1)%points.length];
+    a += p1.x*p2.y - p2.x*p1.y;
+  }
+  return Math.abs(a)/2;
+}
+function polygonAreaDisplay(points){
+  if(!state.scalePxPerFt || points.length<3) return 0;
+  return areaFromFt(polygonAreaPx(points)/(state.scalePxPerFt*state.scalePxPerFt), state.unit);
+}
+function polygonCentroid(points){
+  let cx=0,cy=0,area=0;
+  for(let i=0;i<points.length;i++){
+    const p1=points[i], p2=points[(i+1)%points.length];
+    const cross = p1.x*p2.y - p2.x*p1.y;
+    area += cross;
+    cx += (p1.x+p2.x)*cross;
+    cy += (p1.y+p2.y)*cross;
+  }
+  area/=2;
+  if(area===0) return points[0];
+  return {x:cx/(6*area), y:cy/(6*area)};
+}
+function pointAtPathFraction(points, frac){
+  const total = pathLengthPx(points);
+  if(total===0) return points[0];
+  const target = total*frac;
+  let acc=0;
+  for(let i=1;i<points.length;i++){
+    const segLen = Math.hypot(points[i].x-points[i-1].x, points[i].y-points[i-1].y);
+    if(acc+segLen>=target){
+      const t = segLen? (target-acc)/segLen : 0;
+      return {x:points[i-1].x+(points[i].x-points[i-1].x)*t, y:points[i-1].y+(points[i].y-points[i-1].y)*t};
+    }
+    acc+=segLen;
+  }
+  return points[points.length-1];
+}
+function distToSegment(px,py,p1,p2){
+  const dx=p2.x-p1.x, dy=p2.y-p1.y;
+  const lenSq = dx*dx+dy*dy;
+  let t = lenSq? ((px-p1.x)*dx+(py-p1.y)*dy)/lenSq : 0;
+  t = Math.max(0,Math.min(1,t));
+  const cx = p1.x+t*dx, cy=p1.y+t*dy;
+  return Math.hypot(px-cx,py-cy);
+}
+function pointInPolygon(px,py,points){
+  let inside=false;
+  for(let i=0,j=points.length-1;i<points.length;j=i++){
+    const xi=points[i].x, yi=points[i].y, xj=points[j].x, yj=points[j].y;
+    const intersect = ((yi>py)!==(yj>py)) && (px < (xj-xi)*(py-yi)/(yj-yi)+xi);
+    if(intersect) inside=!inside;
+  }
+  return inside;
+}
+function polygonBounds(points){
+  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+  points.forEach(p=>{
+    minX=Math.min(minX,p.x); maxX=Math.max(maxX,p.x);
+    minY=Math.min(minY,p.y); maxY=Math.max(maxY,p.y);
+  });
+  return {minX,minY,maxX,maxY,width:maxX-minX,height:maxY-minY};
+}
+function zOrderedElements(){
+  return state.elements.filter(e=>!e.isCutout).concat(state.elements.filter(e=>e.isCutout));
+}
 
 function updateUnitLabels(){
   document.querySelectorAll('.unit-label').forEach(el=>{el.textContent = state.unit;});
@@ -407,13 +556,15 @@ Object.keys(PRESETS).forEach(key=>{
 });
 function updateAddFieldsForType(){
   const preset = PRESETS[typeSelect.value];
-  if(preset.shape==='rect'){
-    rectFields.style.display='flex';
-    circleFields.style.display='none';
-  } else {
-    rectFields.style.display='none';
-    circleFields.style.display='block';
-  }
+  rectFields.style.display = preset.shape==='rect' ? 'flex' : 'none';
+  circleFields.style.display = preset.shape==='circle' ? 'block' : 'none';
+  const isDrawn = preset.shape==='path' || preset.shape==='polygon';
+  pathFields.style.display = isDrawn ? 'block' : 'none';
+  cutoutFieldWrap.style.display = preset.shape==='polygon' ? 'flex' : 'none';
+  addElBtn.style.display = isDrawn ? 'none' : '';
+  pathHint.textContent = preset.shape==='path'
+    ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
+    : 'Tap "Start drawing", then tap each corner of the area — it closes automatically. Tap Finish when done (needs at least 3 points).';
 }
 typeSelect.addEventListener('change', updateAddFieldsForType);
 updateAddFieldsForType();
@@ -466,9 +617,9 @@ async function loadFile(file){
     pageNav.style.display = pdf.numPages>1 ? 'block' : 'none';
     pageInput.max = pdf.numPages;
     pageInput.value = 1;
-    await renderPage(1);
     placeholder.classList.add('hidden');
     canvasScroll.classList.add('visible');
+    await renderPage(1);
     newPlanBtn.style.display='inline-block';
     exportBtn.disabled = false;
   }catch(err){
@@ -542,6 +693,7 @@ pageInput.addEventListener('change', ()=>{
 
 /* ============================ Calibration ============================ */
 calibrateBtn.addEventListener('click', ()=>{
+  if(state.drawing) cancelDrawing();
   state.calibrating = true;
   state.calPoints = [];
   state.calPendingPx = null;
@@ -588,6 +740,79 @@ function scaleStatusText(){
   return 'Calibrated: ' + formatNum(pxPerDisplayUnit()) + ' px = 1 ' + state.unit;
 }
 
+/* ============================ Draw fence / polygon ============================ */
+startDrawBtn.addEventListener('click', ()=>{
+  if(state.drawing && !confirm('Discard the in-progress drawing and start a new one?')) return;
+  if(state.calibrating) cancelCalibration();
+  const preset = PRESETS[typeSelect.value];
+  const typedLabel = labelInput.value.trim();
+  state.drawing = {
+    shape: preset.shape,
+    label: typedLabel || uniqueLabel(preset.label),
+    color: preset.color,
+    isCutout: preset.shape==='polygon' && cutoutInput.checked,
+    points: [],
+  };
+  state.selectedId = null;
+  drawBar.classList.add('visible');
+  updateDrawBar();
+  renderElementsList();
+  drawOverlay();
+});
+drawUndoBtn.addEventListener('click', ()=>{
+  if(!state.drawing || !state.drawing.points.length) return;
+  state.drawing.points.pop();
+  updateDrawBar();
+  drawOverlay();
+});
+drawCancelBtn.addEventListener('click', cancelDrawing);
+function cancelDrawing(){
+  state.drawing = null;
+  drawBar.classList.remove('visible');
+  drawOverlay();
+}
+drawFinishBtn.addEventListener('click', ()=>{
+  if(!state.drawing) return;
+  const minPts = state.drawing.shape==='path' ? 2 : 3;
+  if(state.drawing.points.length < minPts) return;
+  const el = {
+    id: state.nextId++,
+    shape: state.drawing.shape,
+    label: state.drawing.label,
+    color: state.drawing.color,
+    isCutout: !!state.drawing.isCutout,
+    points: state.drawing.points.map(p=>({x:p.x,y:p.y})),
+  };
+  state.elements.push(el);
+  state.selectedId = el.id;
+  state.drawing = null;
+  drawBar.classList.remove('visible');
+  labelInput.value='';
+  cutoutInput.checked=false;
+  renderElementsList();
+  drawOverlay();
+});
+function updateDrawBar(){
+  if(!state.drawing) return;
+  const n = state.drawing.points.length;
+  const isPath = state.drawing.shape==='path';
+  if(n===0){
+    drawStat.textContent = 'Tap the first point…';
+  } else if(isPath){
+    drawStat.textContent = n+' point'+(n===1?'':'s')+' — '+formatNum(pathLengthDisplay(state.drawing.points))+' '+state.unit+' so far';
+  } else {
+    drawStat.textContent = n+' point'+(n===1?'':'s')+(n>=3 ? ' — '+formatNum(polygonAreaDisplay(state.drawing.points))+' sq '+state.unit+' so far' : ' (need at least 3)');
+  }
+  drawUndoBtn.disabled = n===0;
+  drawFinishBtn.disabled = n < (isPath?2:3);
+}
+document.addEventListener('keydown',(e)=>{
+  if(e.key==='Escape'){
+    if(state.drawing) cancelDrawing();
+    if(state.calibrating) cancelCalibration();
+  }
+});
+
 /* ============================ Canvas interaction ============================ */
 function getCanvasPos(e){
   const rect = overlayCanvas.getBoundingClientRect();
@@ -613,10 +838,20 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
     drawOverlay();
     return;
   }
+  if(state.drawing){
+    state.drawing.points.push({x,y});
+    updateDrawBar();
+    drawOverlay();
+    return;
+  }
   const hit = findElementAt(x,y);
   if(hit){
     state.selectedId = hit.id;
-    state.dragging = {id:hit.id, offsetX:x-hit.xPx, offsetY:y-hit.yPx};
+    if(hit.shape==='rect' || hit.shape==='circle'){
+      state.dragging = {id:hit.id, mode:'point', offsetX:x-hit.xPx, offsetY:y-hit.yPx};
+    } else {
+      state.dragging = {id:hit.id, mode:'points', anchorX:x, anchorY:y, startPoints:hit.points.map(p=>({x:p.x,y:p.y}))};
+    }
     overlayCanvas.style.touchAction='none';
     overlayCanvas.setPointerCapture(e.pointerId);
   } else {
@@ -630,8 +865,13 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
   const {x,y} = getCanvasPos(e);
   const el = getElementById(state.dragging.id);
   if(!el) return;
-  el.xPx = x - state.dragging.offsetX;
-  el.yPx = y - state.dragging.offsetY;
+  if(state.dragging.mode==='points'){
+    const dx = x-state.dragging.anchorX, dy = y-state.dragging.anchorY;
+    el.points = state.dragging.startPoints.map(p=>({x:p.x+dx,y:p.y+dy}));
+  } else {
+    el.xPx = x - state.dragging.offsetX;
+    el.yPx = y - state.dragging.offsetY;
+  }
   drawOverlay();
 });
 function endDrag(e){
@@ -643,6 +883,16 @@ overlayCanvas.addEventListener('pointerup', endDrag);
 overlayCanvas.addEventListener('pointercancel', endDrag);
 
 function hitTest(el,px,py){
+  if(el.shape==='path'){
+    const thresh = 10;
+    for(let i=1;i<el.points.length;i++){
+      if(distToSegment(px,py,el.points[i-1],el.points[i])<=thresh) return true;
+    }
+    return false;
+  }
+  if(el.shape==='polygon'){
+    return pointInPolygon(px,py,el.points);
+  }
   const dx = px-el.xPx, dy = py-el.yPx;
   const rad = -el.rotationDeg*Math.PI/180;
   const lx = dx*Math.cos(rad) - dy*Math.sin(rad);
@@ -656,8 +906,9 @@ function hitTest(el,px,py){
   }
 }
 function findElementAt(x,y){
-  for(let i=state.elements.length-1;i>=0;i--){
-    if(hitTest(state.elements[i],x,y)) return state.elements[i];
+  const list = zOrderedElements();
+  for(let i=list.length-1;i>=0;i--){
+    if(hitTest(list[i],x,y)) return list[i];
   }
   return null;
 }
@@ -665,7 +916,10 @@ function findElementAt(x,y){
 /* ============================ Drawing ============================ */
 function drawOverlay(){
   ctxOverlay.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
-  state.elements.forEach(el=>drawElement(ctxOverlay, el, el.id===state.selectedId));
+  zOrderedElements().forEach(el=>drawElement(ctxOverlay, el, el.id===state.selectedId));
+  if(state.drawing){
+    drawInProgress(ctxOverlay, state.drawing);
+  }
   if(state.calPoints.length){
     ctxOverlay.save();
     ctxOverlay.fillStyle = '#F2A93B';
@@ -688,6 +942,8 @@ function drawOverlay(){
 }
 
 function drawElement(ctx, el, selected){
+  if(el.shape==='path'){ drawPathElement(ctx, el, selected); return; }
+  if(el.shape==='polygon'){ drawPolygonElement(ctx, el, selected); return; }
   ctx.save();
   ctx.translate(el.xPx, el.yPx);
   ctx.rotate(el.rotationDeg*Math.PI/180);
@@ -731,15 +987,144 @@ function drawElement(ctx, el, selected){
   }
 }
 
+function drawLabelChip(ctx, x, y, text, textColor){
+  ctx.save();
+  ctx.font = '600 12px Inter, sans-serif';
+  const tw = ctx.measureText(text).width;
+  ctx.fillStyle = 'rgba(11,37,69,0.85)';
+  ctx.fillRect(x-tw/2-4, y-10, tw+8, 20);
+  ctx.fillStyle = textColor;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+function strokePolyline(ctx, points, closed){
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for(let i=1;i<points.length;i++) ctx.lineTo(points[i].x, points[i].y);
+  if(closed) ctx.closePath();
+  ctx.stroke();
+}
+
+function drawPathElement(ctx, el, selected){
+  if(el.points.length<2) return;
+  ctx.save();
+  ctx.strokeStyle = el.color;
+  ctx.lineWidth = selected ? 4 : 3;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  strokePolyline(ctx, el.points, false);
+  ctx.fillStyle = el.color;
+  el.points.forEach(p=>{
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,3,0,Math.PI*2);
+    ctx.fill();
+  });
+  ctx.restore();
+  const mid = pointAtPathFraction(el.points, 0.5);
+  const text = el.label+' — '+formatNum(pathLengthDisplay(el.points))+' '+state.unit;
+  drawLabelChip(ctx, mid.x, mid.y, text, '#EAF2FB');
+  if(selected){
+    ctx.save();
+    ctx.setLineDash([6,4]);
+    ctx.strokeStyle = '#F2A93B';
+    ctx.lineWidth = 1.5;
+    strokePolyline(ctx, el.points, false);
+    ctx.restore();
+  }
+}
+
+function drawPolygonElement(ctx, el, selected){
+  if(el.points.length<3) return;
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(el.points[0].x, el.points[0].y);
+  for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+  ctx.closePath();
+  if(el.isCutout){
+    ctx.save();
+    ctx.clip();
+    const b = polygonBounds(el.points);
+    ctx.strokeStyle = el.color+'AA';
+    ctx.lineWidth = 2;
+    const span = b.height || 1;
+    for(let d=b.minX-span; d<b.maxX+span; d+=10){
+      ctx.beginPath();
+      ctx.moveTo(d, b.minY);
+      ctx.lineTo(d+span, b.maxY);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.setLineDash([5,4]);
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = 2;
+    strokePolyline(ctx, el.points, true);
+  } else {
+    ctx.fillStyle = el.color+'CC';
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = 2;
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+  const c = polygonCentroid(el.points);
+  const text = (el.isCutout?'− ':'')+el.label+' — '+formatNum(polygonAreaDisplay(el.points))+' sq '+state.unit;
+  drawLabelChip(ctx, c.x, c.y, text, el.isCutout ? '#F2A93B' : '#EAF2FB');
+  if(selected){
+    ctx.save();
+    ctx.setLineDash([6,4]);
+    ctx.strokeStyle = '#F2A93B';
+    ctx.lineWidth = 1.5;
+    strokePolyline(ctx, el.points, true);
+    ctx.restore();
+  }
+}
+
+function drawInProgress(ctx, drawing){
+  const pts = drawing.points;
+  ctx.save();
+  ctx.strokeStyle = drawing.color;
+  ctx.fillStyle = drawing.color;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([4,3]);
+  if(pts.length>=2){
+    strokePolyline(ctx, pts, drawing.shape==='polygon');
+  }
+  ctx.setLineDash([]);
+  pts.forEach((p,i)=>{
+    ctx.beginPath();
+    ctx.arc(p.x,p.y, i===0?6:4, 0, Math.PI*2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
 function elementAreaDisplay(el){
   if(el.shape==='rect'){
     return fromFt(el.wFt, state.unit) * fromFt(el.hFt, state.unit);
   }
-  const d = fromFt(el.dFt, state.unit);
-  return Math.PI*Math.pow(d/2,2);
+  if(el.shape==='circle'){
+    const d = fromFt(el.dFt, state.unit);
+    return Math.PI*Math.pow(d/2,2);
+  }
+  if(el.shape==='polygon'){
+    return polygonAreaDisplay(el.points);
+  }
+  return 0;
 }
 function getTotalAreaDisplay(){
-  return state.elements.reduce((sum,el)=>sum+elementAreaDisplay(el),0);
+  return state.elements.reduce((sum,el)=>{
+    const a = elementAreaDisplay(el);
+    return sum + (el.isCutout ? -a : a);
+  },0);
+}
+function getTotalCutoutAreaDisplay(){
+  return state.elements.reduce((sum,el)=> el.isCutout ? sum+elementAreaDisplay(el) : sum, 0);
+}
+function getTotalPathLengthDisplay(){
+  return state.elements.reduce((sum,el)=> el.shape==='path' ? sum+pathLengthDisplay(el.points) : sum, 0);
 }
 
 function drawTitleBlock(ctx){
@@ -798,6 +1183,7 @@ function uniqueLabel(base){
 }
 addElBtn.addEventListener('click', ()=>{
   const preset = PRESETS[typeSelect.value];
+  if(preset.shape!=='rect' && preset.shape!=='circle') return;
   const typedLabel = labelInput.value.trim();
   const label = typedLabel || uniqueLabel(preset.label);
   const el = {
@@ -844,6 +1230,13 @@ function renderElementsList(){
     swatch.style.background = el.color;
     row.appendChild(swatch);
 
+    if(el.isCutout){
+      const badge = document.createElement('span');
+      badge.className='cutout-badge';
+      badge.textContent='CUTOUT';
+      row.appendChild(badge);
+    }
+
     const details = document.createElement('div');
     details.className='details';
 
@@ -867,19 +1260,41 @@ function renderElementsList(){
       hIn.addEventListener('change', ()=>{ const v=parseFloat(hIn.value); if(v>0){el.hFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
       dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn);
       dims.appendChild(document.createTextNode('H')); dims.appendChild(hIn);
-    } else {
+      const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
+      rotIn.value = el.rotationDeg;
+      rotIn.addEventListener('click', e=>e.stopPropagation());
+      rotIn.addEventListener('change', ()=>{ let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
+      dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
+      dims.appendChild(document.createTextNode(unitAbbrev()));
+    } else if(el.shape==='circle'){
       const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
       dIn.value = formatNum(fromFt(el.dFt,state.unit));
       dIn.addEventListener('click', e=>e.stopPropagation());
       dIn.addEventListener('change', ()=>{ const v=parseFloat(dIn.value); if(v>0){el.dFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
       dims.appendChild(document.createTextNode('⌀')); dims.appendChild(dIn);
+      const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
+      rotIn.value = el.rotationDeg;
+      rotIn.addEventListener('click', e=>e.stopPropagation());
+      rotIn.addEventListener('change', ()=>{ let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
+      dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
+      dims.appendChild(document.createTextNode(unitAbbrev()));
+    } else if(el.shape==='path'){
+      const info = document.createElement('span');
+      info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
+      dims.appendChild(info);
+    } else if(el.shape==='polygon'){
+      const info = document.createElement('span');
+      info.textContent = formatNum(elementAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
+      dims.appendChild(info);
+      const cutLabel = document.createElement('label');
+      cutLabel.style.display='flex'; cutLabel.style.alignItems='center'; cutLabel.style.gap='3px'; cutLabel.style.marginLeft='4px';
+      const cutChk = document.createElement('input'); cutChk.type='checkbox'; cutChk.checked=!!el.isCutout;
+      cutChk.addEventListener('click', e=>e.stopPropagation());
+      cutChk.addEventListener('change', ()=>{ el.isCutout = cutChk.checked; drawOverlay(); renderElementsList(); });
+      cutLabel.appendChild(cutChk);
+      cutLabel.appendChild(document.createTextNode('cutout'));
+      dims.appendChild(cutLabel);
     }
-    const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
-    rotIn.value = el.rotationDeg;
-    rotIn.addEventListener('click', e=>e.stopPropagation());
-    rotIn.addEventListener('change', ()=>{ let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
-    dims.appendChild(document.createTextNode('°')); dims.appendChild(rotIn);
-    dims.appendChild(document.createTextNode(unitAbbrev()));
     details.appendChild(dims);
     row.appendChild(details);
 
@@ -887,7 +1302,12 @@ function renderElementsList(){
     dupBtn.className='icnbtn'; dupBtn.title='Duplicate'; dupBtn.textContent='⧉';
     dupBtn.addEventListener('click', (e)=>{
       e.stopPropagation();
-      const copy = Object.assign({}, el, {id:state.nextId++, xPx:el.xPx+24, yPx:el.yPx+24, label: uniqueLabel(el.label)});
+      let copy;
+      if(el.shape==='rect' || el.shape==='circle'){
+        copy = Object.assign({}, el, {id:state.nextId++, xPx:el.xPx+24, yPx:el.yPx+24, label: uniqueLabel(el.label)});
+      } else {
+        copy = Object.assign({}, el, {id:state.nextId++, points: el.points.map(p=>({x:p.x+24,y:p.y+24})), label: uniqueLabel(el.label)});
+      }
       state.elements.push(copy);
       state.selectedId = copy.id;
       renderElementsList(); drawOverlay();
@@ -912,6 +1332,20 @@ function renderElementsList(){
     elementsList.appendChild(row);
   });
   totalArea.textContent = formatNum(getTotalAreaDisplay()) + ' sq ' + state.unit;
+  const cutoutTotal = getTotalCutoutAreaDisplay();
+  if(cutoutTotal>0){
+    cutoutRow.style.display='flex';
+    cutoutArea.textContent = '− '+formatNum(cutoutTotal)+' sq '+state.unit;
+  } else {
+    cutoutRow.style.display='none';
+  }
+  const lengthTotal = getTotalPathLengthDisplay();
+  if(lengthTotal>0){
+    totalLengthRow.style.display='flex';
+    totalLength.textContent = formatNum(lengthTotal)+' '+state.unit;
+  } else {
+    totalLengthRow.style.display='none';
+  }
 }
 
 /* ============================ Title block inputs ============================ */
