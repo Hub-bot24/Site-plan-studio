@@ -1054,6 +1054,79 @@ function polygonBounds(points){
   });
   return {minX,minY,maxX,maxY,width:maxX-minX,height:maxY-minY};
 }
+// Absolute-space point outline for any element shape, for real overlap math
+// (as opposed to just its own footprint area). Circles are approximated as a
+// 32-sided polygon, which is accurate enough for area calculations at any
+// real plan scale.
+function elementToPolygonPoints(el){
+  if(el.shape==='rect'){
+    const wPx = el.wFt*state.scalePxPerFt, hPx = el.hFt*state.scalePxPerFt;
+    const rad = el.rotationDeg*Math.PI/180;
+    return [[-wPx/2,-hPx/2],[wPx/2,-hPx/2],[wPx/2,hPx/2],[-wPx/2,hPx/2]].map(([lx,ly])=>({
+      x: el.xPx + lx*Math.cos(rad) - ly*Math.sin(rad),
+      y: el.yPx + lx*Math.sin(rad) + ly*Math.cos(rad),
+    }));
+  }
+  if(el.shape==='circle'){
+    const rPx = (el.dFt*state.scalePxPerFt)/2;
+    const segments = 32, pts = [];
+    for(let i=0;i<segments;i++){
+      const a = (i/segments)*Math.PI*2;
+      pts.push({x: el.xPx + rPx*Math.cos(a), y: el.yPx + rPx*Math.sin(a)});
+    }
+    return pts;
+  }
+  if(el.shape==='polygon') return el.points;
+  return [];
+}
+function ensureCCW(poly){
+  let area = 0;
+  for(let i=0;i<poly.length;i++){
+    const p1=poly[i], p2=poly[(i+1)%poly.length];
+    area += p1.x*p2.y - p2.x*p1.y;
+  }
+  return area < 0 ? poly.slice().reverse() : poly;
+}
+// Sutherland-Hodgman polygon clipping: clips `subject` against `clip`. `clip`
+// must be convex (true for our rect/circle-as-ngon shapes; a hand-traced
+// concave "parent" polygon is a known limitation this doesn't fully handle).
+function clipPolygon(subject, clip){
+  let output = subject;
+  const clipCCW = ensureCCW(clip);
+  for(let i=0;i<clipCCW.length && output.length; i++){
+    const A = clipCCW[i], B = clipCCW[(i+1)%clipCCW.length];
+    const input = output;
+    output = [];
+    const inside = (P)=> (B.x-A.x)*(P.y-A.y) - (B.y-A.y)*(P.x-A.x) >= 0;
+    const intersect = (P,Q)=>{
+      const A1=B.y-A.y, B1=A.x-B.x, C1=A1*A.x+B1*A.y;
+      const A2=Q.y-P.y, B2=P.x-Q.x, C2=A2*P.x+B2*P.y;
+      const det = A1*B2-A2*B1;
+      if(Math.abs(det)<1e-9) return Q;
+      return {x:(B2*C1-B1*C2)/det, y:(A1*C2-A2*C1)/det};
+    };
+    for(let j=0;j<input.length;j++){
+      const P = input[j], Q = input[(j+1)%input.length];
+      const inP = inside(P), inQ = inside(Q);
+      if(inQ){
+        if(!inP) output.push(intersect(P,Q));
+        output.push(Q);
+      } else if(inP){
+        output.push(intersect(P,Q));
+      }
+    }
+  }
+  return output;
+}
+// Real overlap area (px^2) between two shapes' outlines, not just their own
+// footprint -- e.g. a pool only half-dragged onto a paving slab only
+// subtracts the half that's actually on top of it.
+function polygonIntersectionAreaPx(polyA, polyB){
+  if(polyA.length<3 || polyB.length<3) return 0;
+  const clipped = clipPolygon(polyB, polyA);
+  if(clipped.length<3) return 0;
+  return polygonAreaPx(clipped);
+}
 function currentPageElements(){
   return state.elements.filter(e=>(e.page||1)===state.currentPage);
 }
@@ -2084,7 +2157,7 @@ function drawElement(ctx, el, selected){
   }
   ctx.restore();
   const elLabelText = el.isCutout
-    ? '− '+el.label+' — '+formatNum(elementAreaDisplay(el))+' sq '+state.unit
+    ? '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit
     : el.label;
   drawLabelChip(ctx, el.xPx, el.yPx, elLabelText, el.isCutout ? '#B5934C' : '#E7ECF2');
   if(selected){
@@ -2243,7 +2316,7 @@ function drawPolygonElement(ctx, el, selected){
   let text;
   if(el.isCutout){
     const parent = el.parentId!=null ? getElementById(el.parentId) : null;
-    text = '− '+el.label+' — '+formatNum(polygonAreaDisplay(el.points))+' sq '+state.unit + (parent ? '  (from '+parent.label+')' : '');
+    text = '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit + (parent ? '  (from '+parent.label+')' : '');
   } else {
     text = el.label+' — '+formatNum(netAreaDisplay(el))+' sq '+state.unit;
   }
@@ -2305,7 +2378,17 @@ function elementAreaDisplay(el){
   return 0;
 }
 function linkedCutoutAreaFor(parentId){
-  return state.elements.reduce((sum,el)=> (el.isCutout && el.parentId===parentId) ? sum+elementAreaDisplay(el) : sum, 0);
+  const parent = getElementById(parentId);
+  if(!parent || !state.scalePxPerFt) return 0;
+  const parentPoly = elementToPolygonPoints(parent);
+  return state.elements.reduce((sum,el)=>{
+    if(!(el.isCutout && el.parentId===parentId)) return sum;
+    // Only the part that's actually sitting on top of the parent counts --
+    // dragging a cutout half off the parent shape should only subtract half
+    // its area, not all of it.
+    const overlapPx2 = polygonIntersectionAreaPx(parentPoly, elementToPolygonPoints(el));
+    return sum + areaFromFt(overlapPx2/(state.scalePxPerFt*state.scalePxPerFt), state.unit);
+  }, 0);
 }
 // The area of a shape after subtracting any cutouts specifically linked to it
 // (e.g. a pool traced as a cutout and linked to a paving slab it sits inside).
@@ -2313,6 +2396,19 @@ function netAreaDisplay(el){
   const raw = elementAreaDisplay(el);
   if(el.isCutout) return raw;
   return Math.max(0, raw - linkedCutoutAreaFor(el.id));
+}
+// What a cutout is ACTUALLY subtracting -- if it's linked to a parent, that's
+// only the overlapping portion (not its own full footprint, which may hang
+// partly off the parent); an unlinked/global cutout always uses its full area.
+function cutoutSubtractedAreaDisplay(el){
+  if(el.parentId!=null && state.scalePxPerFt){
+    const parent = getElementById(el.parentId);
+    if(parent){
+      const overlapPx2 = polygonIntersectionAreaPx(elementToPolygonPoints(parent), elementToPolygonPoints(el));
+      return areaFromFt(overlapPx2/(state.scalePxPerFt*state.scalePxPerFt), state.unit);
+    }
+  }
+  return elementAreaDisplay(el);
 }
 function getTotalAreaDisplay(){
   return currentPageElements().reduce((sum,el)=>{
@@ -2326,7 +2422,7 @@ function getTotalAreaDisplay(){
   },0);
 }
 function getTotalCutoutAreaDisplay(){
-  return currentPageElements().reduce((sum,el)=> el.isCutout ? sum+elementAreaDisplay(el) : sum, 0);
+  return currentPageElements().reduce((sum,el)=> el.isCutout ? sum+cutoutSubtractedAreaDisplay(el) : sum, 0);
 }
 function getTotalPathLengthDisplay(){
   return currentPageElements().reduce((sum,el)=> (el.shape==='path' && !el.isDimension) ? sum+pathLengthDisplay(el.points) : sum, 0);
@@ -2534,7 +2630,7 @@ function renderElementsList(){
       dims.appendChild(document.createTextNode(unitAbbrev()));
       const areaInfo = document.createElement('span');
       areaInfo.style.marginLeft='4px'; areaInfo.style.color='var(--ink-dim)';
-      areaInfo.textContent = formatNum(el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
+      areaInfo.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
       dims.appendChild(areaInfo);
       appendCutoutControls(dims, el);
     } else if(el.shape==='circle'){
@@ -2551,7 +2647,7 @@ function renderElementsList(){
       dims.appendChild(document.createTextNode(unitAbbrev()));
       const areaInfo = document.createElement('span');
       areaInfo.style.marginLeft='4px'; areaInfo.style.color='var(--ink-dim)';
-      areaInfo.textContent = formatNum(el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
+      areaInfo.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
       dims.appendChild(areaInfo);
       appendCutoutControls(dims, el);
     } else if(el.shape==='path'){
@@ -2562,7 +2658,7 @@ function renderElementsList(){
       dims.appendChild(info);
     } else if(el.shape==='polygon'){
       const info = document.createElement('span');
-      info.textContent = formatNum(el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
+      info.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
       dims.appendChild(info);
       appendCutoutControls(dims, el);
     }
@@ -2620,6 +2716,30 @@ function renderElementsList(){
       });
       row.appendChild(moveSel);
     }
+
+    const frontBtn = document.createElement('button');
+    frontBtn.className='icnbtn'; frontBtn.title='Bring to front (show this above everything else on the plan)';
+    frontBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>';
+    frontBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      pushUndo();
+      state.elements = state.elements.filter(x=>x.id!==el.id);
+      state.elements.push(el);
+      drawOverlay(); renderElementsList();
+    });
+    row.appendChild(frontBtn);
+
+    const backBtn = document.createElement('button');
+    backBtn.className='icnbtn'; backBtn.title='Send to back (show this below everything else on the plan)';
+    backBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>';
+    backBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      pushUndo();
+      state.elements = state.elements.filter(x=>x.id!==el.id);
+      state.elements.unshift(el);
+      drawOverlay(); renderElementsList();
+    });
+    row.appendChild(backBtn);
 
     const dupBtn = document.createElement('button');
     dupBtn.className='icnbtn'; dupBtn.title='Duplicate';
