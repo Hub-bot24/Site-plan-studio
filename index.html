@@ -442,6 +442,10 @@
       <span class="btn-label">Cut &amp; Move</span>
     </button>
     <div class="spacer"></div>
+    <button class="btn secondary" id="exportPdfBtn" disabled>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+      <span class="btn-label">Export PDF</span>
+    </button>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
   </div>
 
@@ -840,6 +844,7 @@ const bgCanvas = document.getElementById('bgCanvas');
 const overlayCanvas = document.getElementById('overlayCanvas');
 const newPlanBtn = document.getElementById('newPlanBtn');
 const exportBtn = document.getElementById('exportBtn');
+const exportPdfBtn = document.getElementById('exportPdfBtn');
 const zoomBar = document.getElementById('zoomBar');
 const zoomInBtn = document.getElementById('zoomInBtn');
 const zoomOutBtn = document.getElementById('zoomOutBtn');
@@ -1305,6 +1310,7 @@ async function applyLoadedProjectRecord(rec, name){
   await renderPage(rec.currentPage || 1);
   newPlanBtn.style.display='inline-block';
   exportBtn.disabled = false;
+  exportPdfBtn.disabled = false;
   exportProjectBtn.disabled = false;
 
   if(state.scalePxPerFt){
@@ -1808,6 +1814,7 @@ newPlanBtn.addEventListener('click', ()=>{
   zoomBar.classList.remove('visible');
   newPlanBtn.style.display='none';
   exportBtn.disabled = true;
+  exportPdfBtn.disabled = true;
   exportProjectBtn.disabled = true;
   pdfInput.value='';
   state.pdf = null;
@@ -1860,6 +1867,7 @@ async function loadFile(file){
     await renderPage(1);
     newPlanBtn.style.display='inline-block';
     exportBtn.disabled = false;
+    exportPdfBtn.disabled = false;
     exportProjectBtn.disabled = false;
   }catch(err){
     console.error(err);
@@ -3664,41 +3672,105 @@ function formatCurrency(n){
   return '$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 
+// A "nice" round length (in display units) whose scale-bar would render at
+// a sensible on-page width -- the same rounding convention real architectural
+// scale bars use (1/2/5/10/20/50/100/...), rather than an arbitrary fraction.
+function pickScaleBarLength(pxPerUnit, targetPx){
+  const candidates = [0.1,0.2,0.5,1,2,5,10,20,25,50,100,200,250,500,1000,2000,5000];
+  let best = candidates[0], bestDiff = Infinity;
+  for(const c of candidates){
+    const px = c*pxPerUnit;
+    if(px < 30 || px > 220) continue;
+    const diff = Math.abs(px-targetPx);
+    if(diff<bestDiff){ bestDiff=diff; best=c; }
+  }
+  return best;
+}
+function drawScaleBar(ctx, x, y, w){
+  if(!state.scalePxPerFt) return;
+  const pxPerUnit = pxPerDisplayUnit();
+  const length = pickScaleBarLength(pxPerUnit, w*0.85);
+  const barW = length*pxPerUnit;
+  const barH = 6, segs = 4, segW = barW/segs;
+  ctx.save();
+  ctx.textAlign='left';
+  ctx.textBaseline='top';
+  for(let i=0;i<segs;i++){
+    ctx.fillStyle = i%2===0 ? '#E7ECF2' : '#0A1A2E';
+    ctx.fillRect(x+i*segW, y, segW, barH);
+  }
+  ctx.strokeStyle = '#E7ECF2'; ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, barW, barH);
+  ctx.font = '400 8px "Space Mono", monospace';
+  ctx.fillStyle = '#E7ECF2';
+  ctx.fillText('0', x, y+barH+3);
+  ctx.textAlign='right';
+  ctx.fillText(formatNum(length)+' '+state.unit, x+barW, y+barH+3);
+  ctx.restore();
+}
 function drawTitleBlock(ctx){
   const costTotal = getTotalCostDisplay();
-  const w=260, h=costTotal>0?126:110, margin=16;
+  const w=282, h=costTotal>0?168:150, margin=16;
   const x = overlayCanvas.width - w - margin;
   const y = overlayCanvas.height - h - margin;
   ctx.save();
-  ctx.fillStyle = 'rgba(11,37,69,0.92)';
-  ctx.strokeStyle = '#E7ECF2';
-  ctx.lineWidth = 1.5;
+  ctx.shadowColor = 'rgba(0,0,0,0.35)';
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 4;
+  const grad = ctx.createLinearGradient(x,y,x,y+h);
+  grad.addColorStop(0, 'rgba(19,48,85,0.95)');
+  grad.addColorStop(1, 'rgba(11,29,52,0.95)');
+  ctx.fillStyle = grad;
   ctx.fillRect(x,y,w,h);
-  ctx.strokeRect(x,y,w,h);
+  ctx.restore();
+  ctx.save();
+  ctx.strokeStyle = 'rgba(223,231,240,0.5)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x+0.5,y+0.5,w-1,h-1);
+  // A small gold header band echoes the app's own brand mark -- this is a
+  // deliverable someone else will look at, so it should carry a bit of
+  // identity, not just be a plain data dump.
+  ctx.fillStyle = '#B5934C';
+  ctx.fillRect(x,y,w,4);
   ctx.beginPath();
-  ctx.moveTo(x,y+28);
-  ctx.lineTo(x+w,y+28);
+  ctx.moveTo(x,y+32);
+  ctx.lineTo(x+w,y+32);
+  ctx.strokeStyle = 'rgba(223,231,240,0.25)';
   ctx.stroke();
-  ctx.fillStyle = '#E7ECF2';
   ctx.textAlign='left';
   ctx.textBaseline='top';
+  ctx.fillStyle = '#E7ECF2';
   ctx.font = '700 14px "Space Mono", monospace';
   let name = state.projectName || 'Untitled Site Plan';
-  if(name.length>26) name = name.slice(0,25)+'…';
-  ctx.fillText(name, x+10, y+8);
-  ctx.font = '400 11px "Space Mono", monospace';
-  const scaleStr = state.scalePxPerFt ? formatNum(pxPerDisplayUnit())+'px = 1 '+state.unit : 'NOT CALIBRATED';
+  if(name.length>27) name = name.slice(0,26)+'…';
+  ctx.fillText(name, x+12, y+12);
+  ctx.font = '400 10.5px "Space Mono", monospace';
+  ctx.fillStyle = 'rgba(223,231,240,0.66)';
+  const scaleStr = state.scalePxPerFt ? formatNum(pxPerDisplayUnit())+' px = 1 '+state.unit : 'NOT CALIBRATED';
   const totalStr = formatNum(getTotalAreaDisplay()) + ' sq ' + state.unit;
   const dateStr = new Date().toLocaleDateString();
-  ctx.fillText('SCALE:  '+scaleStr, x+10, y+36);
-  ctx.fillText('ADDED AREA:  '+totalStr, x+10, y+52);
-  ctx.fillText('DATE:  '+dateStr, x+10, y+68);
-  if(costTotal>0){
-    ctx.fillText('EST. COST:  '+formatCurrency(costTotal), x+10, y+84);
-  }
-  const nx = x+w-30, ny=y+52, r=13;
+  const rowX = x+12;
+  let rowY = y+42;
+  const rowH = 17;
+  const row = (label, value)=>{
+    ctx.fillStyle = 'rgba(223,231,240,0.5)';
+    ctx.fillText(label, rowX, rowY);
+    ctx.fillStyle = '#E7ECF2';
+    ctx.fillText(value, rowX+92, rowY);
+    rowY += rowH;
+  };
+  row('SCALE', scaleStr);
+  row('SITE AREA', totalStr);
+  row('DATE', dateStr);
+  if(costTotal>0) row('EST. COST', formatCurrency(costTotal));
+  drawScaleBar(ctx, x+12, y+h-30, w-90);
+  const nx = x+w-34, ny=y+50, r=14;
   ctx.save();
   ctx.translate(nx,ny);
+  ctx.beginPath();
+  ctx.arc(0,0,r+7,0,Math.PI*2);
+  ctx.strokeStyle = 'rgba(223,231,240,0.3)'; ctx.lineWidth=1;
+  ctx.stroke();
   ctx.rotate(state.northRotationDeg*Math.PI/180);
   ctx.beginPath();
   ctx.moveTo(0,-r); ctx.lineTo(6,r*0.6); ctx.lineTo(0,r*0.15); ctx.lineTo(-6,r*0.6);
@@ -3708,7 +3780,8 @@ function drawTitleBlock(ctx){
   ctx.restore();
   ctx.font = '700 10px "Space Mono", monospace';
   ctx.textAlign='center';
-  ctx.fillText('N', nx, ny+r+4);
+  ctx.fillStyle = '#E7ECF2';
+  ctx.fillText('N', nx, ny+r+11);
   ctx.restore();
 }
 
@@ -4140,7 +4213,11 @@ function renderElementsList(){
 northInput.addEventListener('input', ()=>{ state.northRotationDeg = parseFloat(northInput.value)||0; drawOverlay(); });
 
 /* ============================ Export ============================ */
-exportBtn.addEventListener('click', ()=>{
+// Shared by both export buttons: a flat composite of the plan raster and
+// everything drawn on top of it, with the selection outline cleared first
+// (a client shouldn't receive a deliverable with your last click still
+// highlighted on it).
+function getCompositeExportCanvas(){
   const prevSel = state.selectedId;
   state.selectedId = null;
   drawOverlay();
@@ -4149,13 +4226,79 @@ exportBtn.addEventListener('click', ()=>{
   const ctx = out.getContext('2d');
   ctx.drawImage(bgCanvas,0,0);
   ctx.drawImage(overlayCanvas,0,0);
-  const link = document.createElement('a');
-  const name = (state.projectName||'site-plan').trim().replace(/\s+/g,'_') || 'site-plan';
-  link.download = name+'.png';
-  link.href = out.toDataURL('image/png');
-  link.click();
   state.selectedId = prevSel;
   drawOverlay();
+  return out;
+}
+function exportFileName(ext){
+  const name = (state.projectName||'site-plan').trim().replace(/\s+/g,'_') || 'site-plan';
+  return name+'.'+ext;
+}
+exportBtn.addEventListener('click', ()=>{
+  const out = getCompositeExportCanvas();
+  const link = document.createElement('a');
+  link.download = exportFileName('png');
+  link.href = out.toDataURL('image/png');
+  link.click();
+});
+// Builds a minimal, valid single-page PDF wrapping one JPEG image -- no PDF
+// library needed. JPEG bytes embed directly into a PDF Image XObject via
+// /Filter /DCTDecode (that's literally what DCTDecode means), so this is
+// just assembling the handful of PDF objects around the raw JPEG stream by
+// hand and writing a correct xref table -- the same technique used to build
+// this app's own offline test fixtures.
+function buildPdfFromJpeg(jpegBytes, wPt, hPt, imgW, imgH){
+  const enc = new TextEncoder();
+  const parts = [];
+  let offset = 0;
+  const objOffsets = [0];
+  function pushBytes(bytes){ parts.push(bytes); offset += bytes.length; }
+  function pushStr(str){ pushBytes(enc.encode(str)); }
+  pushStr('%PDF-1.4\n');
+  objOffsets[1] = offset;
+  pushStr('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  objOffsets[2] = offset;
+  pushStr('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n');
+  objOffsets[3] = offset;
+  pushStr('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+wPt.toFixed(2)+' '+hPt.toFixed(2)+'] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n');
+  objOffsets[4] = offset;
+  pushStr('4 0 obj\n<< /Type /XObject /Subtype /Image /Width '+imgW+' /Height '+imgH+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+jpegBytes.length+' >>\nstream\n');
+  pushBytes(jpegBytes);
+  pushStr('\nendstream\nendobj\n');
+  objOffsets[5] = offset;
+  const content = 'q\n'+wPt.toFixed(2)+' 0 0 '+hPt.toFixed(2)+' 0 0 cm\n/Im0 Do\nQ';
+  pushStr('5 0 obj\n<< /Length '+content.length+' >>\nstream\n'+content+'\nendstream\nendobj\n');
+  const xrefOffset = offset;
+  pushStr('xref\n0 6\n0000000000 65535 f \n');
+  for(let i=1;i<=5;i++) pushStr(String(objOffsets[i]).padStart(10,'0')+' 00000 n \n');
+  pushStr('trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+xrefOffset+'\n%%EOF');
+  return new Blob(parts, {type:'application/pdf'});
+}
+exportPdfBtn.addEventListener('click', ()=>{
+  const out = getCompositeExportCanvas();
+  // JPEG has no alpha channel -- paint a white backing first so any
+  // transparent edge doesn't turn black when flattened.
+  const flat = document.createElement('canvas');
+  flat.width = out.width; flat.height = out.height;
+  const fctx = flat.getContext('2d');
+  fctx.fillStyle = '#ffffff';
+  fctx.fillRect(0,0,flat.width,flat.height);
+  fctx.drawImage(out,0,0);
+  const dataUrl = flat.toDataURL('image/jpeg', 0.93);
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+  // 96 CSS px/in -> 72 PDF points/in, so the page prints at a normal,
+  // recognizable size instead of an arbitrary pixel-for-point document.
+  const wPt = flat.width*0.75, hPt = flat.height*0.75;
+  const blob = buildPdfFromJpeg(bytes, wPt, hPt, flat.width, flat.height);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.download = exportFileName('pdf');
+  link.href = url;
+  link.click();
+  URL.revokeObjectURL(url);
 });
 </script>
 </body>
