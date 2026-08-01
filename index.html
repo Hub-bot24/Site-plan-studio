@@ -171,10 +171,13 @@
   .precision-ctrl input[type=range]{width:70px;accent-color:var(--accent);}
   .precision-ctrl .pval{font-family:'Space Mono',monospace;color:var(--accent);min-width:32px;}
   #cutBrushSizeSelect{
-    background:transparent;border:1px solid var(--line);color:var(--ink);
+    position:absolute;top:16px;left:120px;z-index:5;
+    display:none;
+    background:rgba(15,49,89,0.92);border:1px solid var(--line);color:var(--ink);
     font-family:'Inter',sans-serif;font-weight:500;font-size:12px;
-    padding:8px 10px;border-radius:6px;cursor:pointer;
+    padding:6px 10px;border-radius:8px;cursor:pointer;
   }
+  #cutBrushSizeSelect.visible{display:block;}
 
   #magnifierWrap{
     position:fixed;z-index:80;display:none;flex-direction:column;align-items:center;gap:6px;
@@ -281,6 +284,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
       <span class="btn-label">Undo</span>
     </button>
+    <button class="btn secondary" id="pasteBtn" title="Paste the cut element back onto the plan, at the current view (works across pages too)" disabled>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+      <span class="btn-label">Paste</span>
+    </button>
     <button class="btn secondary" id="eraseBtn" title="Erase mode — tap any element on the plan to delete it">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l5.3 5.3a2 2 0 0 1 0 2.8L13 19"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
       <span class="btn-label">Erase</span>
@@ -289,11 +296,6 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg>
       <span class="btn-label">Erase PDF</span>
     </button>
-    <select id="cutBrushSizeSelect" title="Eraser brush size" style="display:none;">
-      <option value="9">Small brush</option>
-      <option value="18" selected>Medium brush</option>
-      <option value="32">Large brush</option>
-    </select>
     <div class="spacer"></div>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
   </div>
@@ -313,6 +315,11 @@
         <button id="zoomInBtn" title="Zoom in">+</button>
         <button id="zoomFitBtn" class="fitbtn" title="Fit to view">Fit</button>
       </div>
+      <select id="cutBrushSizeSelect" title="Eraser brush size">
+        <option value="9">Small brush</option>
+        <option value="18" selected>Medium brush</option>
+        <option value="32">Large brush</option>
+      </select>
       <div id="renderingIndicator">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>
         Rendering page…
@@ -514,6 +521,7 @@ const state = {
   eraseMode:false,
   cutMode:false,
   cutStroke:null,
+  clipboard:null,
   pdfMasks:[],
   rendering:false,
   nextId:1,
@@ -666,6 +674,8 @@ const savedProjectsSelect = document.getElementById('savedProjectsSelect');
 const loadProjectBtn = document.getElementById('loadProjectBtn');
 const deleteProjectBtn = document.getElementById('deleteProjectBtn');
 const undoBtn = document.getElementById('undoBtn');
+const pasteBtn = document.getElementById('pasteBtn');
+const pasteBtnLabel = pasteBtn.querySelector('.btn-label');
 const eraseBtn = document.getElementById('eraseBtn');
 const eraseBtnLabel = eraseBtn.querySelector('.btn-label');
 const cutPdfBtn = document.getElementById('cutPdfBtn');
@@ -683,7 +693,7 @@ function setCutMode(on){
   state.cutMode = on;
   cutPdfBtn.classList.toggle('active-cut', on);
   cutPdfBtnLabel.textContent = on ? 'Erasing… drag to paint' : 'Erase PDF';
-  cutBrushSizeSelect.style.display = on ? '' : 'none';
+  cutBrushSizeSelect.classList.toggle('visible', on);
 }
 eraseBtn.addEventListener('click', ()=>{
   setEraseMode(!state.eraseMode);
@@ -735,11 +745,61 @@ function performUndo(){
   undoBtn.disabled = undoStack.length===0;
 }
 undoBtn.addEventListener('click', performUndo);
+
+/* ============================ Cut / Paste (elements) ============================ */
+function updatePasteBtnState(){
+  pasteBtn.disabled = !state.clipboard;
+}
+function cutElementById(id){
+  const el = getElementById(id);
+  if(!el) return;
+  pushUndo();
+  state.clipboard = JSON.parse(JSON.stringify(el));
+  state.elements = state.elements.filter(x=>x.id!==id);
+  if(state.selectedId===id) state.selectedId=null;
+  updatePasteBtnState();
+  renderElementsList();
+  drawOverlay();
+}
+pasteBtn.addEventListener('click', ()=>{
+  if(!state.clipboard) return;
+  // Drop it in at the center of whatever you're currently looking at -- if
+  // you cut on one page, flipped to another, and hit Paste, it lands there.
+  const cssX = canvasScroll.scrollLeft + canvasScroll.clientWidth/2 - 20;
+  const cssY = canvasScroll.scrollTop + canvasScroll.clientHeight/2 - 20;
+  const targetX = cssX / state.zoom, targetY = cssY / state.zoom;
+  const copy = JSON.parse(JSON.stringify(state.clipboard));
+  copy.id = state.nextId++;
+  copy.page = state.currentPage;
+  if(copy.shape==='rect' || copy.shape==='circle'){
+    copy.xPx = Math.min(Math.max(targetX,0), overlayCanvas.width);
+    copy.yPx = Math.min(Math.max(targetY,0), overlayCanvas.height);
+  } else if(copy.points){
+    const b = polygonBounds(copy.points);
+    const dx = targetX-(b.minX+b.maxX)/2, dy = targetY-(b.minY+b.maxY)/2;
+    copy.points = copy.points.map(p=>({x:p.x+dx, y:p.y+dy}));
+  }
+  pushUndo();
+  state.elements.push(copy);
+  state.selectedId = copy.id;
+  renderElementsList();
+  drawOverlay();
+});
+updatePasteBtnState();
+
 document.addEventListener('keydown', (e)=>{
   const tag = document.activeElement && document.activeElement.tagName;
-  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z' && tag!=='INPUT' && tag!=='TEXTAREA' && tag!=='SELECT'){
+  const typing = tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT';
+  if(typing) return;
+  if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){
     e.preventDefault();
     performUndo();
+  } else if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='x' && state.selectedId!=null){
+    e.preventDefault();
+    cutElementById(state.selectedId);
+  } else if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='v' && state.clipboard){
+    e.preventDefault();
+    pasteBtn.click();
   }
 });
 
@@ -935,6 +995,8 @@ async function loadProjectByName(name){
     projectNameInput.value = name;
     undoStack.length = 0;
     undoBtn.disabled = true;
+    state.clipboard = null;
+    updatePasteBtnState();
     setEraseMode(false);
     setCutMode(false);
 
@@ -1268,6 +1330,8 @@ newPlanBtn.addEventListener('click', ()=>{
   state.selectedId = null;
   state.calibrating = false;
   state.drawing = null;
+  state.clipboard = null;
+  updatePasteBtnState();
   setEraseMode(false);
   setCutMode(false);
   state.projectName = 'Untitled Site Plan';
@@ -2877,6 +2941,15 @@ function renderElementsList(){
       renderElementsList(); drawOverlay();
     });
     row.appendChild(dupBtn);
+
+    const cutBtn = document.createElement('button');
+    cutBtn.className='icnbtn'; cutBtn.title='Cut (remove it here, then hit Paste in the top bar to drop it in elsewhere — works across pages too)';
+    cutBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg>';
+    cutBtn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      cutElementById(el.id);
+    });
+    row.appendChild(cutBtn);
 
     const delBtn = document.createElement('button');
     delBtn.className='icnbtn del'; delBtn.title='Delete'; delBtn.textContent='×';
