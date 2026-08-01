@@ -624,9 +624,26 @@ const FURNITURE_ITEMS = {
   bath_vanity:   {name:'Bathroom vanity',        label:'Bathroom vanity (36×22 in)',           wIn:36, hIn:22},
   toilet:        {name:'Toilet',                 label:'Toilet (20×28 in)',                    wIn:20, hIn:28},
 };
+// Which top-down icon each furniture item renders as (see drawFurnitureIcon) --
+// a plain tinted rectangle doesn't read as "a bed" or "a sofa" at a glance.
+const FURNITURE_ICONS = {
+  bed_twin:'bed', bed_full:'bed', bed_queen:'bed', bed_king:'bed', bed_calking:'bed',
+  tv_32:'tv', tv_43:'tv', tv_55:'tv', tv_65:'tv', tv_75:'tv', tv_85:'tv',
+  table_side:'table', table_coffee:'table', table_dining4:'table_dining', table_dining6:'table_dining', desk:'desk',
+  sofa_2seat:'sofa', sofa_3seat:'sofa', armchair:'armchair',
+  dresser:'dresser', wardrobe:'wardrobe',
+  fridge:'fridge', kitchen_island:'island',
+  bath_vanity:'vanity', toilet:'toilet',
+};
+const FURNITURE_COLORS = {
+  bed:'#DCD3C4', tv:'#20242A', table:'#9C7A54', table_dining:'#9C7A54', desk:'#9C7A54',
+  sofa:'#6E7B8C', armchair:'#6E7B8C', dresser:'#8A7360', wardrobe:'#8A7360',
+  fridge:'#C7CDD1', island:'#B9B2A6', vanity:'#C9C2B4', toilet:'#E8ECED',
+};
 Object.keys(FURNITURE_ITEMS).forEach(key=>{
   const item = FURNITURE_ITEMS[key];
-  PRESETS[key] = {label:item.label, color:'#8A7B6B', texture:'flat', quick:'rect', name:item.name, wIn:item.wIn, hIn:item.hIn};
+  const icon = FURNITURE_ICONS[key];
+  PRESETS[key] = {label:item.label, color:FURNITURE_COLORS[icon]||'#8A7B6B', texture:'flat', quick:'rect', name:item.name, wIn:item.wIn, hIn:item.hIn, icon};
 });
 
 /* ============================ DOM refs ============================ */
@@ -2359,12 +2376,226 @@ function seededRand(seed){
   const x = Math.sin(seed*12.9898)*43758.5453;
   return x - Math.floor(x);
 }
+function shadeColor(hex, amt){
+  hex = String(hex).replace('#','');
+  if(hex.length===3) hex = hex.split('').map(c=>c+c).join('');
+  const num = parseInt(hex,16) || 0;
+  let r=(num>>16)&255, g=(num>>8)&255, b=num&255;
+  const blend = (c)=> amt>=0 ? c + (255-c)*amt : c*(1+amt);
+  r=Math.round(Math.min(255,Math.max(0,blend(r))));
+  g=Math.round(Math.min(255,Math.max(0,blend(g))));
+  b=Math.round(Math.min(255,Math.max(0,blend(b))));
+  return 'rgb('+r+','+g+','+b+')';
+}
+function roundRectPath(ctx,x,y,w,h,r){
+  r = Math.max(0, Math.min(r, Math.abs(w)/2, Math.abs(h)/2));
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+// Furniture items render as recognizable top-down icons (pillows on a bed,
+// cushion lines on a sofa, a bowl+tank for a toilet, ...) instead of a plain
+// tinted rectangle -- matches how real floor-plan/CAD symbols read at a
+// glance. baseColor is the element's own (user-editable) color; everything
+// else is shaded relative to it so a recolored bed still looks like a bed.
+function drawFurnitureIcon(ctx, icon, bounds, baseColor){
+  const x=bounds.minX, y=bounds.minY, w=bounds.maxX-bounds.minX, h=bounds.maxY-bounds.minY;
+  const short = Math.min(w,h);
+  ctx.save();
+  if(icon==='bed'){
+    roundRectPath(ctx,x,y,w,h,short*0.07);
+    ctx.fillStyle = shadeColor(baseColor,0.35);
+    ctx.fill();
+    const hbH = h*0.07;
+    ctx.fillStyle = shadeColor(baseColor,-0.4);
+    ctx.fillRect(x,y,w,hbH);
+    const pillowH=h*0.22, pillowW=w*0.36, gap=w*0.06, pY=y+hbH+h*0.05;
+    ctx.fillStyle='#F4F1EA';
+    [x+w/2-gap/2-pillowW, x+w/2+gap/2].forEach(px=>{
+      roundRectPath(ctx,px,pY,pillowW,pillowH,pillowH*0.4);
+      ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,0.14)'; ctx.lineWidth=1; ctx.stroke();
+    });
+    const foldY = pY+pillowH+h*0.09;
+    ctx.strokeStyle='rgba(0,0,0,0.16)'; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(x+w*0.05,foldY); ctx.lineTo(x+w*0.95,foldY); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x+w*0.05,foldY+2); ctx.lineTo(x+w*0.95,foldY+2); ctx.stroke();
+    roundRectPath(ctx,x,y,w,h,short*0.07);
+    ctx.strokeStyle=shadeColor(baseColor,-0.3); ctx.lineWidth=1.4; ctx.stroke();
+  } else if(icon==='tv'){
+    roundRectPath(ctx,x,y,w,h,h*0.3);
+    ctx.fillStyle='#181B20'; ctx.fill();
+    const inset=h*0.16;
+    roundRectPath(ctx,x+inset*1.6,y+inset*0.5,w-inset*3.2,h-inset,h*0.14);
+    const scr = ctx.createLinearGradient(x,y,x,y+h);
+    scr.addColorStop(0,'#4C6270'); scr.addColorStop(1,'#2C3A44');
+    ctx.fillStyle = scr; ctx.fill();
+  } else if(icon==='table' || icon==='desk' || icon==='table_dining'){
+    const pat = getTilePattern(ctx,'wood', state.scalePxPerFt||40);
+    roundRectPath(ctx,x,y,w,h,short*0.1);
+    ctx.fillStyle = pat || shadeColor(baseColor,0.1);
+    ctx.fill();
+    ctx.save(); ctx.clip();
+    const bw = Math.max(1.5, short*0.05);
+    ctx.strokeStyle='rgba(0,0,0,0.22)'; ctx.lineWidth=bw;
+    roundRectPath(ctx,x+bw,y+bw,w-bw*2,h-bw*2,short*0.08);
+    ctx.stroke();
+    ctx.restore();
+    if(icon==='table_dining'){
+      const seatSize = short*0.22;
+      ctx.fillStyle = shadeColor(baseColor,-0.15);
+      const seatsPerLong = w>=h ? Math.max(2, Math.round(w/(seatSize*1.8))) : 1;
+      const placeSeat=(sx,sy,rot)=>{
+        ctx.save(); ctx.translate(sx,sy); ctx.rotate(rot);
+        roundRectPath(ctx,-seatSize/2,-seatSize/2,seatSize,seatSize,seatSize*0.3);
+        ctx.fill();
+        ctx.restore();
+      };
+      if(w>=h){
+        for(let i=0;i<seatsPerLong;i++){
+          const sx = x + (i+0.5)*(w/seatsPerLong);
+          placeSeat(sx, y-seatSize*0.55, 0);
+          placeSeat(sx, y+h+seatSize*0.55, Math.PI);
+        }
+        placeSeat(x-seatSize*0.55, y+h/2, -Math.PI/2);
+        placeSeat(x+w+seatSize*0.55, y+h/2, Math.PI/2);
+      } else {
+        placeSeat(x+w/2, y-seatSize*0.55, 0);
+        placeSeat(x+w/2, y+h+seatSize*0.55, Math.PI);
+      }
+    }
+  } else if(icon==='sofa' || icon==='armchair'){
+    roundRectPath(ctx,x,y,w,h,short*0.16);
+    ctx.fillStyle = shadeColor(baseColor,0.05);
+    ctx.fill();
+    const backH = h*0.24;
+    roundRectPath(ctx,x,y,w,backH,short*0.14);
+    ctx.fillStyle = shadeColor(baseColor,-0.22);
+    ctx.fill();
+    const armW = w*(icon==='armchair'?0.22:0.12);
+    ctx.fillStyle = shadeColor(baseColor,-0.12);
+    roundRectPath(ctx,x,y,armW,h,short*0.14); ctx.fill();
+    roundRectPath(ctx,x+w-armW,y,armW,h,short*0.14); ctx.fill();
+    const seats = icon==='armchair' ? 1 : (w>h*2.1 ? 3 : 2);
+    ctx.strokeStyle='rgba(0,0,0,0.16)'; ctx.lineWidth=1.2;
+    for(let i=1;i<seats;i++){
+      const lx = x+armW+(w-armW*2)*(i/seats);
+      ctx.beginPath(); ctx.moveTo(lx,y+backH); ctx.lineTo(lx,y+h-short*0.03); ctx.stroke();
+    }
+    roundRectPath(ctx,x,y,w,h,short*0.16);
+    ctx.strokeStyle=shadeColor(baseColor,-0.35); ctx.lineWidth=1.4; ctx.stroke();
+  } else if(icon==='dresser' || icon==='wardrobe'){
+    roundRectPath(ctx,x,y,w,h,short*0.06);
+    ctx.fillStyle = shadeColor(baseColor,0.08);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.3);
+    ctx.lineWidth=1.2;
+    if(icon==='dresser'){
+      const rows = w>h*2 ? 2 : 3;
+      for(let i=1;i<rows;i++){
+        const ly = y+(h/rows)*i;
+        ctx.beginPath(); ctx.moveTo(x+w*0.06,ly); ctx.lineTo(x+w*0.94,ly); ctx.stroke();
+      }
+      ctx.fillStyle = shadeColor(baseColor,-0.4);
+      for(let i=0;i<rows;i++){
+        const cy = y+(h/rows)*(i+0.5);
+        ctx.fillRect(x+w*0.42, cy-1, w*0.16, 2);
+      }
+    } else {
+      ctx.beginPath(); ctx.moveTo(x+w/2,y+h*0.06); ctx.lineTo(x+w/2,y+h*0.94); ctx.stroke();
+      ctx.fillStyle = shadeColor(baseColor,-0.4);
+      ctx.beginPath(); ctx.arc(x+w/2-w*0.06, y+h/2, 1.6, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x+w/2+w*0.06, y+h/2, 1.6, 0, Math.PI*2); ctx.fill();
+    }
+    roundRectPath(ctx,x,y,w,h,short*0.06);
+    ctx.stroke();
+  } else if(icon==='fridge'){
+    roundRectPath(ctx,x,y,w,h,short*0.08);
+    ctx.fillStyle = shadeColor(baseColor,0.3);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.35); ctx.lineWidth=1.4;
+    roundRectPath(ctx,x,y,w,h,short*0.08); ctx.stroke();
+    const splitY = w>=h ? null : y+h*0.35;
+    if(splitY){
+      ctx.beginPath(); ctx.moveTo(x+w*0.05,splitY); ctx.lineTo(x+w*0.95,splitY); ctx.stroke();
+    } else {
+      const splitX = x+w*0.4;
+      ctx.beginPath(); ctx.moveTo(splitX,y+h*0.05); ctx.lineTo(splitX,y+h*0.95); ctx.stroke();
+    }
+    ctx.fillStyle = shadeColor(baseColor,-0.4);
+    ctx.fillRect(x+w*0.06,y+h*0.45,w*0.03,h*0.1);
+  } else if(icon==='island'){
+    // A smooth stone-look gradient plus a light scatter of flecks sized to
+    // the island's OWN footprint -- the outdoor concrete tile pattern repeats
+    // at real-world scale, which reads as a harsh, chunky grid on something
+    // this small (a countertop, not a slab of paving).
+    const grad = ctx.createLinearGradient(x,y,x,y+h);
+    grad.addColorStop(0, shadeColor(baseColor,0.22));
+    grad.addColorStop(1, shadeColor(baseColor,0.02));
+    roundRectPath(ctx,x,y,w,h,short*0.08);
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.save(); ctx.clip();
+    for(let i=0;i<24;i++){
+      const r1=seededRand(i*5.1+1), r2=seededRand(i*3.7+2), r3=seededRand(i*7.9+3);
+      ctx.fillStyle = r3<0.5 ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.1)';
+      ctx.beginPath();
+      ctx.arc(x+r1*w, y+r2*h, 0.9, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.strokeStyle=shadeColor(baseColor,-0.3); ctx.lineWidth=1.4;
+    roundRectPath(ctx,x,y,w,h,short*0.08); ctx.stroke();
+    const sw=w*0.28, sh=h*0.4;
+    roundRectPath(ctx, x+w/2-sw/2, y+h/2-sh/2, sw, sh, sh*0.2);
+    ctx.fillStyle='rgba(0,0,0,0.18)'; ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=1; ctx.stroke();
+  } else if(icon==='vanity'){
+    roundRectPath(ctx,x,y,w,h,short*0.1);
+    ctx.fillStyle = shadeColor(baseColor,0.15);
+    ctx.fill();
+    ctx.strokeStyle=shadeColor(baseColor,-0.3); ctx.lineWidth=1.4;
+    roundRectPath(ctx,x,y,w,h,short*0.1); ctx.stroke();
+    const cx=x+w/2, cy=y+h/2, rx=Math.min(w*0.28,short*0.5), ry=Math.min(h*0.32,short*0.4);
+    ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+    ctx.fillStyle='#DCE7EC'; ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle='#8FA6AE';
+    ctx.beginPath(); ctx.arc(cx,cy-ry*0.35,rx*0.12,0,Math.PI*2); ctx.fill();
+  } else if(icon==='toilet'){
+    const tankH = h*0.32;
+    roundRectPath(ctx,x+w*0.1,y,w*0.8,tankH,short*0.08);
+    ctx.fillStyle = shadeColor(baseColor,0.25);
+    ctx.fill();
+    ctx.strokeStyle=shadeColor(baseColor,-0.3); ctx.lineWidth=1.2; ctx.stroke();
+    const cx=x+w/2, cy=y+tankH+(h-tankH)/2, rx=w*0.42, ry=(h-tankH)*0.46;
+    ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+    ctx.fillStyle='#F2F5F6'; ctx.fill();
+    ctx.strokeStyle=shadeColor(baseColor,-0.3); ctx.lineWidth=1.2; ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(cx,cy,rx*0.58,ry*0.6,0,0,Math.PI*2);
+    ctx.strokeStyle='rgba(0,0,0,0.22)'; ctx.lineWidth=1; ctx.stroke();
+  } else {
+    roundRectPath(ctx,x,y,w,h,short*0.08);
+    ctx.fillStyle = shadeColor(baseColor,0.1);
+    ctx.fill();
+  }
+  ctx.restore();
+}
 function fillMaterial(ctx, presetKey, bounds, overrideColor){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
   const baseColor = overrideColor || (preset ? preset.color : '#B5934C');
   const fallbackColor = baseColor+'CC';
   const scalePxPerFt = state.scalePxPerFt || 40;
+  if(preset && preset.icon){
+    drawFurnitureIcon(ctx, preset.icon, bounds, baseColor);
+    return;
+  }
   if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='gravel' || texture==='turf' || texture==='tile' || texture==='metal' || texture==='shingle'){
     const pat = getTilePattern(ctx, texture, scalePxPerFt);
     ctx.fillStyle = pat || fallbackColor;
