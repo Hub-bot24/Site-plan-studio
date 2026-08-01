@@ -439,7 +439,7 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.42 0l7.58-7.58a1 1 0 0 0 0-1.42z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>
       <span class="btn-label">Labels</span>
     </button>
-    <button class="btn secondary toggled-on" id="clearancesToggleBtn" title="Show/hide recommended clearance zones around furniture — the walking/access space interior designers recommend (e.g. room to pull out a dining chair, a wardrobe door swing). Turns red where that space overlaps another item.">
+    <button class="btn secondary toggled-on" id="clearancesToggleBtn" title="Show/hide space-planning helpers: recommended clearance zones around furniture (walking/access space — turns red if blocked by another item), plus a recommended seating-distance band for TVs, sized to each screen size.">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2" stroke-dasharray="3 2"/><rect x="7" y="9" width="10" height="6" rx="1"/></svg>
       <span class="btn-label">Clearances</span>
     </button>
@@ -927,6 +927,13 @@ const CLEARANCE_IN = {
   bed:24, table:18, table_dining:36, desk:36, sofa:18, armchair:18,
   dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24,
 };
+// Recommended TV viewing distance, per screen diagonal -- the widely used
+// 1.5x-2.5x rule of thumb (too close and you can't take in the whole
+// picture, too far and detail is wasted). Unlike the walkway clearances
+// above, this isn't a "keep clear" zone -- it's the opposite: a band
+// showing roughly where seating *should* go, so it's rendered and reasoned
+// about separately.
+const TV_DIAGONAL_IN = { tv_32:32, tv_43:43, tv_55:55, tv_65:65, tv_75:75, tv_85:85 };
 
 /* ============================ DOM refs ============================ */
 const pdfInput = document.getElementById('pdfInput');
@@ -1845,6 +1852,54 @@ function drawClearanceZones(ctx){
     ctx.stroke();
   });
   ctx.restore();
+}
+
+/* ---- TV recommended viewing distance ---- */
+function getTvViewingDistanceFt(el){
+  const diag = TV_DIAGONAL_IN[el.presetKey];
+  if(!diag) return null;
+  return {minFt: diag*1.5/12, maxFt: diag*2.5/12};
+}
+// A band extending out from the TV's front edge (the long thin side, since
+// wall-mounted TVs are modeled as a wide/shallow rect) from the near to far
+// recommended viewing distance. Width is a simple 2x-the-screen-width stand
+// in for the ~30-40deg viewing cone real guidance uses -- close enough to
+// show "seating roughly here", not meant to be a precise cone.
+function getTvViewingZones(){
+  if(!state.scalePxPerFt) return [];
+  return currentPageElements().filter(e=>e.shape==='rect' && !e.isCutout && TV_DIAGONAL_IN[e.presetKey]).map(el=>{
+    const dist = getTvViewingDistanceFt(el);
+    const hPx = el.hFt*state.scalePxPerFt, wPx = el.wFt*state.scalePxPerFt;
+    const bandHalfW = wPx;
+    const nearY = hPx/2 + dist.minFt*state.scalePxPerFt;
+    const farY = hPx/2 + dist.maxFt*state.scalePxPerFt;
+    const rad = el.rotationDeg*Math.PI/180;
+    const toAbs = (lx,ly)=>({ x: el.xPx + lx*Math.cos(rad) - ly*Math.sin(rad), y: el.yPx + lx*Math.sin(rad) + ly*Math.cos(rad) });
+    const poly = [[-bandHalfW,nearY],[bandHalfW,nearY],[bandHalfW,farY],[-bandHalfW,farY]].map(([lx,ly])=>toAbs(lx,ly));
+    return {id:el.id, poly, minFt:dist.minFt, maxFt:dist.maxFt, label:toAbs(0,(nearY+farY)/2)};
+  });
+}
+function drawTvViewingZones(ctx){
+  if(!state.showClearances) return;
+  const zones = getTvViewingZones();
+  if(!zones.length) return;
+  ctx.save();
+  ctx.lineWidth = 1.5/Math.max(state.zoom,0.01);
+  ctx.setLineDash([6/Math.max(state.zoom,0.01), 4/Math.max(state.zoom,0.01)]);
+  ctx.fillStyle = 'rgba(62,124,177,0.10)';
+  ctx.strokeStyle = 'rgba(111,168,214,0.65)';
+  zones.forEach(({poly})=>{
+    ctx.beginPath();
+    poly.forEach((p,i)=> i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  });
+  ctx.restore();
+  zones.forEach(({label, minFt, maxFt})=>{
+    const text = formatNum(fromFt(minFt,state.unit))+'–'+formatNum(fromFt(maxFt,state.unit))+' '+unitAbbrev();
+    drawLabelChip(ctx, label.x, label.y, text, '#6FA8D6');
+  });
 }
 
 function updateUnitLabels(){
@@ -2964,6 +3019,7 @@ function requestMagnifierUpdate(){
 function drawOverlay(){
   ctxOverlay.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
   drawClearanceZones(ctxOverlay);
+  drawTvViewingZones(ctxOverlay);
   zOrderedElements().forEach(el=>drawElement(ctxOverlay, el, el.id===state.selectedId));
   // Smart alignment guides -- full-span magenta lines showing exactly what
   // the dragged element just snapped to (another item's edge or center),
