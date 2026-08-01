@@ -28,6 +28,9 @@
     overflow:hidden;
   }
   #app{display:flex;flex-direction:column;height:100vh;}
+  #app.presenting #topbar,#app.presenting #sidebar{display:none;}
+  #app.presenting #canvasWrap{margin:0;}
+  #app.presenting #canvasArea{background:var(--navy-deep);}
 
   /* ---------- Top bar ---------- */
   #topbar{
@@ -196,6 +199,17 @@
   }
   #cutMoveBar.visible{display:flex;}
   #cutMoveBar .drawstat{font-family:'Inter',sans-serif;font-weight:600;font-size:13px;color:var(--accent);white-space:nowrap;}
+
+  #exitPresentBtn{
+    position:absolute;top:16px;right:16px;z-index:9;
+    display:none;align-items:center;gap:7px;
+    background:rgba(15,32,56,0.92);border:1px solid var(--line);color:var(--ink);
+    font-family:'Inter',sans-serif;font-weight:600;font-size:12px;
+    padding:8px 12px;border-radius:8px;cursor:pointer;
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  }
+  #exitPresentBtn:hover{border-color:var(--accent);color:var(--accent);}
+  #app.presenting #exitPresentBtn{display:flex;}
 
   .checkfield{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;color:var(--ink-dim);line-height:1.4;}
   .checkfield input{width:auto;margin-top:2px;}
@@ -446,6 +460,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
       <span class="btn-label">Export PDF</span>
     </button>
+    <button class="btn secondary" id="presentBtn" disabled title="Presentation view — hide all the editing chrome for a clean, full-screen look at just the plan (great for showing a client)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+      <span class="btn-label">Present</span>
+    </button>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
   </div>
 
@@ -490,6 +508,10 @@
         <button id="zoomInBtn" title="Zoom in">+</button>
         <button id="zoomFitBtn" class="fitbtn" title="Fit to view">Fit</button>
       </div>
+      <button id="exitPresentBtn" title="Exit presentation view">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>
+        Exit presentation
+      </button>
       <div id="renderingIndicator">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>
         Rendering page…
@@ -845,6 +867,9 @@ const overlayCanvas = document.getElementById('overlayCanvas');
 const newPlanBtn = document.getElementById('newPlanBtn');
 const exportBtn = document.getElementById('exportBtn');
 const exportPdfBtn = document.getElementById('exportPdfBtn');
+const presentBtn = document.getElementById('presentBtn');
+const exitPresentBtn = document.getElementById('exitPresentBtn');
+const appEl = document.getElementById('app');
 const zoomBar = document.getElementById('zoomBar');
 const zoomInBtn = document.getElementById('zoomInBtn');
 const zoomOutBtn = document.getElementById('zoomOutBtn');
@@ -1312,6 +1337,7 @@ async function applyLoadedProjectRecord(rec, name){
   exportBtn.disabled = false;
   exportPdfBtn.disabled = false;
   exportProjectBtn.disabled = false;
+  presentBtn.disabled = false;
 
   if(state.scalePxPerFt){
     scaleStatus.textContent = scaleStatusText();
@@ -1816,6 +1842,8 @@ newPlanBtn.addEventListener('click', ()=>{
   exportBtn.disabled = true;
   exportPdfBtn.disabled = true;
   exportProjectBtn.disabled = true;
+  presentBtn.disabled = true;
+  setPresentMode(false);
   pdfInput.value='';
   state.pdf = null;
   state.pdfBytes = null;
@@ -1869,6 +1897,7 @@ async function loadFile(file){
     exportBtn.disabled = false;
     exportPdfBtn.disabled = false;
     exportProjectBtn.disabled = false;
+    presentBtn.disabled = false;
   }catch(err){
     console.error(err);
     showUploadError("Couldn't read that PDF. Try re-exporting it or use a different file.");
@@ -1978,6 +2007,17 @@ function applyZoomAndLayout(){
 zoomInBtn.addEventListener('click', ()=>{ state.zoom = Math.min(state.zoom*1.25, 6); applyZoomAndLayout(); });
 zoomOutBtn.addEventListener('click', ()=>{ state.zoom = Math.max(state.zoom/1.25, 0.05); applyZoomAndLayout(); });
 zoomFitBtn.addEventListener('click', ()=>{ state.zoom = computeFitZoom(); applyZoomAndLayout(); });
+
+function setPresentMode(on){
+  appEl.classList.toggle('presenting', on);
+  presentBtn.classList.toggle('toggled-on', on);
+  if(canvasScroll.classList.contains('visible')){
+    state.zoom = computeFitZoom();
+    applyZoomAndLayout();
+  }
+}
+presentBtn.addEventListener('click', ()=>{ setPresentMode(!appEl.classList.contains('presenting')); });
+exitPresentBtn.addEventListener('click', ()=>{ setPresentMode(false); });
 
 prevPageBtn.addEventListener('click', ()=>{
   const n = Math.max(1, state.currentPage-1);
@@ -2145,6 +2185,7 @@ document.addEventListener('keydown',(e)=>{
     if(state.eraseMode){ setEraseMode(false); drawOverlay(); }
     if(state.cutMode){ setCutMode(false); state.cutStroke=null; drawOverlay(); }
     if(state.cutMoveMode){ setCutMoveMode(false); drawOverlay(); }
+    if(appEl.classList.contains('presenting')) setPresentMode(false);
   }
 });
 
@@ -2461,8 +2502,11 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
     el.labelDx = state.dragging.startDx + (x-state.dragging.anchorX);
     el.labelDy = state.dragging.startDy + (y-state.dragging.anchorY);
   } else {
-    el.xPx = x - state.dragging.offsetX;
-    el.yPx = y - state.dragging.offsetY;
+    const rawX = x - state.dragging.offsetX, rawY = y - state.dragging.offsetY;
+    const snap = computeAlignmentSnap(el, rawX, rawY);
+    el.xPx = snap.x;
+    el.yPx = snap.y;
+    state.dragging.guides = snap.guides;
   }
   requestRedraw();
 });
@@ -2517,7 +2561,16 @@ function endDrag(e){
   if(state.cutMoveDrag){ commitCutMoveDrag(); return; }
   if(e && !e.isPrimary) return;
   if(state.aiming){ commitAiming(); return; }
-  if(state.dragging){ state.dragging = null; renderElementsList(); }
+  if(state.dragging){
+    // Clearing state.dragging alone doesn't erase anything already painted
+    // this frame (the canvas is retained, not auto-cleared) -- a redraw is
+    // needed to actually remove transient drag-only overlays like the
+    // alignment guide lines.
+    const hadGuides = state.dragging.guides && state.dragging.guides.length;
+    state.dragging = null;
+    renderElementsList();
+    if(hadGuides) drawOverlay();
+  }
   state.panning = null;
 }
 function cancelPointerGesture(e){
@@ -2530,8 +2583,10 @@ function cancelPointerGesture(e){
   if(state.cutMoveDrag){ commitCutMoveDrag(); return; }
   if(e && !e.isPrimary) return;
   if(state.aiming){ cancelAiming(); return; }
+  const hadGuides = state.dragging && state.dragging.guides && state.dragging.guides.length;
   state.dragging = null;
   state.panning = null;
+  if(hadGuides) drawOverlay();
 }
 overlayCanvas.addEventListener('pointerup', endDrag);
 overlayCanvas.addEventListener('pointercancel', cancelPointerGesture);
@@ -2596,6 +2651,62 @@ function findElementAt(x,y){
   return null;
 }
 
+// Axis-aligned bounding box for a rect/circle/image element, ignoring
+// rotation -- good enough for alignment snapping, which is a convenience
+// nudge, not a precision measurement.
+function getElementBBox(el){
+  if(el.shape==='rect' || el.shape==='image'){
+    const wPx = el.wFt*state.scalePxPerFt, hPx = el.hFt*state.scalePxPerFt;
+    return {left:el.xPx-wPx/2, right:el.xPx+wPx/2, top:el.yPx-hPx/2, bottom:el.yPx+hPx/2, cx:el.xPx, cy:el.yPx};
+  }
+  if(el.shape==='circle'){
+    const rPx = (el.dFt*state.scalePxPerFt)/2;
+    return {left:el.xPx-rPx, right:el.xPx+rPx, top:el.yPx-rPx, bottom:el.yPx+rPx, cx:el.xPx, cy:el.yPx};
+  }
+  return null;
+}
+// Figma/Canva-style smart guides: while dragging an element, snap its
+// position when an edge or center lines up with another element's edge or
+// center, and report which guide line(s) matched so drawOverlay can render
+// them. Threshold is in screen pixels (scaled to canvas space) so it feels
+// consistent regardless of zoom level.
+function computeAlignmentSnap(el, rawX, rawY){
+  const bbox = getElementBBox(el);
+  if(!bbox){ return {x:rawX, y:rawY, guides:[]}; }
+  const dx0 = rawX-bbox.cx, dy0 = rawY-bbox.cy;
+  const halfW = bbox.right-bbox.cx, halfH = bbox.bottom-bbox.cy;
+  const thresh = 6/Math.max(state.zoom, 0.01);
+  const others = currentPageElements().filter(o=>o.id!==el.id && (o.shape==='rect'||o.shape==='circle'||o.shape==='image'));
+  let bestX = null, bestY = null;
+  const xCandidates = [{v:rawX-halfW, kind:'left'},{v:rawX, kind:'cx'},{v:rawX+halfW, kind:'right'}];
+  const yCandidates = [{v:rawY-halfH, kind:'top'},{v:rawY, kind:'cy'},{v:rawY+halfH, kind:'bottom'}];
+  others.forEach(o=>{
+    const ob = getElementBBox(o);
+    if(!ob) return;
+    [{v:ob.left,at:'left'},{v:ob.cx,at:'cx'},{v:ob.right,at:'right'}].forEach(target=>{
+      xCandidates.forEach(cand=>{
+        const diff = Math.abs(cand.v-target.v);
+        if(diff<=thresh && (bestX==null || diff<bestX.diff)){
+          bestX = {diff, pos:target.v, offset: target.v-cand.v};
+        }
+      });
+    });
+    [{v:ob.top,at:'top'},{v:ob.cy,at:'cy'},{v:ob.bottom,at:'bottom'}].forEach(target=>{
+      yCandidates.forEach(cand=>{
+        const diff = Math.abs(cand.v-target.v);
+        if(diff<=thresh && (bestY==null || diff<bestY.diff)){
+          bestY = {diff, pos:target.v, offset: target.v-cand.v};
+        }
+      });
+    });
+  });
+  const guides = [];
+  let snappedX = rawX, snappedY = rawY;
+  if(bestX){ snappedX = rawX+bestX.offset; guides.push({type:'v', pos:bestX.pos}); }
+  if(bestY){ snappedY = rawY+bestY.offset; guides.push({type:'h', pos:bestY.pos}); }
+  return {x:snappedX, y:snappedY, guides};
+}
+
 /* ============================ Drawing ============================ */
 let redrawPending = false;
 function requestRedraw(){
@@ -2617,6 +2728,22 @@ function requestMagnifierUpdate(){
 function drawOverlay(){
   ctxOverlay.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
   zOrderedElements().forEach(el=>drawElement(ctxOverlay, el, el.id===state.selectedId));
+  // Smart alignment guides -- full-span magenta lines showing exactly what
+  // the dragged element just snapped to (another item's edge or center),
+  // the same visual language Figma/Canva use for this.
+  if(state.dragging && state.dragging.guides && state.dragging.guides.length){
+    ctxOverlay.save();
+    ctxOverlay.strokeStyle = '#E44FA0';
+    ctxOverlay.lineWidth = 1/Math.max(state.zoom, 0.01);
+    ctxOverlay.setLineDash([5/Math.max(state.zoom,0.01), 4/Math.max(state.zoom,0.01)]);
+    state.dragging.guides.forEach(g=>{
+      ctxOverlay.beginPath();
+      if(g.type==='v'){ ctxOverlay.moveTo(g.pos,0); ctxOverlay.lineTo(g.pos,overlayCanvas.height); }
+      else { ctxOverlay.moveTo(0,g.pos); ctxOverlay.lineTo(overlayCanvas.width,g.pos); }
+      ctxOverlay.stroke();
+    });
+    ctxOverlay.restore();
+  }
   if(state.drawing){
     drawInProgress(ctxOverlay, state.drawing);
   }
