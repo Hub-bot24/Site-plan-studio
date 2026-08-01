@@ -725,6 +725,7 @@ const FURNITURE_ITEMS = {
   kitchen_island:{name:'Kitchen island',         label:'Kitchen island (60×36 in)',            wIn:60, hIn:36},
   bath_vanity:   {name:'Bathroom vanity',        label:'Bathroom vanity (36×22 in)',           wIn:36, hIn:22},
   toilet:        {name:'Toilet',                 label:'Toilet (20×28 in)',                    wIn:20, hIn:28},
+  power_point:   {name:'Power point',            label:'Power point / GPO (4×4 in)',           wIn:4,  hIn:4},
 };
 // Which top-down icon each furniture item renders as (see drawFurnitureIcon) --
 // a plain tinted rectangle doesn't read as "a bed" or "a sofa" at a glance.
@@ -736,11 +737,13 @@ const FURNITURE_ICONS = {
   dresser:'dresser', wardrobe:'wardrobe',
   fridge:'fridge', kitchen_island:'island',
   bath_vanity:'vanity', toilet:'toilet',
+  power_point:'power',
 };
 const FURNITURE_COLORS = {
   bed:'#DCD3C4', tv:'#20242A', table:'#9C7A54', table_dining:'#9C7A54', desk:'#9C7A54',
   sofa:'#6E7B8C', armchair:'#6E7B8C', dresser:'#8A7360', wardrobe:'#8A7360',
   fridge:'#C7CDD1', island:'#B9B2A6', vanity:'#C9C2B4', toilet:'#E8ECED',
+  power:'#EDE8DC',
 };
 Object.keys(FURNITURE_ITEMS).forEach(key=>{
   const item = FURNITURE_ITEMS[key];
@@ -1510,7 +1513,8 @@ function updateUnitLabels(){
 const TYPE_GROUPS = [
   {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','pool','tree','custom']},
   {label:'Roofing', keys:['roof_tile','roof_metal','roof_shingle']},
-  {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS)]},
+  {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS).filter(k=>k!=='power_point')]},
+  {label:'Electrical', keys:['power_point']},
   {label:'Lines & measurement', keys:['fence','dimension']},
 ];
 TYPE_GROUPS.forEach(group=>{
@@ -2816,6 +2820,34 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     ctx.strokeStyle=shadeColor(baseColor,-0.3); ctx.lineWidth=1.2; ctx.stroke();
     ctx.beginPath(); ctx.ellipse(cx,cy,rx*0.58,ry*0.6,0,0,Math.PI*2);
     ctx.strokeStyle='rgba(0,0,0,0.22)'; ctx.lineWidth=1; ctx.stroke();
+  } else if(icon==='power'){
+    // Standard GPO/power-point plan symbol: a faceplate, a round socket face
+    // with two slot marks and a ground pin -- reads instantly as "outlet"
+    // even at small size, the way it would on a real electrical plan.
+    roundRectPath(ctx,x,y,w,h,short*0.18);
+    ctx.fillStyle = shadeColor(baseColor,0.08);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1.2;
+    roundRectPath(ctx,x,y,w,h,short*0.18); ctx.stroke();
+    const cx=x+w/2, cy=y+h/2, faceR=short*0.32;
+    ctx.beginPath(); ctx.arc(cx,cy,faceR,0,Math.PI*2);
+    ctx.fillStyle = shadeColor(baseColor,-0.12);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1; ctx.stroke();
+    ctx.strokeStyle = shadeColor(baseColor,-0.6);
+    ctx.lineWidth = Math.max(1.2, short*0.05);
+    ctx.lineCap = 'round';
+    const slotLen = faceR*0.85, slotGap = faceR*0.42;
+    [-1,1].forEach(dir=>{
+      ctx.beginPath();
+      ctx.moveTo(cx+dir*slotGap, cy-slotLen/2);
+      ctx.lineTo(cx+dir*slotGap, cy+slotLen/2);
+      ctx.stroke();
+    });
+    ctx.beginPath();
+    ctx.arc(cx, cy+faceR*0.6, faceR*0.16, 0, Math.PI*2);
+    ctx.fillStyle = shadeColor(baseColor,-0.6);
+    ctx.fill();
   } else {
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = shadeColor(baseColor,0.1);
