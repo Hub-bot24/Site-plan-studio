@@ -359,7 +359,8 @@
   .icnbtn:hover{border-color:var(--ink);color:var(--ink);}
   .icnbtn.del:hover{border-color:var(--danger);color:var(--danger);}
   .icnbtn.active{border-color:var(--accent);color:var(--accent);}
-  .empty-note{color:var(--ink-dim);font-size:12px;line-height:1.5;}
+  .empty-note{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;color:var(--ink-dim);font-size:12px;line-height:1.5;padding:18px 8px;}
+  .empty-note svg{color:var(--ink-dim);opacity:0.5;}
   .totalline{
     display:flex;justify-content:space-between;font-family:'Space Mono',monospace;
     font-size:13px;border-top:1px solid var(--line);padding-top:8px;margin-top:4px;
@@ -367,7 +368,7 @@
   .pagerow{display:flex;align-items:center;gap:8px;margin-top:6px;}
   .pagerow input{width:50px;text-align:center;}
   .mat-summary-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;}
-  .mat-summary-row .swatch{width:12px;height:12px;border-radius:3px;flex-shrink:0;}
+  .mat-summary-row .swatch{width:20px;height:20px;border-radius:5px;flex-shrink:0;}
   .mat-summary-row .mat-label{flex:1;min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .mat-summary-row .mat-count{color:var(--ink-dim);font-size:11px;}
   .mat-summary-row .mat-figures{font-family:'Space Mono',monospace;font-size:11px;color:var(--ink-dim);text-align:right;white-space:nowrap;}
@@ -657,7 +658,10 @@
       <div class="panel disabled" id="elementsPanel">
         <p class="eyebrow">04 — Elements &amp; totals</p>
         <div id="elementsList"></div>
-        <p class="empty-note" id="emptyNote">No elements added yet — use the form above to add your first deck, patio, fence, or planting bed.</p>
+        <div class="empty-note" id="emptyNote">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          <span id="emptyNoteText">No elements added yet — use the form above to add your first deck, patio, fence, or planting bed.</span>
+        </div>
         <div id="materialSummaryWrap" style="display:none;">
           <p class="eyebrow" style="margin-top:4px;">Summary by material</p>
           <div id="materialSummaryList"></div>
@@ -898,6 +902,7 @@ const drawCancelBtn = document.getElementById('drawCancelBtn');
 const elementsPanel = document.getElementById('elementsPanel');
 const elementsList = document.getElementById('elementsList');
 const emptyNote = document.getElementById('emptyNote');
+const emptyNoteText = document.getElementById('emptyNoteText');
 const materialSummaryWrap = document.getElementById('materialSummaryWrap');
 const materialSummaryList = document.getElementById('materialSummaryList');
 const totalArea = document.getElementById('totalArea');
@@ -1082,6 +1087,7 @@ pasteBtn.addEventListener('click', ()=>{
     const dx = targetX-(b.minX+b.maxX)/2, dy = targetY-(b.minY+b.maxY)/2;
     copy.points = copy.points.map(p=>({x:p.x+dx, y:p.y+dy}));
   }
+  copy._bornAt = performance.now();
   pushUndo();
   state.elements.push(copy);
   state.selectedId = copy.id;
@@ -2093,6 +2099,7 @@ function finishDrawing(){
     priceMode: state.drawing.priceMode || 'rate',
     fixedCost: state.drawing.fixedCost || 0,
     points: state.drawing.points.map(p=>({x:p.x,y:p.y})),
+    _bornAt: performance.now(),
   };
   pushUndo();
   state.elements.push(el);
@@ -2486,7 +2493,7 @@ function commitCutMoveDrag(){
     xPx: clipX+clipW/2, yPx: clipY+clipH/2,
     wFt: clipW/state.scalePxPerFt, hFt: clipH/state.scalePxPerFt,
     rotationDeg:0, label:'Cut piece', color:'#9AA7B8', unitCost:0, presetKey:null,
-    imgSrc,
+    imgSrc, _bornAt: performance.now(),
   };
   state.elements.push(newEl);
   state.selectedId = newEl.id;
@@ -2673,6 +2680,30 @@ function drawOverlay(){
     ctxOverlay.restore();
   }
   if(state.bgLoaded) drawTitleBlock(ctxOverlay);
+  // Self-sustaining animation loop: keep redrawing at 60fps only while
+  // something is actually mid pop-in, then stop -- no persistent ticking
+  // once everything has settled.
+  if(state.elements.some(el=>el._bornAt!=null && performance.now()-el._bornAt < POP_IN_MS)){
+    requestAnimationFrame(drawOverlay);
+  }
+}
+const POP_IN_MS = 240;
+// A freshly-placed element eases in (fade + gentle scale-up from its own
+// center) instead of just snapping into existence -- rect/circle/image only,
+// since those already have a well-defined local origin to scale around;
+// freeform paths/polygons get a plain fade (see drawPolygonElement/
+// drawPathElement) rather than a geometry-dependent scale transform.
+function getPopState(el){
+  if(el._bornAt==null) return {scale:1, alpha:1};
+  const elapsed = performance.now()-el._bornAt;
+  // elapsed<0 covers a _bornAt timestamp left over from a previous page
+  // session (performance.now() resets to ~0 on reload, e.g. after loading a
+  // saved/imported project) -- treat it as long finished rather than
+  // computing a nonsense negative-progress fade.
+  if(elapsed>=POP_IN_MS || elapsed<0){ el._bornAt=null; return {scale:1, alpha:1}; }
+  const t = elapsed/POP_IN_MS;
+  const eased = 1-Math.pow(1-t,3);
+  return {scale:0.55+0.45*eased, alpha:eased};
 }
 
 function drawAimMarker(ctx, x, y, snapped){
@@ -3153,8 +3184,11 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor){
 function drawElement(ctx, el, selected){
   if(el.shape==='path'){ drawPathElement(ctx, el, selected); return; }
   if(el.shape==='polygon'){ drawPolygonElement(ctx, el, selected); return; }
+  const pop = getPopState(el);
   ctx.save();
   ctx.translate(el.xPx, el.yPx);
+  ctx.globalAlpha *= pop.alpha;
+  if(pop.scale!==1) ctx.scale(pop.scale, pop.scale);
   ctx.rotate(el.rotationDeg*Math.PI/180);
   ctx.strokeStyle = el.color;
   ctx.lineWidth = 1.4;
@@ -3204,6 +3238,8 @@ function drawElement(ctx, el, selected){
     ctx.save();
     ctx.translate(el.xPx, el.yPx);
     ctx.rotate(el.rotationDeg*Math.PI/180);
+    ctx.shadowColor = 'rgba(181,147,76,0.55)';
+    ctx.shadowBlur = 10/Math.max(state.zoom, 0.01);
     ctx.setLineDash([6,4]);
     ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
@@ -3396,6 +3432,7 @@ function drawDimensionElement(ctx, el, selected){
   const ang = Math.atan2(p2.y-p1.y, p2.x-p1.x);
   const headLen = 9, headAng = Math.PI/7;
   ctx.save();
+  ctx.globalAlpha *= getPopState(el).alpha;
   ctx.strokeStyle = el.color;
   ctx.fillStyle = el.color;
   ctx.lineWidth = selected ? 2.2 : 1.6;
@@ -3415,6 +3452,8 @@ function drawDimensionElement(ctx, el, selected){
   drawElementLabel(ctx, el, '#E7ECF2', selected);
   if(selected){
     ctx.save();
+    ctx.shadowColor = 'rgba(181,147,76,0.55)';
+    ctx.shadowBlur = 10/Math.max(state.zoom, 0.01);
     ctx.setLineDash([6,4]);
     ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
@@ -3428,6 +3467,7 @@ function drawPathElement(ctx, el, selected){
   if(el.points.length<2) return;
   if(el.isDimension){ drawDimensionElement(ctx, el, selected); return; }
   ctx.save();
+  ctx.globalAlpha *= getPopState(el).alpha;
   ctx.strokeStyle = el.color;
   ctx.lineWidth = selected ? 2.6 : 1.8;
   ctx.lineJoin = 'round';
@@ -3443,6 +3483,8 @@ function drawPathElement(ctx, el, selected){
   drawElementLabel(ctx, el, '#E7ECF2', selected);
   if(selected){
     ctx.save();
+    ctx.shadowColor = 'rgba(181,147,76,0.55)';
+    ctx.shadowBlur = 10/Math.max(state.zoom, 0.01);
     ctx.setLineDash([6,4]);
     ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
@@ -3454,6 +3496,7 @@ function drawPathElement(ctx, el, selected){
 function drawPolygonElement(ctx, el, selected){
   if(el.points.length<3) return;
   ctx.save();
+  ctx.globalAlpha *= getPopState(el).alpha;
   ctx.beginPath();
   ctx.moveTo(el.points[0].x, el.points[0].y);
   for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
@@ -3475,6 +3518,8 @@ function drawPolygonElement(ctx, el, selected){
   drawElementLabel(ctx, el, el.isCutout ? '#B5934C' : '#E7ECF2', selected);
   if(selected){
     ctx.save();
+    ctx.shadowColor = 'rgba(181,147,76,0.55)';
+    ctx.shadowBlur = 10/Math.max(state.zoom, 0.01);
     ctx.setLineDash([6,4]);
     ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
@@ -3605,7 +3650,7 @@ function getMaterialSummary(){
     const preset = PRESETS[el.presetKey];
     if(!preset) return;
     const key = el.presetKey;
-    if(!groups[key]) groups[key] = {label:preset.label, color:preset.color, isPath:el.shape==='path', area:0, cost:0, count:0};
+    if(!groups[key]) groups[key] = {label:preset.label, color:preset.color, presetKey:key, isPath:el.shape==='path', area:0, cost:0, count:0};
     const g = groups[key];
     g.count++;
     if(el.shape==='path') g.area += pathLengthDisplay(el.points);
@@ -3712,6 +3757,7 @@ addElBtn.addEventListener('click', ()=>{
   const cy = cssY / state.zoom;
   el.xPx = Math.min(Math.max(cx,0), overlayCanvas.width);
   el.yPx = Math.min(Math.max(cy,0), overlayCanvas.height);
+  el._bornAt = performance.now();
   pushUndo();
   state.elements.push(el);
   state.selectedId = el.id;
@@ -3726,8 +3772,8 @@ addElBtn.addEventListener('click', ()=>{
 function renderElementsList(){
   elementsList.innerHTML='';
   const pageEls = currentPageElements();
-  emptyNote.style.display = pageEls.length ? 'none' : 'block';
-  emptyNote.textContent = state.numPages>1
+  emptyNote.style.display = pageEls.length ? 'none' : 'flex';
+  emptyNoteText.textContent = state.numPages>1
     ? 'No elements on this page yet — use the form above to add your first deck, patio, fence, or planting bed. (Elements on other pages of this PDF aren\'t shown here.)'
     : 'No elements added yet — use the form above to add your first deck, patio, fence, or planting bed.';
   pageEls.forEach(el=>{
@@ -3998,6 +4044,7 @@ function renderElementsList(){
       } else {
         copy = Object.assign({}, el, {id:state.nextId++, points: el.points.map(p=>({x:p.x+24,y:p.y+24})), label: uniqueLabel(el.label)});
       }
+      copy._bornAt = performance.now();
       pushUndo();
       state.elements.push(copy);
       state.selectedId = copy.id;
@@ -4041,10 +4088,11 @@ function renderElementsList(){
     matSummary.forEach(g=>{
       const row = document.createElement('div');
       row.className = 'mat-summary-row';
-      const swatch = document.createElement('div');
+      const swatch = document.createElement('canvas');
       swatch.className = 'swatch';
-      swatch.style.background = g.color;
+      swatch.width = 24; swatch.height = 24;
       row.appendChild(swatch);
+      renderPresetThumb(swatch, g.presetKey);
       const label = document.createElement('span');
       label.className = 'mat-label';
       label.textContent = g.label;
