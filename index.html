@@ -696,6 +696,14 @@
 
       <div class="panel disabled" id="elementsPanel">
         <p class="eyebrow">04 — Elements &amp; totals</p>
+        <div id="autoArrangeBlock" style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--line);">
+          <p class="helptext" style="margin-top:0;">Select a room outline on the plan (any rectangle — a traced "Custom area" works well), then auto-arrange the furniture on this page around its walls, respecting the recommended clearances above.</p>
+          <button class="btn secondary" id="autoArrangeBtn" type="button" style="width:100%;" disabled title="Select a rectangle on the plan to use as the room outline first">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z"/><path d="m14 7 3 3"/><path d="M5 6v4"/><path d="M19 14v4"/><path d="M10 2v2"/><path d="M7 8H3"/><path d="M21 16h-4"/><path d="M11 3H9"/></svg>
+            <span class="btn-label">Auto-arrange furniture</span>
+          </button>
+          <p class="helptext" id="autoArrangeStatus" style="margin-top:6px;margin-bottom:0;display:none;"></p>
+        </div>
         <div id="elementsList"></div>
         <div class="empty-note" id="emptyNote">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
@@ -1012,6 +1020,8 @@ const elementsPanel = document.getElementById('elementsPanel');
 const elementsList = document.getElementById('elementsList');
 const emptyNote = document.getElementById('emptyNote');
 const emptyNoteText = document.getElementById('emptyNoteText');
+const autoArrangeBtn = document.getElementById('autoArrangeBtn');
+const autoArrangeStatus = document.getElementById('autoArrangeStatus');
 const materialSummaryWrap = document.getElementById('materialSummaryWrap');
 const materialSummaryList = document.getElementById('materialSummaryList');
 const totalArea = document.getElementById('totalArea');
@@ -1900,6 +1910,82 @@ function drawTvViewingZones(ctx){
     const text = formatNum(fromFt(minFt,state.unit))+'–'+formatNum(fromFt(maxFt,state.unit))+' '+unitAbbrev();
     drawLabelChip(ctx, label.x, label.y, text, '#6FA8D6');
   });
+}
+
+/* ---- Auto-arrange: wall-hugging furniture layout within a chosen room rectangle ---- */
+// Any selected rectangle can stand in for a room outline -- the app can't
+// detect walls from the PDF itself, but given a rectangle (drawn in a few
+// seconds with the existing "Custom area" tool, or reusing any rect already
+// on the plan), this lays furniture out against its walls, biggest pieces
+// first, spread from each wall's center outward so items don't all pile
+// into one corner, and skips anything that genuinely doesn't fit.
+function isValidRoomEl(el){
+  // Any rectangle works as a room outline -- EXCEPT another piece of
+  // furniture, which would be a confusing thing to "arrange other furniture
+  // around the walls of".
+  const isFurniture = el && PRESETS[el.presetKey] && PRESETS[el.presetKey].icon;
+  return !!el && el.shape==='rect' && el.wFt>0 && el.hFt>0 && !isFurniture;
+}
+function autoArrangeFurniture(roomEl){
+  const halfW = roomEl.wFt*state.scalePxPerFt/2;
+  const halfH = roomEl.hFt*state.scalePxPerFt/2;
+  const rad = roomEl.rotationDeg*Math.PI/180;
+  const toWorld = (lx,ly)=>({
+    x: roomEl.xPx + lx*Math.cos(rad) - ly*Math.sin(rad),
+    y: roomEl.yPx + lx*Math.sin(rad) + ly*Math.cos(rad),
+  });
+  const gapPx = 0.5*state.scalePxPerFt; // 6in breathing room between adjacent wall items
+
+  const furniture = currentPageElements().filter(e=>
+    e.id!==roomEl.id && e.shape==='rect' && !e.isCutout && PRESETS[e.presetKey] && PRESETS[e.presetKey].icon
+  );
+  const sorted = furniture.slice().sort((a,b)=> (b.wFt*b.hFt) - (a.wFt*a.hFt));
+
+  // Each wall fills outward from its own midpoint in both directions, so
+  // the first (biggest) item on a wall sits centered rather than jammed
+  // into a corner, and later items alternate sides.
+  const walls = {
+    top:    { lengthPx: halfW*2, depthAvail: halfH*2, leftUsed:0, rightUsed:0 },
+    bottom: { lengthPx: halfW*2, depthAvail: halfH*2, leftUsed:0, rightUsed:0 },
+    left:   { lengthPx: halfH*2, depthAvail: halfW*2, leftUsed:0, rightUsed:0 },
+    right:  { lengthPx: halfH*2, depthAvail: halfW*2, leftUsed:0, rightUsed:0 },
+  };
+  function tryWall(wallName, el){
+    const wall = walls[wallName];
+    const alongPx = el.wFt*state.scalePxPerFt;
+    const depthPx = el.hFt*state.scalePxPerFt;
+    if(depthPx > wall.depthAvail) return null;
+    if(wall.leftUsed + wall.rightUsed + alongPx > wall.lengthPx) return null;
+    const side = wall.leftUsed <= wall.rightUsed ? 'left' : 'right';
+    const centerAlong = side==='left' ? -(wall.leftUsed + alongPx/2) : (wall.rightUsed + alongPx/2);
+    let lx,ly,rotDeg;
+    if(wallName==='top'){ lx=centerAlong; ly=-halfH+depthPx/2; rotDeg=0; }
+    else if(wallName==='bottom'){ lx=centerAlong; ly=halfH-depthPx/2; rotDeg=180; }
+    else if(wallName==='left'){ lx=-halfW+depthPx/2; ly=centerAlong; rotDeg=270; }
+    else { lx=halfW-depthPx/2; ly=centerAlong; rotDeg=90; }
+    return {lx, ly, rotDeg, alongPx, side};
+  }
+
+  const unplaced = [];
+  let placedCount = 0;
+  sorted.forEach(el=>{
+    let best = null, bestWall = null, bestRemaining = -Infinity;
+    ['top','bottom','left','right'].forEach(w=>{
+      const p = tryWall(w, el);
+      if(!p) return;
+      const wall = walls[w];
+      const remaining = wall.lengthPx - (wall.leftUsed + wall.rightUsed + p.alongPx);
+      if(remaining > bestRemaining){ bestRemaining = remaining; best = p; bestWall = w; }
+    });
+    if(!best){ unplaced.push(el); return; }
+    const world = toWorld(best.lx, best.ly);
+    el.xPx = world.x; el.yPx = world.y;
+    el.rotationDeg = ((roomEl.rotationDeg + best.rotDeg) % 360 + 360) % 360;
+    if(best.side==='left') walls[bestWall].leftUsed += best.alongPx + gapPx;
+    else walls[bestWall].rightUsed += best.alongPx + gapPx;
+    placedCount++;
+  });
+  return {placedCount, unplaced};
 }
 
 function updateUnitLabels(){
@@ -4627,7 +4713,31 @@ function renderElementsList(){
   } else {
     totalCostRow.style.display='none';
   }
+
+  const roomEl = getElementById(state.selectedId);
+  const roomReady = isValidRoomEl(roomEl);
+  autoArrangeBtn.disabled = !roomReady;
+  autoArrangeBtn.title = roomReady
+    ? 'Arrange the furniture on this page around the selected rectangle\'s walls'
+    : 'Select a rectangle on the plan to use as the room outline first';
 }
+
+autoArrangeBtn.addEventListener('click', ()=>{
+  const roomEl = getElementById(state.selectedId);
+  if(!isValidRoomEl(roomEl)) return;
+  pushUndo();
+  const {placedCount, unplaced} = autoArrangeFurniture(roomEl);
+  renderElementsList();
+  drawOverlay();
+  autoArrangeStatus.style.display = 'block';
+  if(placedCount===0){
+    autoArrangeStatus.textContent = 'No furniture on this page to arrange yet — add some, then try again.';
+  } else if(unplaced.length){
+    autoArrangeStatus.textContent = 'Arranged '+placedCount+' item'+(placedCount===1?'':'s')+' — '+unplaced.length+' didn\'t fit against a wall ('+unplaced.map(e=>e.label||PRESETS[e.presetKey].label).join(', ')+').';
+  } else {
+    autoArrangeStatus.textContent = 'Arranged all '+placedCount+' item'+(placedCount===1?'':'s')+' around the room.';
+  }
+});
 
 /* ============================ Title block inputs ============================ */
 northInput.addEventListener('input', ()=>{ state.northRotationDeg = parseFloat(northInput.value)||0; drawOverlay(); });
