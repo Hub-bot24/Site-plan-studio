@@ -2187,6 +2187,18 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
       return;
     }
   }
+  // Dragging an already-selected item's own label chip moves just the text
+  // (off whatever it's covering) instead of the shape underneath it.
+  if(selectedEl && hitTestLabelHandle(ctxOverlay, selectedEl, x, y)){
+    state.dragging = {
+      id: selectedEl.id, mode:'label',
+      startDx: selectedEl.labelDx||0, startDy: selectedEl.labelDy||0,
+      anchorX: x, anchorY: y,
+    };
+    overlayCanvas.setPointerCapture(e.pointerId);
+    drawOverlay();
+    return;
+  }
   const hit = findElementAt(x,y);
   if(hit){
     state.selectedId = hit.id;
@@ -2260,6 +2272,9 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
     const nearest15 = Math.round(deg/15)*15;
     if(Math.abs(deg-nearest15) < 1.5) deg = nearest15%360;
     el.rotationDeg = deg;
+  } else if(state.dragging.mode==='label'){
+    el.labelDx = state.dragging.startDx + (x-state.dragging.anchorX);
+    el.labelDy = state.dragging.startDy + (y-state.dragging.anchorY);
   } else {
     el.xPx = x - state.dragging.offsetX;
     el.yPx = y - state.dragging.offsetY;
@@ -3015,12 +3030,7 @@ function drawElement(ctx, el, selected){
     ctx.stroke();
   }
   ctx.restore();
-  if(state.showLabels){
-    const elLabelText = el.isCutout
-      ? '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit
-      : el.label;
-    drawLabelChip(ctx, el.xPx, el.yPx, elLabelText, el.isCutout ? '#B5934C' : '#E7ECF2');
-  }
+  drawElementLabel(ctx, el, el.isCutout ? '#B5934C' : '#E7ECF2', selected);
   if(selected){
     ctx.save();
     ctx.translate(el.xPx, el.yPx);
@@ -3072,6 +3082,107 @@ function getRotationHandlePos(el){
   return { x: el.xPx + handleDist*Math.sin(rad), y: el.yPx - handleDist*Math.cos(rad) };
 }
 
+// Where an element's label chip normally sits (before any manual drag offset)
+// and what it says -- shared between drawing and hit-testing so a label can
+// be dragged to a clear spot instead of always sitting dead-center on top of
+// the shape (and whatever it's covering).
+function elementLabelAnchor(el){
+  if(el.shape==='path'){
+    if(el.isDimension){
+      const [p1,p2] = el.points;
+      return {x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2};
+    }
+    return pointAtPathFraction(el.points, 0.5);
+  }
+  if(el.shape==='polygon') return polygonCentroid(el.points);
+  return {x: el.xPx, y: el.yPx};
+}
+function elementLabelText(el){
+  if(el.shape==='path'){
+    if(el.isDimension) return formatNum(pathLengthDisplay(el.points))+' '+state.unit;
+    return el.label+' — '+formatNum(pathLengthDisplay(el.points))+' '+state.unit;
+  }
+  if(el.shape==='polygon'){
+    if(el.isCutout){
+      const parent = el.parentId!=null ? getElementById(el.parentId) : null;
+      return '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit + (parent ? '  (from '+parent.label+')' : '');
+    }
+    return el.label+' — '+formatNum(netAreaDisplay(el))+' sq '+state.unit;
+  }
+  return el.isCutout
+    ? '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit
+    : el.label;
+}
+function elementLabelPos(el){
+  const a = elementLabelAnchor(el);
+  return {x: a.x + (el.labelDx||0), y: a.y + (el.labelDy||0)};
+}
+// Same box math drawLabelChip uses to paint the chip, so hit-testing lines up
+// exactly with what's on screen.
+function labelChipBounds(ctx, el){
+  const pos = elementLabelPos(el);
+  const text = elementLabelText(el);
+  const sizeMult = el.isDimension ? 1.3 : 1;
+  const s = sizeMult / Math.max(state.zoom, 0.01);
+  ctx.save();
+  ctx.font = '500 ' + Math.round(11*s) + 'px Inter, sans-serif';
+  const tw = ctx.measureText(text).width;
+  ctx.restore();
+  const w = tw+10*s, h = 17*s;
+  return {x: pos.x, y: pos.y, w, h};
+}
+// A small grip dot at the chip's top-right corner -- NOT the whole chip --
+// is the drag target for repositioning a label. The chip itself sits right
+// on top of the shape by default (that's the point, it identifies it), so
+// treating the whole chip as draggable would swallow every ordinary
+// click-and-drag on the shape underneath it.
+function labelHandlePos(ctx, el){
+  const b = labelChipBounds(ctx, el);
+  const s = 1/Math.max(state.zoom, 0.01);
+  return {x: b.x+b.w/2+5*s, y: b.y-b.h/2-5*s};
+}
+function hitTestLabelHandle(ctx, el, px, py){
+  if(!state.showLabels) return false;
+  const hp = labelHandlePos(ctx, el);
+  const thresh = 9/Math.max(state.zoom, 0.01);
+  return Math.hypot(px-hp.x, py-hp.y) <= thresh;
+}
+// Draws an element's label chip at its (possibly manually-dragged) position,
+// with a thin dashed connector back to the shape whenever it's been moved
+// away from the default spot -- otherwise a relocated label with nothing
+// else selected would float with no clue which item it belongs to. When
+// selected, also draws the small grip handle used to drag the label.
+function drawElementLabel(ctx, el, color, selected){
+  if(!state.showLabels) return;
+  const anchor = elementLabelAnchor(el);
+  const pos = elementLabelPos(el);
+  if((el.labelDx||0) || (el.labelDy||0)){
+    ctx.save();
+    const lw = 1/Math.max(state.zoom, 0.01);
+    ctx.strokeStyle = 'rgba(223,231,240,0.35)';
+    ctx.lineWidth = lw;
+    ctx.setLineDash([lw*3, lw*3]);
+    ctx.beginPath();
+    ctx.moveTo(anchor.x, anchor.y);
+    ctx.lineTo(pos.x, pos.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+  drawLabelChip(ctx, pos.x, pos.y, elementLabelText(el), color, el.isDimension ? 1.3 : 1);
+  if(selected){
+    const hp = labelHandlePos(ctx, el);
+    const s = 1/Math.max(state.zoom, 0.01);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(hp.x, hp.y, 4*s, 0, Math.PI*2);
+    ctx.fillStyle = '#B5934C';
+    ctx.fill();
+    ctx.strokeStyle = '#0A1A2E';
+    ctx.lineWidth = 1*s;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
 function drawLabelChip(ctx, x, y, text, textColor, sizeMult){
   ctx.save();
   // Text is drawn in raw canvas pixels, which get shrunk by CSS to whatever
@@ -3132,9 +3243,7 @@ function drawDimensionElement(ctx, el, selected){
     ctx.fill();
   });
   ctx.restore();
-  const mid = {x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2};
-  const text = formatNum(pathLengthDisplay(el.points))+' '+state.unit;
-  drawLabelChip(ctx, mid.x, mid.y, text, '#E7ECF2', 1.3);
+  drawElementLabel(ctx, el, '#E7ECF2', selected);
   if(selected){
     ctx.save();
     ctx.setLineDash([6,4]);
@@ -3162,11 +3271,7 @@ function drawPathElement(ctx, el, selected){
     ctx.fill();
   });
   ctx.restore();
-  if(state.showLabels){
-    const mid = pointAtPathFraction(el.points, 0.5);
-    const text = el.label+' — '+formatNum(pathLengthDisplay(el.points))+' '+state.unit;
-    drawLabelChip(ctx, mid.x, mid.y, text, '#E7ECF2');
-  }
+  drawElementLabel(ctx, el, '#E7ECF2', selected);
   if(selected){
     ctx.save();
     ctx.setLineDash([6,4]);
@@ -3198,17 +3303,7 @@ function drawPolygonElement(ctx, el, selected){
   if(el.isCutout) ctx.setLineDash([5,4]);
   strokePolyline(ctx, el.points, true);
   ctx.restore();
-  if(state.showLabels){
-    const c = polygonCentroid(el.points);
-    let text;
-    if(el.isCutout){
-      const parent = el.parentId!=null ? getElementById(el.parentId) : null;
-      text = '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit + (parent ? '  (from '+parent.label+')' : '');
-    } else {
-      text = el.label+' — '+formatNum(netAreaDisplay(el))+' sq '+state.unit;
-    }
-    drawLabelChip(ctx, c.x, c.y, text, el.isCutout ? '#B5934C' : '#E7ECF2');
-  }
+  drawElementLabel(ctx, el, el.isCutout ? '#B5934C' : '#E7ECF2', selected);
   if(selected){
     ctx.save();
     ctx.setLineDash([6,4]);
