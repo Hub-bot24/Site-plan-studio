@@ -2125,6 +2125,13 @@ function getTilePattern(ctx, texture, scalePxPerFt){
   patternCache[key] = pattern;
   return pattern;
 }
+// Deterministic pseudo-random (0..1) from a seed -- used for scattering
+// texture details that must stay put across redraws (a real Math.random()
+// would reshuffle every frame and look like flickering noise).
+function seededRand(seed){
+  const x = Math.sin(seed*12.9898)*43758.5453;
+  return x - Math.floor(x);
+}
 function fillMaterial(ctx, presetKey, bounds){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
@@ -2152,6 +2159,32 @@ function fillMaterial(ctx, presetKey, bounds){
     grad.addColorStop(1, baseColor+'C8');
     ctx.fillStyle = grad;
     ctx.fill();
+    // Scatter small top-down plant/shrub canopies across the bed so it reads
+    // as an actual planted garden bed, not just bare mulch.
+    ctx.save();
+    ctx.clip();
+    const spacing = Math.max(14, scalePxPerFt*1.6);
+    const plantColors = ['#5C8752','#4B7A46','#6B9760','#3F6B3B'];
+    let idx = 0;
+    for(let gy=bounds.minY-spacing; gy<bounds.maxY+spacing; gy+=spacing){
+      for(let gx=bounds.minX-spacing; gx<bounds.maxX+spacing; gx+=spacing){
+        idx++;
+        const r1 = seededRand(idx*7.13+1), r2 = seededRand(idx*13.7+5), r3 = seededRand(idx*3.3+9);
+        if(r1 < 0.22) continue; // skip some spots so it isn't a rigid grid
+        const px = gx + (r2-0.5)*spacing*0.7;
+        const py = gy + (r3-0.5)*spacing*0.7;
+        const rad = spacing*0.28*(0.7+r1*0.6);
+        const pg = ctx.createRadialGradient(px-rad*0.3, py-rad*0.3, rad*0.1, px, py, rad);
+        const c = plantColors[idx%plantColors.length];
+        pg.addColorStop(0, c+'FF');
+        pg.addColorStop(1, c+'AA');
+        ctx.fillStyle = pg;
+        ctx.beginPath();
+        ctx.arc(px, py, rad, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
   } else if(texture==='water'){
     const grad = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
     grad.addColorStop(0,'#6E96AF');
