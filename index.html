@@ -288,6 +288,12 @@
     #main{flex-direction:column;min-height:0;}
     #canvasArea{flex:5;min-height:0;}
     #sidebar{flex:6;min-height:0;max-height:none;width:100%;border-left:none;border-top:1px solid var(--line);}
+    /* Every tool button added to the topbar shrinks canvasArea a little more
+       on a narrow phone (flex-wrap pushes it onto yet another row) -- collapse
+       to icon-only buttons here instead of continuing to lose canvas height
+       every time a new tool ships. Tooltips (title=) still work on tap-hold. */
+    #topbar .btn .btn-label{display:none;}
+    #topbar .btn{padding:8px 10px;}
   }
 </style>
 </head>
@@ -309,6 +315,10 @@
     <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
       <span class="btn-label">Undo</span>
+    </button>
+    <button class="btn secondary" id="measureBtn" title="Measure — tap two points on the plan to see the real-world distance between them">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 12 5-5 3 3 2-2 3 3 2-2 5 5"/><path d="M2 12v6a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-6"/></svg>
+      <span class="btn-label">Measure</span>
     </button>
     <button class="btn secondary" id="pasteBtn" title="Paste the cut element back onto the plan, at the current view (works across pages too)" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
@@ -395,6 +405,18 @@
           <button class="btn danger" id="deleteProjectBtn" type="button" style="flex:1;" disabled>Delete</button>
         </div>
         <p class="helptext" style="margin-top:8px;margin-bottom:0;">Saved in this browser, including the plan PDF itself — no re-upload needed when you come back.</p>
+        <div class="row2" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);">
+          <button class="btn secondary" id="exportProjectBtn" type="button" style="flex:1;" disabled>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+            <span class="btn-label">Download file</span>
+          </button>
+          <label class="btn secondary" id="importProjectLabel" style="flex:1;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+            <span>Import file</span>
+            <input type="file" id="importProjectInput" accept=".json,.siteplan,application/json" style="display:none;">
+          </label>
+        </div>
+        <p class="helptext" style="margin-top:8px;margin-bottom:0;">Download saves everything — plan, scale, every item — as one file you keep yourself (your computer, a USB drive, cloud storage), instead of only inside this browser. Import brings it back on any device.</p>
       </div>
 
       <div class="panel" id="planPanel">
@@ -741,6 +763,8 @@ const saveProjectBtn = document.getElementById('saveProjectBtn');
 const savedProjectsSelect = document.getElementById('savedProjectsSelect');
 const loadProjectBtn = document.getElementById('loadProjectBtn');
 const deleteProjectBtn = document.getElementById('deleteProjectBtn');
+const exportProjectBtn = document.getElementById('exportProjectBtn');
+const importProjectInput = document.getElementById('importProjectInput');
 const undoBtn = document.getElementById('undoBtn');
 const pasteBtn = document.getElementById('pasteBtn');
 const pasteBtnLabel = pasteBtn.querySelector('.btn-label');
@@ -752,6 +776,7 @@ const cutBrushSizeSelect = document.getElementById('cutBrushSizeSelect');
 const eraseBar = document.getElementById('eraseBar');
 const cutMoveBtn = document.getElementById('cutMoveBtn');
 const cutMoveBar = document.getElementById('cutMoveBar');
+const measureBtn = document.getElementById('measureBtn');
 
 const ctxOverlay = overlayCanvas.getContext('2d');
 
@@ -810,6 +835,26 @@ cutMoveBtn.addEventListener('click', ()=>{
     renderElementsList();
     drawOverlay();
   }
+});
+function syncMeasureBtnActive(){
+  measureBtn.classList.toggle('active-cutmove', !!(state.drawing && state.drawing.isDimension));
+}
+// Measuring is the one tool worth surfacing as its own always-visible topbar
+// icon rather than making people find "Dimension" in the Type dropdown first
+// -- it's reused constantly while roughing out a plan. This just drives the
+// exact same freeform-drawing pipeline the Type dropdown already uses.
+measureBtn.addEventListener('click', ()=>{
+  if(state.drawing && state.drawing.isDimension){ cancelDrawing(); return; }
+  if(addPanel.classList.contains('disabled')){
+    alert('Calibrate the scale first (see step 02 in the sidebar), then you can measure distances.');
+    return;
+  }
+  setEraseMode(false);
+  setCutMode(false);
+  setCutMoveMode(false);
+  typeSelect.value = 'dimension';
+  updateAddFieldsForType();
+  startDrawBtn.click();
 });
 
 /* ============================ Undo ============================ */
@@ -1049,6 +1094,62 @@ saveProjectBtn.addEventListener('click', async ()=>{
   await refreshSavedProjectsSelect();
   flashButtonText(saveProjectBtn, '✓ Saved', 1400);
 });
+// Shared by both "Load" (from this browser's IndexedDB) and "Import file"
+// (a project someone downloaded earlier, from anywhere) -- same record shape,
+// same job of putting it on screen, once the raw bytes are in hand.
+async function applyLoadedProjectRecord(rec, name){
+  // Older saved projects (before a past fix) stored a raw ArrayBuffer directly;
+  // newer ones store a Blob — support loading either.
+  const bytes = (rec.pdfBytes instanceof Blob) ? await rec.pdfBytes.arrayBuffer() : rec.pdfBytes;
+  state.pdfBytes = bytes.slice(0);
+  const pdf = await pdfjsLib.getDocument({data:bytes}).promise;
+  state.pdf = pdf;
+  state.numPages = pdf.numPages;
+  pageOfText.textContent = 'of ' + pdf.numPages;
+  pageNav.style.display = pdf.numPages>1 ? 'block' : 'none';
+  pageInput.max = pdf.numPages;
+  pageInput.value = rec.currentPage || 1;
+  placeholder.classList.add('hidden');
+  canvasScroll.classList.add('visible');
+
+  state.scalePxPerFt = rec.scalePxPerFt || null;
+  state.unit = rec.unit || 'ft';
+  document.querySelectorAll('#unitToggle button').forEach(b=>b.classList.toggle('active', b.dataset.unit===state.unit));
+  updateUnitLabels();
+  updateAddFieldsForType();
+  state.northRotationDeg = rec.northRotationDeg || 0;
+  northInput.value = state.northRotationDeg;
+  state.elements = (rec.elements||[]).map(el=>JSON.parse(JSON.stringify(el)));
+  state.pdfMasks = (rec.pdfMasks||[]).map(m=>({...m}));
+  state.nextId = rec.nextId || (state.elements.reduce((m,e)=>Math.max(m,e.id||0),0)+1);
+  state.selectedId = null;
+  state.projectName = name;
+  projectNameInput.value = name;
+  undoStack.length = 0;
+  undoBtn.disabled = true;
+  state.clipboard = null;
+  updatePasteBtnState();
+  setEraseMode(false);
+  setCutMode(false);
+
+  await renderPage(rec.currentPage || 1);
+  newPlanBtn.style.display='inline-block';
+  exportBtn.disabled = false;
+  exportProjectBtn.disabled = false;
+
+  if(state.scalePxPerFt){
+    scaleStatus.textContent = scaleStatusText();
+    scaleStatus.classList.add('ok');
+    addPanel.classList.remove('disabled');
+    elementsPanel.classList.remove('disabled');
+    titleBlockPanel.classList.remove('disabled');
+  } else {
+    scaleStatus.textContent = 'Not calibrated';
+    scaleStatus.classList.remove('ok');
+  }
+  renderElementsList();
+  drawOverlay();
+}
 async function loadProjectByName(name){
   let rec;
   try{
@@ -1060,56 +1161,7 @@ async function loadProjectByName(name){
   }
   if(!rec) return;
   try{
-    // Older saved projects (before this fix) stored a raw ArrayBuffer directly;
-    // newer ones store a Blob — support loading either.
-    const bytes = (rec.pdfBytes instanceof Blob) ? await rec.pdfBytes.arrayBuffer() : rec.pdfBytes;
-    state.pdfBytes = bytes.slice(0);
-    const pdf = await pdfjsLib.getDocument({data:bytes}).promise;
-    state.pdf = pdf;
-    state.numPages = pdf.numPages;
-    pageOfText.textContent = 'of ' + pdf.numPages;
-    pageNav.style.display = pdf.numPages>1 ? 'block' : 'none';
-    pageInput.max = pdf.numPages;
-    pageInput.value = rec.currentPage || 1;
-    placeholder.classList.add('hidden');
-    canvasScroll.classList.add('visible');
-
-    state.scalePxPerFt = rec.scalePxPerFt || null;
-    state.unit = rec.unit || 'ft';
-    document.querySelectorAll('#unitToggle button').forEach(b=>b.classList.toggle('active', b.dataset.unit===state.unit));
-    updateUnitLabels();
-    updateAddFieldsForType();
-    state.northRotationDeg = rec.northRotationDeg || 0;
-    northInput.value = state.northRotationDeg;
-    state.elements = (rec.elements||[]).map(el=>JSON.parse(JSON.stringify(el)));
-    state.pdfMasks = (rec.pdfMasks||[]).map(m=>({...m}));
-    state.nextId = rec.nextId || (state.elements.reduce((m,e)=>Math.max(m,e.id||0),0)+1);
-    state.selectedId = null;
-    state.projectName = name;
-    projectNameInput.value = name;
-    undoStack.length = 0;
-    undoBtn.disabled = true;
-    state.clipboard = null;
-    updatePasteBtnState();
-    setEraseMode(false);
-    setCutMode(false);
-
-    await renderPage(rec.currentPage || 1);
-    newPlanBtn.style.display='inline-block';
-    exportBtn.disabled = false;
-
-    if(state.scalePxPerFt){
-      scaleStatus.textContent = scaleStatusText();
-      scaleStatus.classList.add('ok');
-      addPanel.classList.remove('disabled');
-      elementsPanel.classList.remove('disabled');
-      titleBlockPanel.classList.remove('disabled');
-    } else {
-      scaleStatus.textContent = 'Not calibrated';
-      scaleStatus.classList.remove('ok');
-    }
-    renderElementsList();
-    drawOverlay();
+    await applyLoadedProjectRecord(rec, name);
   }catch(err){
     console.error(err);
     alert("Couldn't load that saved project — its data may be corrupted.");
@@ -1133,6 +1185,69 @@ deleteProjectBtn.addEventListener('click', async ()=>{
     return;
   }
   refreshSavedProjectsSelect();
+});
+
+/* ============================ Export / import a project as a portable file ============================ */
+// Same record shape as the IndexedDB save, but with the PDF bytes base64-encoded
+// so the whole thing is one plain-JSON file the user can put anywhere they
+// want -- a folder, a USB stick, cloud storage -- not just this browser.
+function arrayBufferToBase64(buf){
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  const chunkSize = 0x8000; // avoid blowing the call stack on String.fromCharCode(...bigArray)
+  for(let i=0;i<bytes.length;i+=chunkSize){
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i+chunkSize));
+  }
+  return btoa(binary);
+}
+function base64ToArrayBuffer(b64){
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+exportProjectBtn.addEventListener('click', ()=>{
+  if(!state.pdfBytes) return;
+  const name = (projectNameInput.value||'').trim() || 'Untitled Site Plan';
+  const record = {
+    format: 'site-plan-studio-project',
+    version: 1,
+    name,
+    savedAt: Date.now(),
+    pdfBytesBase64: arrayBufferToBase64(state.pdfBytes),
+    currentPage: state.currentPage,
+    scalePxPerFt: state.scalePxPerFt,
+    unit: state.unit,
+    northRotationDeg: state.northRotationDeg,
+    nextId: state.nextId,
+    elements: JSON.parse(JSON.stringify(state.elements)),
+    pdfMasks: JSON.parse(JSON.stringify(state.pdfMasks)),
+  };
+  const blob = new Blob([JSON.stringify(record)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const fileSafeName = name.replace(/\s+/g,'_').replace(/[^\w.-]/g,'') || 'site-plan';
+  link.download = fileSafeName+'.siteplan.json';
+  link.href = url;
+  link.click();
+  URL.revokeObjectURL(url);
+  flashButtonText(exportProjectBtn, '✓ Downloaded', 1400);
+});
+importProjectInput.addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  importProjectInput.value = '';
+  if(!file) return;
+  if(state.elements.length && !confirm('Import "'+file.name+'"? Any unsaved changes to the current project will be lost.')) return;
+  try{
+    const text = await file.text();
+    const rec = JSON.parse(text);
+    if(!rec || !rec.pdfBytesBase64) throw new Error('Not a recognized Site Plan Studio project file.');
+    rec.pdfBytes = base64ToArrayBuffer(rec.pdfBytesBase64);
+    await applyLoadedProjectRecord(rec, rec.name || file.name.replace(/\.[^.]+$/,''));
+  }catch(err){
+    console.error(err);
+    alert("Couldn't import that file — it may not be a Site Plan Studio project export, or it's corrupted.");
+  }
 });
 projectNameInput.addEventListener('input', ()=>{ state.projectName = projectNameInput.value; drawOverlay(); });
 refreshSavedProjectsSelect().catch(err=>console.error('Could not load saved project list:', err));
@@ -1430,6 +1545,7 @@ newPlanBtn.addEventListener('click', ()=>{
   zoomBar.classList.remove('visible');
   newPlanBtn.style.display='none';
   exportBtn.disabled = true;
+  exportProjectBtn.disabled = true;
   pdfInput.value='';
   state.pdf = null;
   state.pdfBytes = null;
@@ -1481,6 +1597,7 @@ async function loadFile(file){
     await renderPage(1);
     newPlanBtn.style.display='inline-block';
     exportBtn.disabled = false;
+    exportProjectBtn.disabled = false;
   }catch(err){
     console.error(err);
     showUploadError("Couldn't read that PDF. Try re-exporting it or use a different file.");
@@ -1682,6 +1799,7 @@ startDrawBtn.addEventListener('click', ()=>{
   };
   state.selectedId = null;
   drawBar.classList.add('visible');
+  syncMeasureBtnActive();
   updateDrawBar();
   renderElementsList();
   drawOverlay();
@@ -1697,6 +1815,7 @@ function cancelDrawing(){
   state.drawing = null;
   if(state.aiming && state.aiming.kind==='draw'){ state.aiming=null; magnifierWrap.classList.remove('visible'); }
   drawBar.classList.remove('visible');
+  syncMeasureBtnActive();
   drawOverlay();
 }
 function finishDrawing(){
@@ -1714,6 +1833,8 @@ function finishDrawing(){
     isCutout: !!state.drawing.isCutout,
     parentId: state.drawing.parentId || null,
     unitCost: state.drawing.unitCost || 0,
+    priceMode: state.drawing.priceMode || 'rate',
+    fixedCost: state.drawing.fixedCost || 0,
     points: state.drawing.points.map(p=>({x:p.x,y:p.y})),
   };
   pushUndo();
@@ -1721,8 +1842,10 @@ function finishDrawing(){
   state.selectedId = el.id;
   state.drawing = null;
   drawBar.classList.remove('visible');
+  syncMeasureBtnActive();
   labelInput.value='';
   costInput.value='';
+  fixedCostInput.value='';
   cutoutInput.checked=false;
   cutoutParentWrap.style.display='none';
   renderElementsList();
