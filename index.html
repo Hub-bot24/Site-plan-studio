@@ -1510,7 +1510,13 @@ async function renderPage(pageNum, opts){
   try{
     const page = await state.pdf.getPage(pageNum);
     const base = page.getViewport({scale:1});
-    const maxDim = 2200;
+    // Raised from 2200: a full-size architectural sheet (A1/A0/E-size) was
+    // rendering at barely more than 1:1 with the printed page, so zooming in
+    // even slightly -- or a placed furniture icon, or a Cut & Move snippet,
+    // any of which are only ever as sharp as this raster -- immediately went
+    // soft. 3600 stays safely under the ~4096px canvas dimension some mobile
+    // browsers (older iOS Safari) cap a single canvas at.
+    const maxDim = 3600;
     let factor = Math.min(maxDim/base.width, maxDim/base.height);
     factor = Math.min(Math.max(factor, 0.4), 4);
     const viewport = page.getViewport({scale:factor});
