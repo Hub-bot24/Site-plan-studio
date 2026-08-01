@@ -450,8 +450,13 @@
           <input type="color" id="colorInput" class="colorpick">
         </div>
         <div class="field" id="costFieldWrap">
-          <label>Est. cost (<span id="costUnitLabel">$ / sq m</span>) — optional</label>
+          <label id="costFieldLabel">Est. cost (<span id="costUnitLabel">$ / sq m</span>) — optional</label>
           <input type="number" id="costInput" step="0.01" min="0" placeholder="0.00">
+          <input type="number" id="fixedCostInput" step="0.01" min="0" placeholder="0.00" style="display:none;">
+          <div class="checkfield" id="fixedPriceFieldWrap" style="margin-top:6px;">
+            <input type="checkbox" id="fixedPriceInput">
+            <label for="fixedPriceInput">Flat total price instead (e.g. a pool or roofing job quoted as one number, not $/area)</label>
+          </div>
         </div>
         <div id="rectFields" class="row2">
           <div class="field">
@@ -723,6 +728,9 @@ const totalLength = document.getElementById('totalLength');
 const costFieldWrap = document.getElementById('costFieldWrap');
 const costInput = document.getElementById('costInput');
 const costUnitLabel = document.getElementById('costUnitLabel');
+const costFieldLabel = document.getElementById('costFieldLabel');
+const fixedCostInput = document.getElementById('fixedCostInput');
+const fixedPriceInput = document.getElementById('fixedPriceInput');
 const totalCostRow = document.getElementById('totalCostRow');
 const totalCost = document.getElementById('totalCost');
 
@@ -1350,7 +1358,22 @@ function updateAddFieldsForType(){
       ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
       : 'For an irregular '+preset.label.toLowerCase()+' — not just a rectangle — tap "Trace freeform outline", then tap each corner (it closes automatically, needs at least 3 points). Renders with a realistic, to-scale '+preset.label.toLowerCase()+' texture either way.');
   costUnitLabel.textContent = isFence ? '$ / '+state.unit : '$ / sq '+state.unit;
+  // Jobs like a pool or a roof are usually quoted as one flat number, not
+  // $/area -- default the toggle accordingly, but it's still just a toggle,
+  // not locked to those types.
+  fixedPriceInput.checked = typeSelect.value==='pool' || typeSelect.value.indexOf('roof_')===0;
+  updateCostFieldMode();
 }
+function updateCostFieldMode(){
+  const fixed = fixedPriceInput.checked;
+  costInput.style.display = fixed ? 'none' : 'block';
+  fixedCostInput.style.display = fixed ? 'block' : 'none';
+  costFieldLabel.firstChild.textContent = fixed ? 'Flat total price ($) — optional' : 'Est. cost (';
+  costUnitLabel.style.display = fixed ? 'none' : 'inline';
+  const closeParen = costFieldLabel.lastChild;
+  if(closeParen && closeParen.nodeType===Node.TEXT_NODE) closeParen.textContent = fixed ? '' : ') — optional';
+}
+fixedPriceInput.addEventListener('change', updateCostFieldMode);
 typeSelect.addEventListener('change', updateAddFieldsForType);
 updateAddFieldsForType();
 
@@ -1653,6 +1676,8 @@ startDrawBtn.addEventListener('click', ()=>{
     isCutout: !isFence && cutoutInput.checked,
     parentId: (!isFence && cutoutInput.checked && cutoutParentSelect.value) ? parseInt(cutoutParentSelect.value,10) : null,
     unitCost: isDimension ? 0 : (parseFloat(costInput.value) || 0),
+    priceMode: (!isDimension && fixedPriceInput.checked) ? 'fixed' : 'rate',
+    fixedCost: isDimension ? 0 : (parseFloat(fixedCostInput.value) || 0),
     points: [],
   };
   state.selectedId = null;
@@ -3008,7 +3033,11 @@ function getTotalPathLengthDisplay(){
   return currentPageElements().reduce((sum,el)=> (el.shape==='path' && !el.isDimension) ? sum+pathLengthDisplay(el.points) : sum, 0);
 }
 function elementCostDisplay(el){
-  if(el.isDimension || !el.unitCost) return 0;
+  if(el.isDimension) return 0;
+  // A flat-priced job (a pool, a re-roof) doesn't scale with area -- it's
+  // whatever the quote says, whether the shape is 20 or 40 sq m.
+  if(el.priceMode==='fixed') return el.fixedCost||0;
+  if(!el.unitCost) return 0;
   const measure = el.shape==='path' ? pathLengthDisplay(el.points) : netAreaDisplay(el);
   return el.unitCost * measure;
 }
@@ -3115,6 +3144,8 @@ addElBtn.addEventListener('click', ()=>{
     color: colorInput.value || preset.color,
     rotationDeg: (()=>{ const v=parseFloat(addRotationInput.value); return isFinite(v) ? ((v%360)+360)%360 : 0; })(),
     unitCost: parseFloat(costInput.value) || 0,
+    priceMode: fixedPriceInput.checked ? 'fixed' : 'rate',
+    fixedCost: parseFloat(fixedCostInput.value) || 0,
     isCutout: cutoutInput.checked,
     parentId: (cutoutInput.checked && cutoutParentSelect.value) ? parseInt(cutoutParentSelect.value,10) : null,
   };
@@ -3289,12 +3320,14 @@ function renderElementsList(){
     costWrap.style.display='inline-flex'; costWrap.style.alignItems='center'; costWrap.style.gap='2px';
     const costLbl = document.createElement('span');
     costLbl.textContent = '$';
-    costLbl.title = el.shape==='path' ? 'Cost per '+unitAbbrev() : 'Cost per sq '+unitAbbrev();
+    const rateTitle = el.shape==='path' ? 'Cost per '+unitAbbrev() : 'Cost per sq '+unitAbbrev();
+    costLbl.title = el.priceMode==='fixed' ? 'Flat total price' : rateTitle;
     const costEl = document.createElement('input'); costEl.type='number'; costEl.step='0.01'; costEl.min='0';
     costEl.style.width='54px';
+    costEl.style.display = el.priceMode==='fixed' ? 'none' : '';
     costEl.value = el.unitCost ? formatNum(el.unitCost) : '';
     costEl.placeholder='0.00';
-    costEl.title = costLbl.title;
+    costEl.title = rateTitle;
     costEl.addEventListener('click', e=>e.stopPropagation());
     costEl.addEventListener('change', ()=>{
       pushUndo();
@@ -3302,10 +3335,35 @@ function renderElementsList(){
       el.unitCost = (v>0) ? v : 0;
       renderElementsList(); drawOverlay();
     });
-    costWrap.appendChild(costLbl); costWrap.appendChild(costEl);
+    const fixedEl = document.createElement('input'); fixedEl.type='number'; fixedEl.step='0.01'; fixedEl.min='0';
+    fixedEl.style.width='64px';
+    fixedEl.style.display = el.priceMode==='fixed' ? '' : 'none';
+    fixedEl.value = el.fixedCost ? formatNum(el.fixedCost) : '';
+    fixedEl.placeholder='flat total';
+    fixedEl.title = 'Flat total price';
+    fixedEl.addEventListener('click', e=>e.stopPropagation());
+    fixedEl.addEventListener('change', ()=>{
+      pushUndo();
+      const v = parseFloat(fixedEl.value);
+      el.fixedCost = (v>0) ? v : 0;
+      renderElementsList(); drawOverlay();
+    });
+    const flatLabel = document.createElement('label');
+    flatLabel.style.display='flex'; flatLabel.style.alignItems='center'; flatLabel.style.gap='3px'; flatLabel.style.marginLeft='4px';
+    flatLabel.title = 'Price this as one flat total instead of $ per '+(el.shape==='path'?unitAbbrev():'sq '+unitAbbrev());
+    const flatChk = document.createElement('input'); flatChk.type='checkbox'; flatChk.checked = el.priceMode==='fixed';
+    flatChk.addEventListener('click', e=>e.stopPropagation());
+    flatChk.addEventListener('change', ()=>{
+      pushUndo();
+      el.priceMode = flatChk.checked ? 'fixed' : 'rate';
+      renderElementsList(); drawOverlay();
+    });
+    flatLabel.appendChild(flatChk);
+    flatLabel.appendChild(document.createTextNode('flat'));
+    costWrap.appendChild(costLbl); costWrap.appendChild(costEl); costWrap.appendChild(fixedEl); costWrap.appendChild(flatLabel);
     dims.appendChild(costWrap);
     }
-    if(el.unitCost && !el.isDimension){
+    if(elementCostDisplay(el) > 0 && !el.isDimension){
       const costTotalSpan = document.createElement('span');
       costTotalSpan.style.color = 'var(--accent)';
       costTotalSpan.textContent = '= '+formatCurrency(elementCostDisplay(el));
