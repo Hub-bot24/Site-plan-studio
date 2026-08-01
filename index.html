@@ -1848,16 +1848,24 @@ function commitCutStroke(){
   renderPage(state.currentPage, {preserveView:true});
 }
 function endDrag(e){
+  // Commit an in-progress erase stroke unconditionally -- losing a drag the
+  // user just watched get painted, silently, is far worse than committing it
+  // even if isPrimary looks off for some reason on this device.
+  if(state.cutStroke){ commitCutStroke(); return; }
   if(e && !e.isPrimary) return;
   if(state.aiming){ commitAiming(); return; }
-  if(state.cutStroke){ commitCutStroke(); return; }
   if(state.dragging){ state.dragging = null; renderElementsList(); }
   state.panning = null;
 }
 function cancelPointerGesture(e){
+  // Browsers can fire pointercancel instead of pointerup mid-drag on real
+  // touch devices (the OS/browser deciding to hand the gesture to something
+  // else, even with touch-action:none set) -- treat it the same as a normal
+  // release and commit what was drawn instead of silently discarding it,
+  // which is exactly what made the eraser look like it "did nothing".
+  if(state.cutStroke){ commitCutStroke(); return; }
   if(e && !e.isPrimary) return;
   if(state.aiming){ cancelAiming(); return; }
-  if(state.cutStroke){ state.cutStroke = null; drawOverlay(); return; }
   state.dragging = null;
   state.panning = null;
 }
