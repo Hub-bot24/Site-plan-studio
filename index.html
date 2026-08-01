@@ -242,6 +242,12 @@
   }
   .pagerow{display:flex;align-items:center;gap:8px;margin-top:6px;}
   .pagerow input{width:50px;text-align:center;}
+  .mat-summary-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;}
+  .mat-summary-row .swatch{width:12px;height:12px;border-radius:3px;flex-shrink:0;}
+  .mat-summary-row .mat-label{flex:1;min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mat-summary-row .mat-count{color:var(--ink-dim);font-size:11px;}
+  .mat-summary-row .mat-figures{font-family:'Space Mono',monospace;font-size:11px;color:var(--ink-dim);text-align:right;white-space:nowrap;}
+  .mat-summary-row .mat-figures b{color:var(--accent);font-weight:600;}
 
   @media (max-width:880px){
     /* vh-based sizing here would be relative to the FULL viewport, not what's
@@ -442,6 +448,10 @@
         <p class="eyebrow">04 — Elements &amp; totals</p>
         <div id="elementsList"></div>
         <p class="empty-note" id="emptyNote">No elements added yet — use the form above to add your first deck, patio, fence, or planting bed.</p>
+        <div id="materialSummaryWrap" style="display:none;">
+          <p class="eyebrow" style="margin-top:4px;">Summary by material</p>
+          <div id="materialSummaryList"></div>
+        </div>
         <div class="totalline" id="cutoutRow" style="display:none;">
           <span>CUTOUT AREA (SUBTRACTED)</span>
           <span id="cutoutArea">0 sq ft</span>
@@ -632,6 +642,8 @@ const drawCancelBtn = document.getElementById('drawCancelBtn');
 const elementsPanel = document.getElementById('elementsPanel');
 const elementsList = document.getElementById('elementsList');
 const emptyNote = document.getElementById('emptyNote');
+const materialSummaryWrap = document.getElementById('materialSummaryWrap');
+const materialSummaryList = document.getElementById('materialSummaryList');
 const totalArea = document.getElementById('totalArea');
 const cutoutRow = document.getElementById('cutoutRow');
 const cutoutArea = document.getElementById('cutoutArea');
@@ -2435,6 +2447,29 @@ function elementCostDisplay(el){
 function getTotalCostDisplay(){
   return currentPageElements().reduce((sum,el)=> sum + elementCostDisplay(el), 0);
 }
+// Bill-of-materials style breakdown: every distinct material/type on the
+// current page (e.g. every "Lawn" section combined into one line), with its
+// combined area (or length for fence), item count, and combined cost. This
+// intentionally answers a different question than the grand total below --
+// e.g. a pool cut out of paving still gets its own "Pool" line here (you
+// still have to build/price the pool) even though its area is already
+// netted out of the paving's own figure and the overall site total.
+function getMaterialSummary(){
+  const groups = {};
+  currentPageElements().forEach(el=>{
+    if(el.isDimension) return;
+    const preset = PRESETS[el.presetKey];
+    if(!preset) return;
+    const key = el.presetKey;
+    if(!groups[key]) groups[key] = {label:preset.label, color:preset.color, isPath:el.shape==='path', area:0, cost:0, count:0};
+    const g = groups[key];
+    g.count++;
+    if(el.shape==='path') g.area += pathLengthDisplay(el.points);
+    else g.area += el.isCutout ? elementAreaDisplay(el) : netAreaDisplay(el);
+    g.cost += elementCostDisplay(el);
+  });
+  return Object.keys(groups).map(k=>groups[k]).sort((a,b)=> b.area-a.area);
+}
 function formatCurrency(n){
   if(!isFinite(n)) return '$0.00';
   return '$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -2777,6 +2812,38 @@ function renderElementsList(){
 
     elementsList.appendChild(row);
   });
+
+  const matSummary = getMaterialSummary();
+  materialSummaryList.innerHTML = '';
+  // Only worth showing once there's more than one section to actually sum up.
+  if(pageEls.length>1 && matSummary.length){
+    materialSummaryWrap.style.display = 'block';
+    matSummary.forEach(g=>{
+      const row = document.createElement('div');
+      row.className = 'mat-summary-row';
+      const swatch = document.createElement('div');
+      swatch.className = 'swatch';
+      swatch.style.background = g.color;
+      row.appendChild(swatch);
+      const label = document.createElement('span');
+      label.className = 'mat-label';
+      label.textContent = g.label;
+      row.appendChild(label);
+      const count = document.createElement('span');
+      count.className = 'mat-count';
+      count.textContent = '×'+g.count;
+      row.appendChild(count);
+      const figures = document.createElement('span');
+      figures.className = 'mat-figures';
+      const areaStr = '<b>'+formatNum(g.area)+'</b> '+(g.isPath ? unitAbbrev() : 'sq '+unitAbbrev());
+      figures.innerHTML = g.cost>0 ? areaStr+' &nbsp;'+formatCurrency(g.cost) : areaStr;
+      row.appendChild(figures);
+      materialSummaryList.appendChild(row);
+    });
+  } else {
+    materialSummaryWrap.style.display = 'none';
+  }
+
   totalArea.textContent = formatNum(getTotalAreaDisplay()) + ' sq ' + state.unit;
   const cutoutTotal = getTotalCutoutAreaDisplay();
   if(cutoutTotal>0){
