@@ -296,13 +296,16 @@
   input[type=color].colorpick::-webkit-color-swatch-wrapper{padding:0;}
   input[type=color].colorpick::-webkit-color-swatch{border:none;border-radius:4px;}
   .elrow .details{flex:1;min-width:0;}
-  .elrow .details input{width:100%;background:transparent;border:none;color:var(--ink);font-size:13px;font-family:'Inter',sans-serif;padding:0;margin-bottom:4px;}
+  .elrow .details input{width:100%;background:transparent;border:none;color:var(--ink);font-size:13px;font-family:'Inter',sans-serif;padding:0;}
+  .elrow .label-row{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+  .elrow .label-row input{margin-bottom:0;}
   .elrow .dims{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--ink-dim);flex-wrap:wrap;}
   .elrow .dims input{width:46px;background:var(--navy-mid);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px;}
   .elrow select{background:var(--navy-mid);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px;font-family:'Inter',sans-serif;}
   .icnbtn{background:transparent;border:1px solid var(--line);color:var(--ink-dim);border-radius:5px;width:24px;height:24px;cursor:pointer;font-size:13px;line-height:1;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;}
   .icnbtn:hover{border-color:var(--ink);color:var(--ink);}
   .icnbtn.del:hover{border-color:var(--danger);color:var(--danger);}
+  .icnbtn.active{border-color:var(--accent);color:var(--accent);}
   .empty-note{color:var(--ink-dim);font-size:12px;line-height:1.5;}
   .totalline{
     display:flex;justify-content:space-between;font-family:'Space Mono',monospace;
@@ -3142,7 +3145,7 @@ function labelHandlePos(ctx, el){
   return {x: b.x+b.w/2+5*s, y: b.y-b.h/2-5*s};
 }
 function hitTestLabelHandle(ctx, el, px, py){
-  if(!state.showLabels) return false;
+  if(!state.showLabels || el.hideLabel) return false;
   const hp = labelHandlePos(ctx, el);
   const thresh = 9/Math.max(state.zoom, 0.01);
   return Math.hypot(px-hp.x, py-hp.y) <= thresh;
@@ -3153,7 +3156,7 @@ function hitTestLabelHandle(ctx, el, px, py){
 // else selected would float with no clue which item it belongs to. When
 // selected, also draws the small grip handle used to drag the label.
 function drawElementLabel(ctx, el, color, selected){
-  if(!state.showLabels) return;
+  if(!state.showLabels || el.hideLabel) return;
   const anchor = elementLabelAnchor(el);
   const pos = elementLabelPos(el);
   if((el.labelDx||0) || (el.labelDy||0)){
@@ -3596,12 +3599,31 @@ function renderElementsList(){
     const details = document.createElement('div');
     details.className='details';
 
+    const labelRow = document.createElement('div');
+    labelRow.className = 'label-row';
     const labelEl = document.createElement('input');
     labelEl.type='text';
     labelEl.value = el.label;
     labelEl.addEventListener('click', e=>e.stopPropagation());
     labelEl.addEventListener('change', ()=>{ pushUndo(); el.label = labelEl.value.trim()||el.label; drawOverlay(); });
-    details.appendChild(labelEl);
+    labelRow.appendChild(labelEl);
+    if(!el.isDimension){
+      const hideBtn = document.createElement('button');
+      hideBtn.className = 'icnbtn'+(el.hideLabel ? ' active' : '');
+      hideBtn.title = el.hideLabel ? 'Label hidden on the plan — click to show it again' : 'Hide just this item\'s label on the plan';
+      hideBtn.innerHTML = el.hideLabel
+        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>'
+        : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+      hideBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        pushUndo();
+        el.hideLabel = !el.hideLabel;
+        renderElementsList();
+        drawOverlay();
+      });
+      labelRow.appendChild(hideBtn);
+    }
+    details.appendChild(labelRow);
 
     function appendCutoutControls(dims, el){
       const cutLabel = document.createElement('label');
