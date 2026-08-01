@@ -281,14 +281,23 @@
   }
   .field{margin-bottom:10px;}
   .field label{display:block;font-size:12px;color:var(--ink-dim);margin-bottom:4px;}
-  .field input,.field select{
+  .field input,.field select,.field textarea{
     width:100%;background:var(--navy-mid);border:1px solid var(--line);
     color:var(--ink);border-radius:6px;padding:7px 8px;font-family:'Inter',sans-serif;font-size:13px;
     transition:border-color 0.15s ease, box-shadow 0.15s ease;
   }
-  .field input:focus,.field select:focus{
+  .field textarea{resize:vertical;min-height:56px;font-family:inherit;}
+  .field input:focus,.field select:focus,.field textarea:focus{
     outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(181,147,76,0.16);
   }
+  .logo-row{display:flex;align-items:center;gap:10px;}
+  .logo-preview{
+    width:40px;height:40px;border-radius:6px;border:1px solid var(--line);
+    background:var(--navy-mid);object-fit:contain;flex-shrink:0;display:none;
+  }
+  .logo-preview.visible{display:block;}
+  #removeLogoBtn{display:none;}
+  #removeLogoBtn.visible{display:inline-flex;}
   .type-field-row{display:flex;align-items:center;gap:8px;}
   .type-field-row select{flex:1;}
   .type-preview{
@@ -718,6 +727,48 @@
         </div>
       </div>
 
+      <div class="panel disabled" id="proposalPanel">
+        <p class="eyebrow">06 — Client proposal</p>
+        <div class="field">
+          <label>Your company name</label>
+          <input type="text" id="companyNameInput" placeholder="e.g. Hugo Landscaping Co.">
+        </div>
+        <div class="field">
+          <label>Logo (optional)</label>
+          <div class="logo-row">
+            <img id="companyLogoPreview" class="logo-preview" alt="Company logo preview">
+            <label class="btn secondary" id="logoUploadLabel" style="flex:1;">
+              <span>Upload logo</span>
+              <input type="file" id="companyLogoInput" accept="image/*" style="display:none;">
+            </label>
+            <button class="btn danger" id="removeLogoBtn" type="button" title="Remove logo">✕</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Client name</label>
+          <input type="text" id="clientNameInput" placeholder="e.g. Mr &amp; Mrs Smith">
+        </div>
+        <div class="row2">
+          <div class="field">
+            <label>Markup (%)</label>
+            <input type="number" id="markupPctInput" value="0" min="0" step="1">
+          </div>
+          <div class="field">
+            <label>Tax (%)</label>
+            <input type="number" id="taxPctInput" value="0" min="0" step="0.1">
+          </div>
+        </div>
+        <div class="field">
+          <label>Terms / notes</label>
+          <textarea id="proposalNotesInput" placeholder="e.g. 50% deposit required to schedule work. Quote valid for 30 days."></textarea>
+        </div>
+        <button class="btn secondary" id="exportProposalBtn" type="button" style="width:100%;" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 15h6"/><path d="M9 11h6"/></svg>
+          <span class="btn-label">Export proposal PDF</span>
+        </button>
+        <p class="helptext" style="margin-top:8px;margin-bottom:0;">A branded, line-itemized quote built from your material summary — ready to hand or email to a client, separate from the plan drawing itself.</p>
+      </div>
+
     </div>
   </div>
 </div>
@@ -776,6 +827,12 @@ const state = {
   northRotationDeg:0,
   zoom:1,
   showLabels:true,
+  companyName:'',
+  companyLogo:null,
+  clientName:'',
+  markupPct:0,
+  taxPct:0,
+  proposalNotes:'',
 };
 const patternCache = {};
 
@@ -952,6 +1009,16 @@ const totalCost = document.getElementById('totalCost');
 const titleBlockPanel = document.getElementById('titleBlockPanel');
 const projectNameInput = document.getElementById('projectNameInput');
 const northInput = document.getElementById('northInput');
+const proposalPanel = document.getElementById('proposalPanel');
+const companyNameInput = document.getElementById('companyNameInput');
+const companyLogoInput = document.getElementById('companyLogoInput');
+const companyLogoPreview = document.getElementById('companyLogoPreview');
+const removeLogoBtn = document.getElementById('removeLogoBtn');
+const clientNameInput = document.getElementById('clientNameInput');
+const markupPctInput = document.getElementById('markupPctInput');
+const taxPctInput = document.getElementById('taxPctInput');
+const proposalNotesInput = document.getElementById('proposalNotesInput');
+const exportProposalBtn = document.getElementById('exportProposalBtn');
 const saveProjectBtn = document.getElementById('saveProjectBtn');
 const savedProjectsSelect = document.getElementById('savedProjectsSelect');
 const loadProjectBtn = document.getElementById('loadProjectBtn');
@@ -1268,6 +1335,10 @@ saveProjectBtn.addEventListener('click', async ()=>{
     nextId: state.nextId,
     elements: JSON.parse(JSON.stringify(state.elements)),
     pdfMasks: JSON.parse(JSON.stringify(state.pdfMasks)),
+    clientName: state.clientName,
+    markupPct: state.markupPct,
+    taxPct: state.taxPct,
+    proposalNotes: state.proposalNotes,
   };
   try{
     await idbPutProject(record);
@@ -1325,6 +1396,14 @@ async function applyLoadedProjectRecord(rec, name){
   state.selectedId = null;
   state.projectName = name;
   projectNameInput.value = name;
+  state.clientName = rec.clientName || '';
+  state.markupPct = rec.markupPct || 0;
+  state.taxPct = rec.taxPct || 0;
+  state.proposalNotes = rec.proposalNotes || '';
+  clientNameInput.value = state.clientName;
+  markupPctInput.value = state.markupPct;
+  taxPctInput.value = state.taxPct;
+  proposalNotesInput.value = state.proposalNotes;
   undoStack.length = 0;
   undoBtn.disabled = true;
   state.clipboard = null;
@@ -1345,6 +1424,8 @@ async function applyLoadedProjectRecord(rec, name){
     addPanel.classList.remove('disabled');
     elementsPanel.classList.remove('disabled');
     titleBlockPanel.classList.remove('disabled');
+    proposalPanel.classList.remove('disabled');
+    exportProposalBtn.disabled = false;
   } else {
     scaleStatus.textContent = 'Not calibrated';
     scaleStatus.classList.remove('ok');
@@ -1424,6 +1505,10 @@ exportProjectBtn.addEventListener('click', ()=>{
     nextId: state.nextId,
     elements: JSON.parse(JSON.stringify(state.elements)),
     pdfMasks: JSON.parse(JSON.stringify(state.pdfMasks)),
+    clientName: state.clientName,
+    markupPct: state.markupPct,
+    taxPct: state.taxPct,
+    proposalNotes: state.proposalNotes,
   };
   const blob = new Blob([JSON.stringify(record)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -1453,6 +1538,60 @@ importProjectInput.addEventListener('change', async (e)=>{
 });
 projectNameInput.addEventListener('input', ()=>{ state.projectName = projectNameInput.value; drawOverlay(); });
 refreshSavedProjectsSelect().catch(err=>console.error('Could not load saved project list:', err));
+
+// Company name/logo are a "who you are" business profile, not something
+// tied to any one plan -- persisted separately in localStorage so it's
+// already filled in on the next project, rather than having to re-enter it
+// (and re-upload the logo) every single time.
+const BUSINESS_PROFILE_KEY = 'sitePlanStudio.businessProfile';
+function saveBusinessProfile(){
+  try{
+    localStorage.setItem(BUSINESS_PROFILE_KEY, JSON.stringify({companyName: state.companyName, companyLogo: state.companyLogo}));
+  }catch(e){ console.error('Could not save business profile:', e); }
+}
+function updateLogoPreview(){
+  if(state.companyLogo){
+    companyLogoPreview.src = state.companyLogo;
+    companyLogoPreview.classList.add('visible');
+    removeLogoBtn.classList.add('visible');
+  } else {
+    companyLogoPreview.src = '';
+    companyLogoPreview.classList.remove('visible');
+    removeLogoBtn.classList.remove('visible');
+  }
+}
+try{
+  const savedProfile = JSON.parse(localStorage.getItem(BUSINESS_PROFILE_KEY) || 'null');
+  if(savedProfile){
+    state.companyName = savedProfile.companyName || '';
+    state.companyLogo = savedProfile.companyLogo || null;
+    companyNameInput.value = state.companyName;
+    updateLogoPreview();
+  }
+}catch(e){ console.error('Could not load business profile:', e); }
+
+companyNameInput.addEventListener('input', ()=>{ state.companyName = companyNameInput.value; saveBusinessProfile(); });
+companyLogoInput.addEventListener('change', ()=>{
+  const file = companyLogoInput.files[0];
+  companyLogoInput.value = '';
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    state.companyLogo = reader.result;
+    updateLogoPreview();
+    saveBusinessProfile();
+  };
+  reader.readAsDataURL(file);
+});
+removeLogoBtn.addEventListener('click', ()=>{
+  state.companyLogo = null;
+  updateLogoPreview();
+  saveBusinessProfile();
+});
+clientNameInput.addEventListener('input', ()=>{ state.clientName = clientNameInput.value; });
+markupPctInput.addEventListener('input', ()=>{ state.markupPct = parseFloat(markupPctInput.value)||0; });
+taxPctInput.addEventListener('input', ()=>{ state.taxPct = parseFloat(taxPctInput.value)||0; });
+proposalNotesInput.addEventListener('input', ()=>{ state.proposalNotes = proposalNotesInput.value; });
 
 /* ============================ helpers ============================ */
 function toFt(v,unit){return unit==='ft'? v : v*FT_PER_M;}
@@ -1860,10 +1999,20 @@ newPlanBtn.addEventListener('click', ()=>{
   setCutMode(false);
   state.projectName = 'Untitled Site Plan';
   projectNameInput.value = state.projectName;
+  state.clientName = '';
+  state.markupPct = 0;
+  state.taxPct = 0;
+  state.proposalNotes = '';
+  clientNameInput.value = '';
+  markupPctInput.value = 0;
+  taxPctInput.value = 0;
+  proposalNotesInput.value = '';
   calibratePanel.classList.add('disabled');
   addPanel.classList.add('disabled');
   elementsPanel.classList.add('disabled');
   titleBlockPanel.classList.add('disabled');
+  proposalPanel.classList.add('disabled');
+  exportProposalBtn.disabled = true;
   scaleStatus.textContent = 'Not calibrated';
   scaleStatus.classList.remove('ok');
   planStatusText.textContent = 'No plan loaded yet.';
@@ -2078,6 +2227,8 @@ confirmCalBtn.addEventListener('click', ()=>{
   addPanel.classList.remove('disabled');
   elementsPanel.classList.remove('disabled');
   titleBlockPanel.classList.remove('disabled');
+  proposalPanel.classList.remove('disabled');
+  exportProposalBtn.disabled = false;
   drawOverlay();
 });
 function pxPerDisplayUnit(){
@@ -4423,6 +4574,220 @@ exportPdfBtn.addEventListener('click', ()=>{
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.download = exportFileName('pdf');
+  link.href = url;
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+/* ============================ Client proposal export ============================ */
+function loadImageAsync(src){
+  return new Promise((resolve,reject)=>{
+    const img = new Image();
+    img.onload = ()=>resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+function wrapTextLines(ctx, text, maxWidth){
+  const lines = [];
+  text.split(/\n/).forEach(paragraph=>{
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    if(!words.length){ lines.push(''); return; }
+    let line = '';
+    words.forEach(word=>{
+      const test = line ? line+' '+word : word;
+      if(line && ctx.measureText(test).width > maxWidth){
+        lines.push(line);
+        line = word;
+      } else {
+        line = test;
+      }
+    });
+    if(line) lines.push(line);
+  });
+  return lines;
+}
+// A standalone, printable client-facing document -- separate from the plan
+// export, which is the drawing itself. This is a quote: company branding,
+// an itemized breakdown built from the same material summary the sidebar
+// shows, markup/tax, and terms -- the kind of thing a builder can actually
+// hand or email to a client, rather than a screenshot of the app.
+async function renderProposalCanvas(){
+  const W = 816, H = 1056, margin = 56; // 8.5x11in @ 96 CSS px/in
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0,0,W,H);
+  ctx.textBaseline = 'alphabetic';
+
+  let textX = margin;
+  if(state.companyLogo){
+    try{
+      const img = await loadImageAsync(state.companyLogo);
+      const boxSize = 60;
+      const scale = Math.min(boxSize/img.width, boxSize/img.height, 1);
+      const dw = img.width*scale, dh = img.height*scale;
+      ctx.drawImage(img, margin, margin, dw, dh);
+      textX = margin + boxSize + 16;
+    }catch(e){ console.error('Could not draw company logo on the proposal:', e); }
+  }
+  ctx.fillStyle = '#0A1A2E';
+  ctx.font = '700 20px Inter, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(state.companyName || 'Your Company', textX, margin+22);
+  ctx.font = '400 12px Inter, sans-serif';
+  ctx.fillStyle = '#5B6470';
+  ctx.fillText('Site plan & landscaping proposal', textX, margin+40);
+
+  ctx.textAlign = 'right';
+  ctx.font = '700 22px Inter, sans-serif';
+  ctx.fillStyle = '#B5934C';
+  ctx.fillText('PROPOSAL', W-margin, margin+20);
+  ctx.font = '400 11px "Space Mono", monospace';
+  ctx.fillStyle = '#5B6470';
+  ctx.fillText('Date: ' + new Date().toLocaleDateString(), W-margin, margin+38);
+
+  const headerBottom = margin + 64;
+  ctx.strokeStyle = '#B5934C';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(margin, headerBottom);
+  ctx.lineTo(W-margin, headerBottom);
+  ctx.stroke();
+
+  let y = headerBottom + 28;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#0A1A2E';
+  ctx.font = '600 13px Inter, sans-serif';
+  ctx.fillText('Prepared for: ' + (state.clientName.trim() || '—'), margin, y);
+  y += 18;
+  ctx.font = '400 13px Inter, sans-serif';
+  ctx.fillStyle = '#3A4250';
+  ctx.fillText('Project: ' + (state.projectName || 'Untitled Site Plan'), margin, y);
+  y += 30;
+
+  const tableLeft = margin, tableRight = W-margin, tableW = tableRight-tableLeft;
+  const qtyRight = tableRight - 150, totalRight = tableRight - 10;
+  const rowH = 26;
+  function tableHeaderRow(){
+    ctx.fillStyle = '#0F2038';
+    ctx.fillRect(tableLeft, y, tableW, rowH);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 11px Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('ITEM', tableLeft+10, y+rowH/2+4);
+    ctx.textAlign = 'right';
+    ctx.fillText('QUANTITY', qtyRight, y+rowH/2+4);
+    ctx.fillText('LINE TOTAL', totalRight, y+rowH/2+4);
+    y += rowH;
+  }
+  tableHeaderRow();
+
+  const summary = getMaterialSummary().filter(g=> g.area>0 || g.count>0);
+  let subtotal = 0;
+  if(!summary.length){
+    ctx.fillStyle = '#F5F6F8';
+    ctx.fillRect(tableLeft, y, tableW, rowH);
+    ctx.fillStyle = '#8A93A0';
+    ctx.font = 'italic 12px Inter, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText('No items added to this plan yet.', tableLeft+10, y+rowH/2+4);
+    y += rowH;
+  } else {
+    summary.forEach((g,i)=>{
+      // A fresh page break, with the header row repeated, if the table
+      // is about to run past the bottom margin.
+      if(y+rowH > H-260){
+        y = margin;
+        tableHeaderRow();
+      }
+      ctx.fillStyle = i%2===0 ? '#F5F6F8' : '#ffffff';
+      ctx.fillRect(tableLeft, y, tableW, rowH);
+      ctx.fillStyle = '#0A1A2E';
+      ctx.font = '400 12px Inter, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(g.label, tableLeft+10, y+rowH/2+4);
+      ctx.textAlign = 'right';
+      ctx.font = '400 11px Inter, sans-serif';
+      const qtyLabel = formatNum(g.area) + ' ' + (g.isPath ? unitAbbrev() : 'sq '+unitAbbrev()) + ' (×'+g.count+')';
+      ctx.fillText(qtyLabel, qtyRight, y+rowH/2+4);
+      ctx.font = '400 12px Inter, sans-serif';
+      ctx.fillText(g.cost>0 ? formatCurrency(g.cost) : '—', totalRight, y+rowH/2+4);
+      subtotal += g.cost;
+      y += rowH;
+    });
+  }
+  ctx.strokeStyle = '#D8DEE5';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(tableLeft, y+0.5);
+  ctx.lineTo(tableRight, y+0.5);
+  ctx.stroke();
+  y += 20;
+
+  const markupAmt = subtotal * (state.markupPct/100);
+  const afterMarkup = subtotal + markupAmt;
+  const taxAmt = afterMarkup * (state.taxPct/100);
+  const grandTotal = afterMarkup + taxAmt;
+  function totalsLine(label, value, opts){
+    opts = opts||{};
+    ctx.textAlign = 'right';
+    ctx.font = (opts.bold?'700 ':'400 ') + (opts.size||13) + 'px Inter, sans-serif';
+    ctx.fillStyle = opts.color || '#3A4250';
+    ctx.fillText(label, totalRight-110, y+11);
+    ctx.fillText(value, totalRight, y+11);
+    y += opts.size ? opts.size+12 : 22;
+  }
+  totalsLine('Subtotal', formatCurrency(subtotal));
+  if(state.markupPct>0) totalsLine('Markup ('+formatNum(state.markupPct)+'%)', formatCurrency(markupAmt));
+  if(state.taxPct>0) totalsLine('Tax ('+formatNum(state.taxPct)+'%)', formatCurrency(taxAmt));
+  y += 4;
+  ctx.fillStyle = '#0F2038';
+  ctx.fillRect(qtyRight-120, y, tableRight-(qtyRight-120), 34);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#B5934C';
+  ctx.font = '700 12px Inter, sans-serif';
+  ctx.fillText('TOTAL', totalRight-110, y+22);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 16px Inter, sans-serif';
+  ctx.fillText(formatCurrency(grandTotal), totalRight, y+23);
+  y += 34 + 30;
+
+  if(state.proposalNotes.trim()){
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#0A1A2E';
+    ctx.font = '700 11px Inter, sans-serif';
+    ctx.fillText('TERMS / NOTES', tableLeft, y);
+    y += 16;
+    ctx.font = '400 12px Inter, sans-serif';
+    ctx.fillStyle = '#3A4250';
+    wrapTextLines(ctx, state.proposalNotes.trim(), tableW).forEach(line=>{
+      ctx.fillText(line, tableLeft, y);
+      y += 16;
+    });
+  }
+
+  ctx.textAlign = 'center';
+  ctx.font = '400 10px Inter, sans-serif';
+  ctx.fillStyle = '#B7BEC8';
+  ctx.fillText('Prepared with Site Plan Studio', W/2, H-margin+18);
+
+  return canvas;
+}
+exportProposalBtn.addEventListener('click', async ()=>{
+  const canvas = await renderProposalCanvas();
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.93);
+  const base64 = dataUrl.split(',')[1];
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for(let i=0;i<binary.length;i++) bytes[i] = binary.charCodeAt(i);
+  const wPt = canvas.width*0.75, hPt = canvas.height*0.75;
+  const blob = buildPdfFromJpeg(bytes, wPt, hPt, canvas.width, canvas.height);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const name = (state.projectName||'proposal').trim().replace(/\s+/g,'_') || 'proposal';
+  link.download = name+'_Proposal.pdf';
   link.href = url;
   link.click();
   URL.revokeObjectURL(url);
