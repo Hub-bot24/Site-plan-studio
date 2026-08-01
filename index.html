@@ -1386,7 +1386,28 @@ function applyPdfMasks(ctx, pageNum){
   ctx.fillStyle = '#ffffff';
   state.pdfMasks.forEach(m=>{
     if(m.page !== pageNum) return;
-    ctx.fillRect(m.x, m.y, m.w, m.h);
+    if(m.type === 'stroke'){
+      const pts = m.points;
+      if(!pts || !pts.length) return;
+      if(pts.length === 1){
+        ctx.beginPath();
+        ctx.arc(pts[0].x, pts[0].y, m.radius, 0, Math.PI*2);
+        ctx.fill();
+      } else {
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = m.radius*2;
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.stroke();
+        ctx.restore();
+      }
+    } else {
+      ctx.fillRect(m.x, m.y, m.w, m.h);
+    }
   });
   ctx.restore();
 }
