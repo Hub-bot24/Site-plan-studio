@@ -33,10 +33,19 @@
   #topbar{
     display:flex;align-items:center;gap:12px;
     padding:10px 16px;
-    background:var(--navy-panel);
+    background:linear-gradient(180deg, #133055 0%, var(--navy-panel) 100%);
     border-bottom:1px solid var(--line);
+    box-shadow:0 2px 10px rgba(0,0,0,0.25);
     flex-shrink:0;
     flex-wrap:wrap;
+    position:relative;z-index:10;
+  }
+  #topbar .brand{display:flex;align-items:center;gap:8px;}
+  #topbar .brandmark{
+    width:26px;height:26px;border-radius:7px;flex-shrink:0;
+    background:linear-gradient(135deg, var(--accent), var(--accent-dark));
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 2px 6px rgba(181,147,76,0.35);
   }
   #topbar h1{
     font-family:'Inter',sans-serif;
@@ -49,23 +58,27 @@
   }
   #topbar h1 span{color:var(--ink-dim);font-weight:500;}
   .spacer{flex:1;}
-  .unit-toggle{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+  .unit-toggle{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
   .unit-toggle button{
     background:transparent;border:none;color:var(--ink-dim);
     font-family:'Inter',sans-serif;font-weight:500;font-size:12px;padding:7px 12px;cursor:pointer;
+    transition:background 0.15s ease, color 0.15s ease;
   }
   .unit-toggle button.active{background:var(--accent);color:var(--navy-deep);font-weight:600;}
   .btn{
     display:inline-flex;align-items:center;gap:6px;justify-content:center;
     font-family:'Inter',sans-serif;font-weight:600;font-size:13px;
     background:var(--accent);color:var(--navy-deep);border:none;
-    padding:8px 14px;border-radius:6px;cursor:pointer;
+    padding:8px 14px;border-radius:7px;cursor:pointer;
     white-space:nowrap;
+    box-shadow:0 1px 2px rgba(0,0,0,0.2), 0 0 0 1px rgba(181,147,76,0.15);
+    transition:background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease, border-color 0.15s ease;
   }
   .btn svg{flex-shrink:0;}
-  .btn:hover{background:var(--accent-dark);}
-  .btn.secondary{background:transparent;color:var(--ink);border:1px solid var(--line);}
-  .btn.secondary:hover{border-color:var(--ink-dim);}
+  .btn:hover{background:var(--accent-dark);box-shadow:0 2px 8px rgba(181,147,76,0.3);}
+  .btn:active{transform:translateY(1px);}
+  .btn.secondary{background:var(--navy-mid);color:var(--ink);border:1px solid var(--line);box-shadow:none;}
+  .btn.secondary:hover{border-color:var(--ink-dim);background:rgba(255,255,255,0.03);}
   .btn.danger{background:transparent;color:var(--danger);border:1px solid var(--danger);}
   .btn:disabled{opacity:0.4;cursor:not-allowed;}
   .btn.active-erase,.btn.active-cut{background:var(--danger);color:#fff;border-color:var(--danger);}
@@ -76,24 +89,35 @@
   #canvasArea{flex:1;position:relative;min-width:0;background:var(--navy-mid);}
   #placeholder{
     position:absolute;inset:16px;
-    border:2px dashed var(--line);border-radius:10px;
+    border:2px dashed var(--line);border-radius:12px;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
     text-align:center;padding:24px;
     background-image:
       repeating-linear-gradient(0deg, var(--line) 0, var(--line) 1px, transparent 1px, transparent 28px),
       repeating-linear-gradient(90deg, var(--line) 0, var(--line) 1px, transparent 1px, transparent 28px);
+    transition:border-color 0.15s ease, background-color 0.15s ease;
   }
   #placeholder.hidden{display:none;}
-  #placeholder h2{font-family:'Inter',sans-serif;font-weight:600;font-size:18px;margin:0;color:var(--ink);}
+  #placeholder.dragover{border-color:var(--accent);background-color:rgba(181,147,76,0.05);}
+  #placeholder .placeholder-art{margin-bottom:4px;filter:drop-shadow(0 6px 16px rgba(0,0,0,0.3));}
+  #placeholder h2{font-family:'Inter',sans-serif;font-weight:700;font-size:20px;margin:0;color:var(--ink);}
   #placeholder p{color:var(--ink-dim);font-size:13px;max-width:340px;margin:0;line-height:1.5;}
   #placeholder .error{color:var(--danger);font-size:13px;max-width:340px;}
+  .placeholder-features{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;margin-top:2px;}
+  .placeholder-features .pf-item{
+    display:flex;align-items:center;gap:6px;
+    font-size:11.5px;font-weight:500;color:var(--accent);
+  }
   input[type=file]{display:none;}
   .filelabel{
     font-family:'Inter',sans-serif;font-weight:600;font-size:14px;
     background:var(--accent);color:var(--navy-deep);
-    padding:10px 18px;border-radius:6px;cursor:pointer;
+    padding:10px 18px;border-radius:7px;cursor:pointer;
+    box-shadow:0 2px 8px rgba(181,147,76,0.3);
+    transition:background 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
   }
-  .filelabel:hover{background:var(--accent-dark);}
+  .filelabel:hover{background:var(--accent-dark);box-shadow:0 4px 14px rgba(181,147,76,0.4);}
+  .filelabel:active{transform:translateY(1px);}
 
   #canvasScroll{
     position:absolute;inset:0;overflow:auto;display:none;
@@ -217,25 +241,38 @@
   /* ---------- Sidebar ---------- */
   #sidebar{
     width:340px;flex-shrink:0;
-    background:var(--navy-panel);
+    background:linear-gradient(180deg, var(--navy-panel) 0%, #0D1D34 100%);
     border-left:1px solid var(--line);
     overflow-y:auto;
     padding:14px;
   }
   .panel{
-    border:1px solid var(--line);border-radius:8px;
-    padding:12px;margin-bottom:12px;
+    border:1px solid var(--line);border-radius:10px;
+    padding:14px;margin-bottom:12px;
+    background:rgba(255,255,255,0.015);
+    box-shadow:0 1px 0 rgba(255,255,255,0.03) inset, 0 4px 12px rgba(0,0,0,0.12);
+    transition:opacity 0.2s ease;
   }
   .panel.disabled{opacity:0.42;pointer-events:none;}
   .eyebrow{
-    font-family:'Inter',sans-serif;font-weight:600;font-size:11px;color:var(--ink-dim);
-    letter-spacing:0.6px;text-transform:uppercase;margin:0 0 8px 0;
+    display:flex;align-items:center;gap:7px;
+    font-family:'Inter',sans-serif;font-weight:600;font-size:11px;color:var(--accent);
+    letter-spacing:0.6px;text-transform:uppercase;margin:0 0 10px 0;
+  }
+  .eyebrow::before{
+    content:'';width:6px;height:6px;border-radius:50%;
+    background:var(--accent);flex-shrink:0;
+    box-shadow:0 0 0 3px rgba(181,147,76,0.18);
   }
   .field{margin-bottom:10px;}
   .field label{display:block;font-size:12px;color:var(--ink-dim);margin-bottom:4px;}
   .field input,.field select{
     width:100%;background:var(--navy-mid);border:1px solid var(--line);
-    color:var(--ink);border-radius:5px;padding:7px 8px;font-family:'Inter',sans-serif;font-size:13px;
+    color:var(--ink);border-radius:6px;padding:7px 8px;font-family:'Inter',sans-serif;font-size:13px;
+    transition:border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .field input:focus,.field select:focus{
+    outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(181,147,76,0.16);
   }
   .row2{display:flex;gap:8px;}
   .row2 .field{flex:1;}
@@ -245,6 +282,7 @@
 
   .elrow{
     display:flex;align-items:center;gap:8px;
+    transition:border-color 0.15s ease, background 0.15s ease;
     padding:8px;border:1px solid var(--line);border-radius:6px;margin-bottom:8px;
     cursor:pointer;
   }
@@ -301,7 +339,12 @@
 <div id="app">
 
   <div id="topbar">
-    <h1>Site Plan <span>Studio</span></h1>
+    <div class="brand">
+      <div class="brandmark">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#0A1A2E" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+      </div>
+      <h1>Site Plan <span>Studio</span></h1>
+    </div>
     <div class="unit-toggle" id="unitToggle">
       <button data-unit="ft">FEET</button>
       <button data-unit="m" class="active">METERS</button>
@@ -343,10 +386,36 @@
   <div id="main">
     <div id="canvasArea">
       <div id="placeholder">
+        <svg class="placeholder-art" width="180" height="132" viewBox="0 0 180 132" fill="none">
+          <rect x="14" y="10" width="152" height="108" rx="4" stroke="var(--accent)" stroke-width="1.4" stroke-dasharray="5 4" opacity="0.55"/>
+          <path d="M40 96V56l30-20 30 20v40" stroke="var(--ink)" stroke-width="2.2" stroke-linejoin="round" fill="rgba(231,236,242,0.04)"/>
+          <path d="M40 56 70 36l30 20" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+          <rect x="60" y="72" width="20" height="24" stroke="var(--ink)" stroke-width="1.6" fill="rgba(231,236,242,0.05)"/>
+          <rect x="108" y="70" width="34" height="26" rx="2" stroke="var(--accent)" stroke-width="1.6" fill="rgba(181,147,76,0.08)"/>
+          <circle cx="30" cy="102" r="9" stroke="#6C8F63" stroke-width="1.6" fill="rgba(108,143,99,0.12)"/>
+          <path d="M26 104q4-10 8 0" stroke="#6C8F63" stroke-width="1.3"/>
+          <path d="M14 118h34" stroke="var(--ink-dim)" stroke-width="1.2"/>
+          <path d="M14 114v8M48 114v8" stroke="var(--ink-dim)" stroke-width="1.2"/>
+          <text x="20" y="128" font-family="Space Mono, monospace" font-size="8" fill="var(--ink-dim)">6.0 m</text>
+        </svg>
         <h2>Upload your plan</h2>
         <p>Drop a PDF of your house or land plan here, or choose a file. Once it's loaded you'll calibrate it to a real measurement, then add decks, patios, or landscaping to exact scale.</p>
         <label class="filelabel" for="pdfInput">Choose PDF file</label>
         <input type="file" id="pdfInput" accept="application/pdf">
+        <div class="placeholder-features">
+          <div class="pf-item">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14.5 12.5-8 8a2.1 2.1 0 1 1-3-3l8-8"/><path d="m16 16 6-6"/><path d="m8 8 6-6"/><path d="m9 7 8 8"/><path d="m21 11-8-8"/></svg>
+            <span>Calibrate to real scale</span>
+          </div>
+          <div class="pf-item">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+            <span>Add measured elements</span>
+          </div>
+          <div class="pf-item">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+            <span>Price your build</span>
+          </div>
+        </div>
         <p class="error" id="uploadError" style="display:none;"></p>
       </div>
       <div id="zoomBar">
@@ -1532,9 +1601,11 @@ pdfInput.addEventListener('change', (e)=>{
   const file = e.target.files[0];
   if(file) loadFile(file);
 });
-placeholder.addEventListener('dragover',(e)=>{e.preventDefault();});
+placeholder.addEventListener('dragover',(e)=>{e.preventDefault(); placeholder.classList.add('dragover');});
+placeholder.addEventListener('dragleave',()=>{placeholder.classList.remove('dragover');});
 placeholder.addEventListener('drop',(e)=>{
   e.preventDefault();
+  placeholder.classList.remove('dragover');
   const file = e.dataTransfer.files[0];
   if(file) loadFile(file);
 });
@@ -2740,6 +2811,31 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
   }
   ctx.restore();
 }
+// A soft darkened rim + a faint top-left highlight, clipped to whatever path
+// is currently set on ctx. Applied uniformly to every filled shape (deck,
+// paving, pool, furniture, freeform areas, ...) after its material texture,
+// so everything reads with a touch of real depth instead of a flat fill --
+// without needing to know the shape's exact geometry (rect vs circle vs an
+// arbitrary traced polygon), just its bounding box.
+function applyEdgeShading(ctx, bounds){
+  const w = bounds.maxX-bounds.minX, h = bounds.maxY-bounds.minY;
+  if(w<=0 || h<=0) return;
+  ctx.save();
+  ctx.clip();
+  const cx=(bounds.minX+bounds.maxX)/2, cy=(bounds.minY+bounds.maxY)/2;
+  const r = Math.max(w,h)/2;
+  const rim = ctx.createRadialGradient(cx,cy, r*0.5, cx,cy, r*1.05);
+  rim.addColorStop(0,'rgba(0,0,0,0)');
+  rim.addColorStop(1,'rgba(0,0,0,0.15)');
+  ctx.fillStyle = rim;
+  ctx.fillRect(bounds.minX, bounds.minY, w, h);
+  const hl = ctx.createLinearGradient(bounds.minX,bounds.minY,cx,cy);
+  hl.addColorStop(0,'rgba(255,255,255,0.07)');
+  hl.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = hl;
+  ctx.fillRect(bounds.minX, bounds.minY, w, h);
+  ctx.restore();
+}
 function fillMaterial(ctx, presetKey, bounds, overrideColor){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
@@ -2854,6 +2950,9 @@ function drawElement(ctx, el, selected){
       }
     } else {
       fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color);
+      ctx.beginPath();
+      ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
+      applyEdgeShading(ctx, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2});
     }
     ctx.beginPath();
     ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
@@ -2864,6 +2963,9 @@ function drawElement(ctx, el, selected){
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
     fillMaterial(ctx, el.presetKey, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx}, el.color);
+    ctx.beginPath();
+    ctx.arc(0,0,rPx,0,Math.PI*2);
+    applyEdgeShading(ctx, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx});
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
     ctx.stroke();
@@ -3035,6 +3137,14 @@ function drawPolygonElement(ctx, el, selected){
   for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
   ctx.closePath();
   fillMaterial(ctx, el.presetKey, polygonBounds(el.points), el.color);
+  // Re-establish the polygon path -- fillMaterial's texture branches (grass
+  // stripes, mulch plants, ...) reset the current path with their own
+  // sub-drawing, so it can't be relied on to still be the polygon outline.
+  ctx.beginPath();
+  ctx.moveTo(el.points[0].x, el.points[0].y);
+  for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+  ctx.closePath();
+  applyEdgeShading(ctx, polygonBounds(el.points));
   ctx.strokeStyle = el.color;
   ctx.lineWidth = 1.4;
   if(el.isCutout) ctx.setLineDash([5,4]);
