@@ -83,6 +83,7 @@
   .btn:disabled{opacity:0.4;cursor:not-allowed;}
   .btn.active-erase,.btn.active-cut{background:var(--danger);color:#fff;border-color:var(--danger);}
   .btn.active-cutmove{background:var(--accent);color:var(--navy-deep);border-color:var(--accent);}
+  .btn.secondary.toggled-on{border-color:var(--accent);color:var(--accent);}
 
   /* ---------- Main layout ---------- */
   #main{flex:1;display:flex;min-height:0;}
@@ -354,6 +355,10 @@
       <input type="range" id="sensitivityInput" min="8" max="100" value="50">
       <span class="pval" id="sensitivityLabel">50%</span>
     </div>
+    <button class="btn secondary toggled-on" id="labelsToggleBtn" title="Show/hide the name labels on every placed item — turn off for a clean, uncluttered view of just the plan and shapes">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.42 0l7.58-7.58a1 1 0 0 0 0-1.42z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>
+      <span class="btn-label">Labels</span>
+    </button>
     <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
     <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
@@ -666,6 +671,7 @@ const state = {
   projectName:'Untitled Site Plan',
   northRotationDeg:0,
   zoom:1,
+  showLabels:true,
 };
 
 const PRESETS = {
@@ -846,6 +852,12 @@ const eraseBar = document.getElementById('eraseBar');
 const cutMoveBtn = document.getElementById('cutMoveBtn');
 const cutMoveBar = document.getElementById('cutMoveBar');
 const measureBtn = document.getElementById('measureBtn');
+const labelsToggleBtn = document.getElementById('labelsToggleBtn');
+labelsToggleBtn.addEventListener('click', ()=>{
+  state.showLabels = !state.showLabels;
+  labelsToggleBtn.classList.toggle('toggled-on', state.showLabels);
+  drawOverlay();
+});
 
 const ctxOverlay = overlayCanvas.getContext('2d');
 
@@ -2971,10 +2983,12 @@ function drawElement(ctx, el, selected){
     ctx.stroke();
   }
   ctx.restore();
-  const elLabelText = el.isCutout
-    ? '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit
-    : el.label;
-  drawLabelChip(ctx, el.xPx, el.yPx, elLabelText, el.isCutout ? '#B5934C' : '#E7ECF2');
+  if(state.showLabels){
+    const elLabelText = el.isCutout
+      ? '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit
+      : el.label;
+    drawLabelChip(ctx, el.xPx, el.yPx, elLabelText, el.isCutout ? '#B5934C' : '#E7ECF2');
+  }
   if(selected){
     ctx.save();
     ctx.translate(el.xPx, el.yPx);
@@ -3116,9 +3130,11 @@ function drawPathElement(ctx, el, selected){
     ctx.fill();
   });
   ctx.restore();
-  const mid = pointAtPathFraction(el.points, 0.5);
-  const text = el.label+' — '+formatNum(pathLengthDisplay(el.points))+' '+state.unit;
-  drawLabelChip(ctx, mid.x, mid.y, text, '#E7ECF2');
+  if(state.showLabels){
+    const mid = pointAtPathFraction(el.points, 0.5);
+    const text = el.label+' — '+formatNum(pathLengthDisplay(el.points))+' '+state.unit;
+    drawLabelChip(ctx, mid.x, mid.y, text, '#E7ECF2');
+  }
   if(selected){
     ctx.save();
     ctx.setLineDash([6,4]);
@@ -3150,15 +3166,17 @@ function drawPolygonElement(ctx, el, selected){
   if(el.isCutout) ctx.setLineDash([5,4]);
   strokePolyline(ctx, el.points, true);
   ctx.restore();
-  const c = polygonCentroid(el.points);
-  let text;
-  if(el.isCutout){
-    const parent = el.parentId!=null ? getElementById(el.parentId) : null;
-    text = '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit + (parent ? '  (from '+parent.label+')' : '');
-  } else {
-    text = el.label+' — '+formatNum(netAreaDisplay(el))+' sq '+state.unit;
+  if(state.showLabels){
+    const c = polygonCentroid(el.points);
+    let text;
+    if(el.isCutout){
+      const parent = el.parentId!=null ? getElementById(el.parentId) : null;
+      text = '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit + (parent ? '  (from '+parent.label+')' : '');
+    } else {
+      text = el.label+' — '+formatNum(netAreaDisplay(el))+' sq '+state.unit;
+    }
+    drawLabelChip(ctx, c.x, c.y, text, el.isCutout ? '#B5934C' : '#E7ECF2');
   }
-  drawLabelChip(ctx, c.x, c.y, text, el.isCutout ? '#B5934C' : '#E7ECF2');
   if(selected){
     ctx.save();
     ctx.setLineDash([6,4]);
