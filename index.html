@@ -533,6 +533,9 @@ const PRESETS = {
   pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect'},
   tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
   custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
+  roof_tile:    {label:'Roof — Terracotta tile',   color:'#A15A34', texture:'tile',    quick:'rect'},
+  roof_metal:   {label:'Roof — Metal (Colorbond)', color:'#4A4E52', texture:'metal',   quick:'rect'},
+  roof_shingle: {label:'Roof — Asphalt shingle',   color:'#5B5854', texture:'shingle', quick:'rect'},
   indoor:    {label:'Indoor furniture (custom size)', color:'#8A7B6B', texture:'flat', quick:'rect'},
   fence:     {label:'Fence / line',    color:'#D8DEE5', texture:null,       quick:'none'},
   dimension: {label:'Dimension (measure distance)', color:'#3E7CB1', texture:null, quick:'none'},
@@ -1154,6 +1157,7 @@ function updateUnitLabels(){
 /* ============================ Type select population ============================ */
 const TYPE_GROUPS = [
   {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','pool','tree','custom']},
+  {label:'Roofing', keys:['roof_tile','roof_metal','roof_shingle']},
   {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS)]},
   {label:'Lines & measurement', keys:['fence','dimension']},
 ];
@@ -2075,6 +2079,45 @@ function getTilePattern(ctx, texture, scalePxPerFt){
     tctx.beginPath(); tctx.moveTo(0,size); tctx.lineTo(size,0); tctx.stroke();
     tctx.strokeStyle='rgba(0,0,0,0.06)';
     tctx.beginPath(); tctx.moveTo(size*0.5,size); tctx.lineTo(size,size*0.5); tctx.stroke();
+  } else if(texture==='tile'){
+    // Terracotta barrel tiles: vertical ridges (light center, shadowed edges)
+    // in narrow columns, with a horizontal course line where each tile row
+    // overlaps the next.
+    const rowH = Math.max(10, Math.round(scalePxPerFt*0.7));
+    const colW = Math.max(8, Math.round(scalePxPerFt*0.5));
+    tile.width=colW; tile.height=rowH;
+    tctx.fillStyle='#A15A34'; tctx.fillRect(0,0,colW,rowH);
+    const grad = tctx.createLinearGradient(0,0,colW,0);
+    grad.addColorStop(0,'rgba(0,0,0,0.22)');
+    grad.addColorStop(0.5,'rgba(255,255,255,0.16)');
+    grad.addColorStop(1,'rgba(0,0,0,0.22)');
+    tctx.fillStyle=grad; tctx.fillRect(0,0,colW,rowH);
+    tctx.strokeStyle='rgba(50,20,8,0.35)'; tctx.lineWidth=1;
+    tctx.beginPath(); tctx.moveTo(0,rowH-0.5); tctx.lineTo(colW,rowH-0.5); tctx.stroke();
+    size = colW;
+  } else if(texture==='metal'){
+    // Corrugated Colorbond-style sheeting: tight repeating vertical ribs.
+    size = Math.max(6, Math.round(scalePxPerFt*0.18));
+    tile.width=size; tile.height=size;
+    tctx.fillStyle='#4A4E52'; tctx.fillRect(0,0,size,size);
+    const grad = tctx.createLinearGradient(0,0,size,0);
+    grad.addColorStop(0,'rgba(255,255,255,0.16)');
+    grad.addColorStop(0.5,'rgba(0,0,0,0.22)');
+    grad.addColorStop(1,'rgba(255,255,255,0.16)');
+    tctx.fillStyle=grad; tctx.fillRect(0,0,size,size);
+  } else if(texture==='shingle'){
+    size = 12;
+    tile.width=size; tile.height=size;
+    tctx.fillStyle='#5B5854'; tctx.fillRect(0,0,size,size);
+    const shades = ['rgba(255,255,255,0.10)','rgba(0,0,0,0.14)','rgba(90,80,70,0.22)'];
+    for(let i=0;i<8;i++){
+      tctx.fillStyle = shades[i%3];
+      tctx.beginPath();
+      tctx.arc((i*11+2)%size, (i*5+3)%size, 0.9, 0, Math.PI*2);
+      tctx.fill();
+    }
+    tctx.strokeStyle='rgba(20,18,16,0.3)'; tctx.lineWidth=1;
+    tctx.beginPath(); tctx.moveTo(0,size-0.5); tctx.lineTo(size,size-0.5); tctx.stroke();
   } else {
     return null;
   }
@@ -2088,7 +2131,7 @@ function fillMaterial(ctx, presetKey, bounds){
   const baseColor = preset ? preset.color : '#B5934C';
   const fallbackColor = baseColor+'CC';
   const scalePxPerFt = state.scalePxPerFt || 40;
-  if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='gravel' || texture==='turf'){
+  if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='gravel' || texture==='turf' || texture==='tile' || texture==='metal' || texture==='shingle'){
     const pat = getTilePattern(ctx, texture, scalePxPerFt);
     ctx.fillStyle = pat || fallbackColor;
     ctx.fill();
