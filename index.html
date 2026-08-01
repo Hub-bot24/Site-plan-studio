@@ -69,6 +69,7 @@
   .btn.danger{background:transparent;color:var(--danger);border:1px solid var(--danger);}
   .btn:disabled{opacity:0.4;cursor:not-allowed;}
   .btn.active-erase,.btn.active-cut{background:var(--danger);color:#fff;border-color:var(--danger);}
+  .btn.active-cutmove{background:var(--accent);color:var(--navy-deep);border-color:var(--accent);}
 
   /* ---------- Main layout ---------- */
   #main{flex:1;display:flex;min-height:0;}
@@ -160,6 +161,17 @@
   #eraseBar.visible{display:flex;}
   #eraseBar .drawstat{font-family:'Inter',sans-serif;font-weight:600;font-size:13px;color:#fff;white-space:nowrap;}
 
+  #cutMoveBar{
+    position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:6;
+    display:none;align-items:center;gap:10px;flex-wrap:wrap;
+    background:rgba(15,49,89,0.96);border:1px solid var(--accent);
+    border-radius:8px;padding:8px 12px;
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+    max-width:calc(100% - 32px);
+  }
+  #cutMoveBar.visible{display:flex;}
+  #cutMoveBar .drawstat{font-family:'Inter',sans-serif;font-weight:600;font-size:13px;color:var(--accent);white-space:nowrap;}
+
   .checkfield{display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;font-size:12px;color:var(--ink-dim);line-height:1.4;}
   .checkfield input{width:auto;margin-top:2px;}
   .cutout-badge{
@@ -238,6 +250,12 @@
   }
   .elrow.selected{border-color:var(--accent);background:rgba(181,147,76,0.08);}
   .swatch{width:14px;height:14px;border-radius:3px;flex-shrink:0;}
+  input[type=color].swatch{padding:0;border:1px solid var(--line);cursor:pointer;background:none;}
+  input[type=color].swatch::-webkit-color-swatch-wrapper{padding:0;}
+  input[type=color].swatch::-webkit-color-swatch{border:none;border-radius:2px;}
+  input[type=color].colorpick{width:100%;height:34px;padding:2px;border:1px solid var(--line);border-radius:6px;background:var(--navy-mid);cursor:pointer;}
+  input[type=color].colorpick::-webkit-color-swatch-wrapper{padding:0;}
+  input[type=color].colorpick::-webkit-color-swatch{border:none;border-radius:4px;}
   .elrow .details{flex:1;min-width:0;}
   .elrow .details input{width:100%;background:transparent;border:none;color:var(--ink);font-size:13px;font-family:'Inter',sans-serif;padding:0;margin-bottom:4px;}
   .elrow .dims{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--ink-dim);flex-wrap:wrap;}
@@ -304,6 +322,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg>
       <span class="btn-label">Erase PDF</span>
     </button>
+    <button class="btn secondary" id="cutMoveBtn" title="Cut &amp; Move — drag a box around part of the plan (a room, a label, anything) to lift it out and drop it somewhere else. The spot it came from is left blank, ready to draw over.">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><path d="M14 3h7v7"/><path d="M21 3 13 11"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+      <span class="btn-label">Cut &amp; Move</span>
+    </button>
     <div class="spacer"></div>
     <button class="btn" id="exportBtn" disabled>Export PNG</button>
   </div>
@@ -340,6 +362,9 @@
           <option value="18" selected>Medium brush</option>
           <option value="32">Large brush</option>
         </select>
+      </div>
+      <div id="cutMoveBar">
+        <span class="drawstat">Drag a box around what you want to lift out…</span>
       </div>
       <div id="canvasScroll">
         <div id="canvasWrap">
@@ -419,6 +444,10 @@
         <div class="field">
           <label>Label</label>
           <input type="text" id="labelInput" placeholder="e.g. Back deck">
+        </div>
+        <div class="field">
+          <label>Color</label>
+          <input type="color" id="colorInput" class="colorpick">
         </div>
         <div class="field" id="costFieldWrap">
           <label>Est. cost (<span id="costUnitLabel">$ / sq m</span>) — optional</label>
@@ -532,6 +561,8 @@ const state = {
   eraseMode:false,
   cutMode:false,
   cutStroke:null,
+  cutMoveMode:false,
+  cutMoveDrag:null,
   clipboard:null,
   pdfMasks:[],
   rendering:false,
@@ -638,6 +669,7 @@ const magCtx = magnifierCanvas.getContext('2d');
 const addPanel = document.getElementById('addPanel');
 const typeSelect = document.getElementById('typeSelect');
 const labelInput = document.getElementById('labelInput');
+const colorInput = document.getElementById('colorInput');
 const rectFields = document.getElementById('rectFields');
 const circleFields = document.getElementById('circleFields');
 const addRotationFieldWrap = document.getElementById('addRotationFieldWrap');
@@ -693,6 +725,8 @@ const cutPdfBtn = document.getElementById('cutPdfBtn');
 const cutPdfBtnLabel = cutPdfBtn.querySelector('.btn-label');
 const cutBrushSizeSelect = document.getElementById('cutBrushSizeSelect');
 const eraseBar = document.getElementById('eraseBar');
+const cutMoveBtn = document.getElementById('cutMoveBtn');
+const cutMoveBar = document.getElementById('cutMoveBar');
 
 const ctxOverlay = overlayCanvas.getContext('2d');
 
@@ -710,10 +744,17 @@ function setCutMode(on){
   // the canvas out from under an in-progress gesture.
   eraseBar.classList.toggle('visible', on);
 }
+function setCutMoveMode(on){
+  state.cutMoveMode = on;
+  cutMoveBtn.classList.toggle('active-cutmove', on);
+  cutMoveBar.classList.toggle('visible', on);
+  if(!on) state.cutMoveDrag = null;
+}
 eraseBtn.addEventListener('click', ()=>{
   setEraseMode(!state.eraseMode);
   if(state.eraseMode){
     setCutMode(false);
+    setCutMoveMode(false);
     if(state.drawing) cancelDrawing();
     if(state.calibrating) cancelCalibration();
     state.selectedId = null;
@@ -725,6 +766,19 @@ cutPdfBtn.addEventListener('click', ()=>{
   setCutMode(!state.cutMode);
   if(state.cutMode){
     setEraseMode(false);
+    setCutMoveMode(false);
+    if(state.drawing) cancelDrawing();
+    if(state.calibrating) cancelCalibration();
+    state.selectedId = null;
+    renderElementsList();
+    drawOverlay();
+  }
+});
+cutMoveBtn.addEventListener('click', ()=>{
+  setCutMoveMode(!state.cutMoveMode);
+  if(state.cutMoveMode){
+    setEraseMode(false);
+    setCutMode(false);
     if(state.drawing) cancelDrawing();
     if(state.calibrating) cancelCalibration();
     state.selectedId = null;
@@ -786,7 +840,7 @@ pasteBtn.addEventListener('click', ()=>{
   const copy = JSON.parse(JSON.stringify(state.clipboard));
   copy.id = state.nextId++;
   copy.page = state.currentPage;
-  if(copy.shape==='rect' || copy.shape==='circle'){
+  if(copy.shape==='rect' || copy.shape==='circle' || copy.shape==='image'){
     copy.xPx = Math.min(Math.max(targetX,0), overlayCanvas.width);
     copy.yPx = Math.min(Math.max(targetY,0), overlayCanvas.height);
   } else if(copy.points){
@@ -1262,6 +1316,7 @@ function updateAddFieldsForType(){
     heightInput.value = formatNum(fromFt(preset.hIn/12, state.unit));
     if(!labelInput.value.trim()) labelInput.value = preset.name;
   }
+  colorInput.value = preset.color;
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
   addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') ? 'block' : 'none';
@@ -1290,7 +1345,7 @@ function populateParentSelect(selectEl, currentValue, excludeId){
   noneOpt.value=''; noneOpt.textContent='Whole plan total';
   selectEl.appendChild(noneOpt);
   currentPageElements().forEach(el=>{
-    if(el.isCutout || el.isDimension || el.id===excludeId) return;
+    if(el.isCutout || el.isDimension || el.shape==='image' || el.id===excludeId) return;
     const opt = document.createElement('option');
     opt.value = String(el.id);
     opt.textContent = el.label;
@@ -1571,7 +1626,7 @@ startDrawBtn.addEventListener('click', ()=>{
     presetKey: typeSelect.value,
     isDimension,
     label: typedLabel || uniqueLabel(preset.label),
-    color: preset.color,
+    color: colorInput.value || preset.color,
     isCutout: !isFence && cutoutInput.checked,
     parentId: (!isFence && cutoutInput.checked && cutoutParentSelect.value) ? parseInt(cutoutParentSelect.value,10) : null,
     unitCost: isDimension ? 0 : (parseFloat(costInput.value) || 0),
@@ -1646,6 +1701,7 @@ document.addEventListener('keydown',(e)=>{
     if(state.calibrating) cancelCalibration();
     if(state.eraseMode){ setEraseMode(false); drawOverlay(); }
     if(state.cutMode){ setCutMode(false); state.cutStroke=null; drawOverlay(); }
+    if(state.cutMoveMode){ setCutMoveMode(false); drawOverlay(); }
   }
 });
 
@@ -1851,8 +1907,14 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
     drawOverlay();
     return;
   }
+  if(state.cutMoveMode){
+    state.cutMoveDrag = {x0:x, y0:y, x1:x, y1:y};
+    overlayCanvas.setPointerCapture(e.pointerId);
+    drawOverlay();
+    return;
+  }
   const selectedEl = state.selectedId!=null ? getElementById(state.selectedId) : null;
-  if(selectedEl && (selectedEl.shape==='rect' || selectedEl.shape==='circle')){
+  if(selectedEl && (selectedEl.shape==='rect' || selectedEl.shape==='circle' || selectedEl.shape==='image')){
     const hp = getRotationHandlePos(selectedEl);
     const handleThresh = 14/state.zoom;
     if(Math.hypot(x-hp.x, y-hp.y) <= handleThresh){
@@ -1870,7 +1932,7 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
   const hit = findElementAt(x,y);
   if(hit){
     state.selectedId = hit.id;
-    if(hit.shape==='rect' || hit.shape==='circle'){
+    if(hit.shape==='rect' || hit.shape==='circle' || hit.shape==='image'){
       state.dragging = {id:hit.id, mode:'point', offsetX:x-hit.xPx, offsetY:y-hit.yPx};
     } else {
       state.dragging = {id:hit.id, mode:'points', anchorX:x, anchorY:y, startPoints:hit.points.map(p=>({x:p.x,y:p.y}))};
@@ -1906,6 +1968,13 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
     if(Math.hypot(x-last.x, y-last.y) >= Math.max(state.cutStroke.radius/3, 2)){
       pts.push({x,y});
     }
+    requestRedraw();
+    return;
+  }
+  if(state.cutMoveDrag){
+    const {x,y} = getCanvasPos(e);
+    state.cutMoveDrag.x1 = x;
+    state.cutMoveDrag.y1 = y;
     requestRedraw();
     return;
   }
@@ -1947,11 +2016,47 @@ function commitCutStroke(){
   state.pdfMasks.push({page: state.currentPage, type:'stroke', points: s.points, radius: s.radius});
   renderPage(state.currentPage, {preserveView:true});
 }
+// Lifts the rectangle out of the PDF raster as its own image, leaves the
+// original spot blank (a plain rect pdfMask, same as the erase tool), and
+// drops the lifted piece in as a normal draggable/rotatable element, already
+// selected -- so the very next thing the user does is drag it into place.
+function commitCutMoveDrag(){
+  const d = state.cutMoveDrag;
+  state.cutMoveDrag = null;
+  if(!d) return;
+  const x = Math.min(d.x0, d.x1), y = Math.min(d.y0, d.y1);
+  const w = Math.abs(d.x1-d.x0), h = Math.abs(d.y1-d.y0);
+  if(w < 8 || h < 8){ drawOverlay(); return; }
+  const clipX = Math.max(0, x), clipY = Math.max(0, y);
+  const clipW = Math.min(overlayCanvas.width, x+w) - clipX;
+  const clipH = Math.min(overlayCanvas.height, y+h) - clipY;
+  if(clipW < 8 || clipH < 8){ drawOverlay(); return; }
+  const snapshot = document.createElement('canvas');
+  snapshot.width = Math.round(clipW);
+  snapshot.height = Math.round(clipH);
+  snapshot.getContext('2d').drawImage(bgCanvas, clipX, clipY, clipW, clipH, 0, 0, clipW, clipH);
+  const imgSrc = snapshot.toDataURL('image/png');
+  pushUndo();
+  state.pdfMasks.push({page: state.currentPage, x: clipX, y: clipY, w: clipW, h: clipH});
+  const newEl = {
+    id: state.nextId++, page: state.currentPage, shape:'image',
+    xPx: clipX+clipW/2, yPx: clipY+clipH/2,
+    wFt: clipW/state.scalePxPerFt, hFt: clipH/state.scalePxPerFt,
+    rotationDeg:0, label:'Cut piece', color:'#9AA7B8', unitCost:0, presetKey:null,
+    imgSrc,
+  };
+  state.elements.push(newEl);
+  state.selectedId = newEl.id;
+  setCutMoveMode(false);
+  renderElementsList();
+  renderPage(state.currentPage, {preserveView:true});
+}
 function endDrag(e){
   // Commit an in-progress erase stroke unconditionally -- losing a drag the
   // user just watched get painted, silently, is far worse than committing it
   // even if isPrimary looks off for some reason on this device.
   if(state.cutStroke){ commitCutStroke(); return; }
+  if(state.cutMoveDrag){ commitCutMoveDrag(); return; }
   if(e && !e.isPrimary) return;
   if(state.aiming){ commitAiming(); return; }
   if(state.dragging){ state.dragging = null; renderElementsList(); }
@@ -1964,6 +2069,7 @@ function cancelPointerGesture(e){
   // release and commit what was drawn instead of silently discarding it,
   // which is exactly what made the eraser look like it "did nothing".
   if(state.cutStroke){ commitCutStroke(); return; }
+  if(state.cutMoveDrag){ commitCutMoveDrag(); return; }
   if(e && !e.isPrimary) return;
   if(state.aiming){ cancelAiming(); return; }
   state.dragging = null;
@@ -2016,7 +2122,7 @@ function hitTest(el,px,py){
   const rad = -el.rotationDeg*Math.PI/180;
   const lx = dx*Math.cos(rad) - dy*Math.sin(rad);
   const ly = dx*Math.sin(rad) + dy*Math.cos(rad);
-  if(el.shape==='rect'){
+  if(el.shape==='rect' || el.shape==='image'){
     const wPx = el.wFt*state.scalePxPerFt, hPx = el.hFt*state.scalePxPerFt;
     return Math.abs(lx)<=wPx/2 && Math.abs(ly)<=hPx/2;
   } else {
@@ -2108,6 +2214,19 @@ function drawOverlay(){
     ctxOverlay.beginPath();
     ctxOverlay.arc(s.points[s.points.length-1].x, s.points[s.points.length-1].y, s.radius, 0, Math.PI*2);
     ctxOverlay.stroke();
+    ctxOverlay.restore();
+  }
+  if(state.cutMoveDrag){
+    const d = state.cutMoveDrag;
+    ctxOverlay.save();
+    ctxOverlay.setLineDash([6,4]);
+    ctxOverlay.strokeStyle = '#B5934C';
+    ctxOverlay.lineWidth = 1.5;
+    ctxOverlay.fillStyle = 'rgba(181,147,76,0.18)';
+    const rx = Math.min(d.x0,d.x1), ry = Math.min(d.y0,d.y1);
+    const rw = Math.abs(d.x1-d.x0), rh = Math.abs(d.y1-d.y0);
+    ctxOverlay.fillRect(rx,ry,rw,rh);
+    ctxOverlay.strokeRect(rx,ry,rw,rh);
     ctxOverlay.restore();
   }
   if(state.bgLoaded) drawTitleBlock(ctxOverlay);
@@ -2240,10 +2359,10 @@ function seededRand(seed){
   const x = Math.sin(seed*12.9898)*43758.5453;
   return x - Math.floor(x);
 }
-function fillMaterial(ctx, presetKey, bounds){
+function fillMaterial(ctx, presetKey, bounds, overrideColor){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
-  const baseColor = preset ? preset.color : '#B5934C';
+  const baseColor = overrideColor || (preset ? preset.color : '#B5934C');
   const fallbackColor = baseColor+'CC';
   const scalePxPerFt = state.scalePxPerFt || 40;
   if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='gravel' || texture==='turf' || texture==='tile' || texture==='metal' || texture==='shingle'){
@@ -2332,12 +2451,25 @@ function drawElement(ctx, el, selected){
   ctx.lineWidth = 1.4;
   if(el.isCutout) ctx.setLineDash([5,4]);
   let wPx=0, hPx=0;
-  if(el.shape==='rect'){
+  if(el.shape==='rect' || el.shape==='image'){
     wPx = el.wFt*state.scalePxPerFt;
     hPx = el.hFt*state.scalePxPerFt;
     ctx.beginPath();
     ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
-    fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2});
+    if(el.shape==='image'){
+      const img = getCutImage(el);
+      if(img && img.complete && img.naturalWidth){
+        ctx.save();
+        ctx.clip();
+        ctx.drawImage(img, -wPx/2, -hPx/2, wPx, hPx);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = '#1C3350';
+        ctx.fill();
+      }
+    } else {
+      fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color);
+    }
     ctx.beginPath();
     ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
     ctx.stroke();
@@ -2346,7 +2478,7 @@ function drawElement(ctx, el, selected){
     wPx = hPx = rPx*2;
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
-    fillMaterial(ctx, el.presetKey, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx});
+    fillMaterial(ctx, el.presetKey, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx}, el.color);
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
     ctx.stroke();
@@ -2385,8 +2517,23 @@ function drawElement(ctx, el, selected){
     }
   }
 }
+// Cut-and-move pieces store their raster as a dataURL (imgSrc); this lazily
+// decodes it into an Image once per element and re-draws once it's ready,
+// rather than blocking on every single redraw.
+const cutImageCache = {};
+function getCutImage(el){
+  let img = cutImageCache[el.id];
+  if(!img || img._src !== el.imgSrc){
+    img = new Image();
+    img._src = el.imgSrc;
+    img.onload = ()=>{ requestRedraw(); };
+    img.src = el.imgSrc;
+    cutImageCache[el.id] = img;
+  }
+  return img;
+}
 function getRotationHandlePos(el){
-  const halfH = el.shape==='rect' ? (el.hFt*state.scalePxPerFt)/2 : (el.dFt*state.scalePxPerFt)/2;
+  const halfH = (el.shape==='rect' || el.shape==='image') ? (el.hFt*state.scalePxPerFt)/2 : (el.dFt*state.scalePxPerFt)/2;
   const handleDist = halfH + 26;
   const rad = el.rotationDeg*Math.PI/180;
   return { x: el.xPx + handleDist*Math.sin(rad), y: el.yPx - handleDist*Math.cos(rad) };
@@ -2502,7 +2649,7 @@ function drawPolygonElement(ctx, el, selected){
   ctx.moveTo(el.points[0].x, el.points[0].y);
   for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
   ctx.closePath();
-  fillMaterial(ctx, el.presetKey, polygonBounds(el.points));
+  fillMaterial(ctx, el.presetKey, polygonBounds(el.points), el.color);
   ctx.strokeStyle = el.color;
   ctx.lineWidth = 1.4;
   if(el.isCutout) ctx.setLineDash([5,4]);
@@ -2728,7 +2875,7 @@ addElBtn.addEventListener('click', ()=>{
     shape: preset.quick,
     presetKey: typeSelect.value,
     label,
-    color: preset.color,
+    color: colorInput.value || preset.color,
     rotationDeg: (()=>{ const v=parseFloat(addRotationInput.value); return isFinite(v) ? ((v%360)+360)%360 : 0; })(),
     unitCost: parseFloat(costInput.value) || 0,
     isCutout: cutoutInput.checked,
@@ -2773,9 +2920,18 @@ function renderElementsList(){
     row.className = 'elrow'+(el.id===state.selectedId?' selected':'');
     row.dataset.id = el.id;
 
-    const swatch = document.createElement('div');
+    const swatch = document.createElement('input');
+    swatch.type = 'color';
     swatch.className='swatch';
-    swatch.style.background = el.color;
+    swatch.value = el.color;
+    swatch.title = 'Change color';
+    swatch.addEventListener('click', e=>e.stopPropagation());
+    let colorPushed = false;
+    swatch.addEventListener('input', ()=>{
+      if(!colorPushed){ pushUndo(); colorPushed = true; }
+      el.color = swatch.value;
+      drawOverlay();
+    });
     row.appendChild(swatch);
 
     if(el.isCutout){
@@ -2880,8 +3036,18 @@ function renderElementsList(){
       info.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
       dims.appendChild(info);
       appendCutoutControls(dims, el);
+    } else if(el.shape==='image'){
+      const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
+      rotIn.value = el.rotationDeg;
+      rotIn.addEventListener('click', e=>e.stopPropagation());
+      rotIn.addEventListener('change', ()=>{ pushUndo(); let v=parseFloat(rotIn.value)||0; el.rotationDeg=((v%360)+360)%360; drawOverlay(); });
+      dims.appendChild(document.createTextNode('Rotate')); dims.appendChild(rotIn); dims.appendChild(document.createTextNode('°'));
+      const info = document.createElement('span');
+      info.style.marginLeft='4px'; info.style.color='var(--ink-dim)';
+      info.textContent = 'cut from plan — drag to reposition';
+      dims.appendChild(info);
     }
-    if(!el.isDimension){
+    if(!el.isDimension && el.shape!=='image'){
     const costWrap = document.createElement('span');
     costWrap.style.display='inline-flex'; costWrap.style.alignItems='center'; costWrap.style.gap='2px';
     const costLbl = document.createElement('span');
@@ -2966,7 +3132,7 @@ function renderElementsList(){
     dupBtn.addEventListener('click', (e)=>{
       e.stopPropagation();
       let copy;
-      if(el.shape==='rect' || el.shape==='circle'){
+      if(el.shape==='rect' || el.shape==='circle' || el.shape==='image'){
         copy = Object.assign({}, el, {id:state.nextId++, xPx:el.xPx+24, yPx:el.yPx+24, label: uniqueLabel(el.label)});
       } else {
         copy = Object.assign({}, el, {id:state.nextId++, points: el.points.map(p=>({x:p.x+24,y:p.y+24})), label: uniqueLabel(el.label)});
