@@ -439,6 +439,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.42 0l7.58-7.58a1 1 0 0 0 0-1.42z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>
       <span class="btn-label">Labels</span>
     </button>
+    <button class="btn secondary toggled-on" id="clearancesToggleBtn" title="Show/hide recommended clearance zones around furniture — the walking/access space interior designers recommend (e.g. room to pull out a dining chair, a wardrobe door swing). Turns red where that space overlaps another item.">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2" stroke-dasharray="3 2"/><rect x="7" y="9" width="10" height="6" rx="1"/></svg>
+      <span class="btn-label">Clearances</span>
+    </button>
     <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
     <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
@@ -827,6 +831,7 @@ const state = {
   northRotationDeg:0,
   zoom:1,
   showLabels:true,
+  showClearances:true,
   companyName:'',
   companyLogo:null,
   clientName:'',
@@ -912,6 +917,16 @@ Object.keys(FURNITURE_ITEMS).forEach(key=>{
   const icon = FURNITURE_ICONS[key];
   PRESETS[key] = {label:item.label, color:FURNITURE_COLORS[icon]||'#8A7B6B', texture:'flat', quick:'rect', name:item.name, wIn:item.wIn, hIn:item.hIn, icon};
 });
+// Standard recommended clearance (inches) for common furniture -- the same
+// starting-point minimums interior designers use: room to pull a dining
+// chair out and walk behind it, a bed's walk space, a wardrobe/fridge door
+// swing, a kitchen work aisle. Not a code requirement, just a sensible
+// default; items with no meaningful "keep this clear" zone (TVs, power
+// points) are simply left out.
+const CLEARANCE_IN = {
+  bed:24, table:18, table_dining:36, desk:36, sofa:18, armchair:18,
+  dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24,
+};
 
 /* ============================ DOM refs ============================ */
 const pdfInput = document.getElementById('pdfInput');
@@ -1041,6 +1056,12 @@ const labelsToggleBtn = document.getElementById('labelsToggleBtn');
 labelsToggleBtn.addEventListener('click', ()=>{
   state.showLabels = !state.showLabels;
   labelsToggleBtn.classList.toggle('toggled-on', state.showLabels);
+  drawOverlay();
+});
+const clearancesToggleBtn = document.getElementById('clearancesToggleBtn');
+clearancesToggleBtn.addEventListener('click', ()=>{
+  state.showClearances = !state.showClearances;
+  clearancesToggleBtn.classList.toggle('toggled-on', state.showClearances);
   drawOverlay();
 });
 
@@ -1760,6 +1781,70 @@ function currentPageElements(){
 function zOrderedElements(){
   const onPage = currentPageElements();
   return onPage.filter(e=>!e.isCutout).concat(onPage.filter(e=>e.isCutout));
+}
+
+/* ---- Recommended furniture clearance zones ---- */
+function getClearanceFt(el){
+  const preset = PRESETS[el.presetKey];
+  if(!preset || !preset.icon) return 0;
+  const inches = CLEARANCE_IN[preset.icon];
+  return inches ? inches/12 : 0;
+}
+// Same rotated-rect corner math as elementToPolygonPoints, just inflated
+// outward by the clearance distance on every side.
+function elementClearancePolygonPx(el, clearanceFt){
+  const padPx = clearanceFt*state.scalePxPerFt;
+  const wPx = el.wFt*state.scalePxPerFt + padPx*2;
+  const hPx = el.hFt*state.scalePxPerFt + padPx*2;
+  const rad = el.rotationDeg*Math.PI/180;
+  return [[-wPx/2,-hPx/2],[wPx/2,-hPx/2],[wPx/2,hPx/2],[-wPx/2,hPx/2]].map(([lx,ly])=>({
+    x: el.xPx + lx*Math.cos(rad) - ly*Math.sin(rad),
+    y: el.yPx + lx*Math.sin(rad) + ly*Math.cos(rad),
+  }));
+}
+// Draws a dashed "keep this clear" zone around furniture that has a
+// recommended clearance (a bed's walk space, room to pull a dining chair
+// out, a wardrobe/fridge door swing, ...), turning red where that space is
+// actually blocked by another piece of furniture. Only checks against other
+// furniture, not material areas like a deck or lawn that furniture normally
+// sits inside of -- that overlap is expected, not a clearance problem.
+// Every furniture element on the current page that has a recommended
+// clearance, alongside its zone polygon (px) and whether that zone is
+// actually blocked by another piece of furniture. Split out from the
+// drawing code so the underlying conflict logic can be checked directly.
+function getClearanceZones(){
+  if(!state.scalePxPerFt) return [];
+  const onPage = currentPageElements().filter(e=>e.shape==='rect' && !e.isCutout);
+  const furniture = onPage.filter(e=>PRESETS[e.presetKey] && PRESETS[e.presetKey].icon);
+  const withClearance = furniture.map(el=>({el, clearanceFt:getClearanceFt(el)})).filter(x=>x.clearanceFt>0);
+  const minOverlapPx2 = 0.15 * state.scalePxPerFt * state.scalePxPerFt; // ~0.15 sq ft of real overlap, to ignore touching-edge float noise
+  return withClearance.map(({el, clearanceFt})=>{
+    const zonePoly = elementClearancePolygonPx(el, clearanceFt);
+    const conflict = furniture.some(other=>{
+      if(other.id===el.id) return false;
+      const otherPoly = elementToPolygonPoints(other);
+      return otherPoly.length>=3 && polygonIntersectionAreaPx(zonePoly, otherPoly) > minOverlapPx2;
+    });
+    return {id:el.id, zonePoly, conflict};
+  });
+}
+function drawClearanceZones(ctx){
+  if(!state.showClearances) return;
+  const zones = getClearanceZones();
+  if(!zones.length) return;
+  ctx.save();
+  ctx.lineWidth = 1.5/Math.max(state.zoom,0.01);
+  ctx.setLineDash([6/Math.max(state.zoom,0.01), 4/Math.max(state.zoom,0.01)]);
+  zones.forEach(({zonePoly, conflict})=>{
+    ctx.beginPath();
+    zonePoly.forEach((p,i)=> i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
+    ctx.closePath();
+    ctx.fillStyle = conflict ? 'rgba(196,100,92,0.10)' : 'rgba(181,147,76,0.06)';
+    ctx.fill();
+    ctx.strokeStyle = conflict ? 'rgba(196,100,92,0.85)' : 'rgba(181,147,76,0.55)';
+    ctx.stroke();
+  });
+  ctx.restore();
 }
 
 function updateUnitLabels(){
@@ -2878,6 +2963,7 @@ function requestMagnifierUpdate(){
 }
 function drawOverlay(){
   ctxOverlay.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
+  drawClearanceZones(ctxOverlay);
   zOrderedElements().forEach(el=>drawElement(ctxOverlay, el, el.id===state.selectedId));
   // Smart alignment guides -- full-span magenta lines showing exactly what
   // the dragged element just snapped to (another item's edge or center),
