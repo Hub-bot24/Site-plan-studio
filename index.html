@@ -275,6 +275,59 @@
   .field input:focus,.field select:focus{
     outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(181,147,76,0.16);
   }
+  .type-field-row{display:flex;align-items:center;gap:8px;}
+  .type-field-row select{flex:1;}
+  .type-preview{
+    width:34px;height:34px;border-radius:7px;flex-shrink:0;
+    border:1px solid var(--line);background:var(--navy-mid);
+  }
+  #browseTypesBtn{width:34px;height:34px;border-radius:7px;}
+
+  /* ---------- Visual type/material gallery ---------- */
+  #typeGalleryOverlay{
+    position:fixed;inset:0;z-index:100;
+    background:rgba(6,14,26,0.6);backdrop-filter:blur(2px);
+    display:none;align-items:center;justify-content:center;padding:24px;
+    animation:galleryFadeIn 0.15s ease;
+  }
+  #typeGalleryOverlay.visible{display:flex;}
+  @keyframes galleryFadeIn{from{opacity:0;}to{opacity:1;}}
+  #typeGalleryPanel{
+    width:min(760px, 100%);max-height:min(680px, 100%);
+    background:linear-gradient(180deg, var(--navy-panel) 0%, #0D1D34 100%);
+    border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 20px 60px rgba(0,0,0,0.5);
+    display:flex;flex-direction:column;overflow:hidden;
+    animation:galleryPopIn 0.18s cubic-bezier(.2,.8,.3,1.1);
+  }
+  @keyframes galleryPopIn{from{opacity:0;transform:scale(0.97) translateY(6px);}to{opacity:1;transform:none;}}
+  #typeGalleryHeader{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:16px 18px;border-bottom:1px solid var(--line);flex-shrink:0;
+  }
+  #typeGalleryHeader h3{margin:0;font-size:15px;font-weight:700;color:var(--ink);}
+  #typeGalleryBody{overflow-y:auto;padding:16px 18px 20px;}
+  .gallery-section-label{
+    font-family:'Inter',sans-serif;font-weight:600;font-size:11px;color:var(--accent);
+    letter-spacing:0.6px;text-transform:uppercase;margin:18px 0 10px 0;
+  }
+  .gallery-section-label:first-child{margin-top:0;}
+  .gallery-grid{
+    display:grid;grid-template-columns:repeat(auto-fill, minmax(96px,1fr));gap:8px;
+  }
+  .gallery-tile{
+    display:flex;flex-direction:column;align-items:center;gap:6px;
+    background:rgba(255,255,255,0.02);border:1px solid var(--line);border-radius:9px;
+    padding:8px 6px 9px;cursor:pointer;
+    transition:border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+    font-family:'Inter',sans-serif;
+  }
+  .gallery-tile:hover{border-color:var(--accent);background:rgba(181,147,76,0.08);transform:translateY(-1px);}
+  .gallery-tile:active{transform:translateY(0);}
+  .gallery-tile.selected{border-color:var(--accent);background:rgba(181,147,76,0.14);box-shadow:0 0 0 1px var(--accent) inset;}
+  .gallery-tile canvas{width:48px;height:48px;border-radius:7px;}
+  .gallery-tile span{font-size:10.5px;color:var(--ink-dim);text-align:center;line-height:1.25;}
+  .gallery-tile.selected span{color:var(--ink);}
   .row2{display:flex;gap:8px;}
   .row2 .field{flex:1;}
   .helptext{font-size:12px;color:var(--ink-dim);line-height:1.5;margin:0 0 10px 0;}
@@ -538,7 +591,13 @@
         <p class="eyebrow">03 — Add element</p>
         <div class="field">
           <label>Type</label>
-          <select id="typeSelect"></select>
+          <div class="type-field-row">
+            <canvas id="typePreview" class="type-preview" width="34" height="34"></canvas>
+            <select id="typeSelect"></select>
+            <button type="button" id="browseTypesBtn" class="icnbtn" title="Browse a visual gallery of every material and item">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+            </button>
+          </div>
         </div>
         <div class="field">
           <label>Label</label>
@@ -638,6 +697,18 @@
   <span class="maghint">drag to fine-tune, release to place</span>
 </div>
 
+<div id="typeGalleryOverlay">
+  <div id="typeGalleryPanel">
+    <div id="typeGalleryHeader">
+      <h3>Choose a material or item</h3>
+      <button type="button" id="closeTypeGalleryBtn" class="icnbtn" title="Close">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="typeGalleryBody"></div>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
@@ -676,6 +747,7 @@ const state = {
   zoom:1,
   showLabels:true,
 };
+const patternCache = {};
 
 const PRESETS = {
   deck:      {label:'Deck',            color:'#9C7A54', texture:'wood',     quick:'rect'},
@@ -793,6 +865,11 @@ const magCtx = magnifierCanvas.getContext('2d');
 
 const addPanel = document.getElementById('addPanel');
 const typeSelect = document.getElementById('typeSelect');
+const typePreview = document.getElementById('typePreview');
+const browseTypesBtn = document.getElementById('browseTypesBtn');
+const typeGalleryOverlay = document.getElementById('typeGalleryOverlay');
+const typeGalleryBody = document.getElementById('typeGalleryBody');
+const closeTypeGalleryBtn = document.getElementById('closeTypeGalleryBtn');
 const labelInput = document.getElementById('labelInput');
 const colorInput = document.getElementById('colorInput');
 const rectFields = document.getElementById('rectFields');
@@ -1532,6 +1609,95 @@ TYPE_GROUPS.forEach(group=>{
   typeSelect.appendChild(optgroup);
 });
 
+// Renders a small live preview of a preset's actual look (its real texture/
+// icon, not just a text label) -- reuses the exact same drawing functions the
+// canvas uses, so what you pick is genuinely what you get.
+function renderPresetThumb(canvas, presetKey){
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0,0,w,h);
+  const preset = PRESETS[presetKey];
+  if(!preset) return;
+  const pad = 3;
+  const bounds = {minX:pad, maxX:w-pad, minY:pad, maxY:h-pad};
+  if(preset.icon){
+    drawFurnitureIcon(ctx, preset.icon, bounds, preset.color);
+    roundRectPath(ctx, pad, pad, w-pad*2, h-pad*2, 6);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth=1; ctx.stroke();
+  } else if(preset.texture){
+    roundRectPath(ctx, pad, pad, w-pad*2, h-pad*2, 6);
+    fillMaterial(ctx, presetKey, bounds, preset.color);
+    roundRectPath(ctx, pad, pad, w-pad*2, h-pad*2, 6);
+    applyEdgeShading(ctx, bounds);
+    roundRectPath(ctx, pad, pad, w-pad*2, h-pad*2, 6);
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth=1; ctx.stroke();
+  } else {
+    roundRectPath(ctx, pad, pad, w-pad*2, h-pad*2, 6);
+    ctx.fillStyle = 'rgba(255,255,255,0.04)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)'; ctx.lineWidth=1; ctx.stroke();
+    ctx.strokeStyle = preset.color; ctx.lineWidth=2.5; ctx.lineCap='round';
+    ctx.beginPath();
+    if(presetKey==='dimension'){
+      ctx.moveTo(w*0.22,h*0.5); ctx.lineTo(w*0.78,h*0.5);
+      ctx.moveTo(w*0.22,h*0.36); ctx.lineTo(w*0.22,h*0.64);
+      ctx.moveTo(w*0.78,h*0.36); ctx.lineTo(w*0.78,h*0.64);
+    } else {
+      ctx.moveTo(w*0.18,h*0.62); ctx.lineTo(w*0.5,h*0.32); ctx.lineTo(w*0.82,h*0.62);
+    }
+    ctx.stroke();
+  }
+}
+function updateTypePreview(){
+  renderPresetThumb(typePreview, typeSelect.value);
+}
+function buildTypeGallery(){
+  typeGalleryBody.innerHTML = '';
+  TYPE_GROUPS.forEach(group=>{
+    const label = document.createElement('p');
+    label.className = 'gallery-section-label';
+    label.textContent = group.label;
+    typeGalleryBody.appendChild(label);
+    const grid = document.createElement('div');
+    grid.className = 'gallery-grid';
+    group.keys.forEach(key=>{
+      const preset = PRESETS[key];
+      const tile = document.createElement('button');
+      tile.type = 'button';
+      tile.className = 'gallery-tile'+(key===typeSelect.value ? ' selected' : '');
+      tile.dataset.key = key;
+      const thumb = document.createElement('canvas');
+      thumb.width = 56; thumb.height = 56;
+      tile.appendChild(thumb);
+      const span = document.createElement('span');
+      span.textContent = preset.label;
+      tile.appendChild(span);
+      tile.addEventListener('click', ()=>{
+        typeSelect.value = key;
+        typeSelect.dispatchEvent(new Event('change'));
+        closeTypeGallery();
+      });
+      grid.appendChild(tile);
+      renderPresetThumb(thumb, key);
+    });
+    typeGalleryBody.appendChild(grid);
+  });
+}
+function openTypeGallery(){
+  buildTypeGallery();
+  typeGalleryOverlay.classList.add('visible');
+  const sel = typeGalleryBody.querySelector('.gallery-tile.selected');
+  if(sel) sel.scrollIntoView({block:'center'});
+}
+function closeTypeGallery(){
+  typeGalleryOverlay.classList.remove('visible');
+}
+browseTypesBtn.addEventListener('click', openTypeGallery);
+closeTypeGalleryBtn.addEventListener('click', closeTypeGallery);
+typeGalleryOverlay.addEventListener('click', (e)=>{ if(e.target===typeGalleryOverlay) closeTypeGallery(); });
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape' && typeGalleryOverlay.classList.contains('visible')) closeTypeGallery();
+});
+
 function updateAddFieldsForType(){
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
@@ -1566,6 +1732,7 @@ function updateAddFieldsForType(){
   // not locked to those types.
   fixedPriceInput.checked = typeSelect.value==='pool' || typeSelect.value.indexOf('roof_')===0;
   updateCostFieldMode();
+  updateTypePreview();
 }
 function updateCostFieldMode(){
   const fixed = fixedPriceInput.checked;
@@ -2530,7 +2697,6 @@ function drawAimMarker(ctx, x, y, snapped){
 }
 
 /* ============================ Material textures ============================ */
-const patternCache = {};
 function getTilePattern(ctx, texture, scalePxPerFt){
   const key = texture+'|'+Math.round(scalePxPerFt);
   if(patternCache[key]) return patternCache[key];
