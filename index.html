@@ -248,8 +248,8 @@
   }
   #magnifierWrap.visible{display:flex;}
   #magnifierCanvas{
-    width:150px;height:150px;border-radius:50%;
-    border:3px solid var(--accent);box-shadow:0 6px 20px rgba(0,0,0,0.5);
+    width:280px;height:280px;border-radius:50%;
+    border:4px solid var(--accent);box-shadow:0 6px 20px rgba(0,0,0,0.5);
     background:#fff;
   }
   #magnifierWrap .maghint{
@@ -799,7 +799,7 @@
 </div>
 
 <div id="magnifierWrap">
-  <canvas id="magnifierCanvas" width="150" height="150"></canvas>
+  <canvas id="magnifierCanvas" width="280" height="280"></canvas>
   <span class="maghint">drag to fine-tune, release to place</span>
 </div>
 
@@ -1027,6 +1027,15 @@ const sensitivityLabel = document.getElementById('sensitivityLabel');
 const magnifierWrap = document.getElementById('magnifierWrap');
 const magnifierCanvas = document.getElementById('magnifierCanvas');
 const magCtx = magnifierCanvas.getContext('2d');
+// The backing store defaults to 280x280 raw pixels (the HTML attrs), which
+// looks visibly soft stretched across a 280 CSS-px circle on any HiDPI/retina
+// screen -- most phones and modern laptops. Back it with real device pixels
+// and scale the context so every draw call below can keep using plain CSS-px
+// coordinates.
+const MAG_DPR = window.devicePixelRatio || 1;
+magnifierCanvas.width = 280*MAG_DPR;
+magnifierCanvas.height = 280*MAG_DPR;
+magCtx.scale(MAG_DPR, MAG_DPR);
 
 const addPanel = document.getElementById('addPanel');
 const typeSelect = document.getElementById('typeSelect');
@@ -3002,8 +3011,9 @@ function getSensitivity(){
 sensitivityInput.addEventListener('input', ()=>{
   sensitivityLabel.textContent = sensitivityInput.value+'%';
 });
+const MAG_SIZE = 280;
 function positionMagnifier(clientX, clientY){
-  const size = 150;
+  const size = MAG_SIZE;
   let left = clientX - size/2;
   let top = clientY - size - 40;
   if(top < 8) top = clientY + 40;
@@ -3013,7 +3023,7 @@ function positionMagnifier(clientX, clientY){
 }
 function updateMagnifier(){
   if(!state.aiming) return;
-  const ZOOM = 3.5, size = 150;
+  const ZOOM = 3.5, size = MAG_SIZE;
   const srcW = size/ZOOM, srcH = size/ZOOM;
   const sx = state.aiming.x - srcW/2, sy = state.aiming.y - srcH/2;
   magCtx.clearRect(0,0,size,size);
@@ -3023,17 +3033,28 @@ function updateMagnifier(){
     magCtx.drawImage(bgCanvas, sx, sy, srcW, srcH, 0, 0, size, size);
     magCtx.drawImage(overlayCanvas, sx, sy, srcW, srcH, 0, 0, size, size);
   }
+  // Crosshair drawn with a dark halo pass underneath the bright line, so it
+  // stays readable over a light blueprint background and a dark one alike --
+  // a single thin gold line was easy to lose against a similarly-toned plan.
   magCtx.save();
-  magCtx.strokeStyle = 'rgba(181,147,76,0.85)';
-  magCtx.lineWidth = 1.5;
+  magCtx.lineCap = 'round';
+  [{c:'rgba(0,0,0,0.55)', w:5.5}, {c:'#FFC94D', w:2.5}].forEach(pass=>{
+    magCtx.strokeStyle = pass.c;
+    magCtx.lineWidth = pass.w;
+    magCtx.beginPath();
+    magCtx.moveTo(size/2, 0); magCtx.lineTo(size/2, size);
+    magCtx.moveTo(0, size/2); magCtx.lineTo(size, size/2);
+    magCtx.stroke();
+  });
   magCtx.beginPath();
-  magCtx.moveTo(size/2, 0); magCtx.lineTo(size/2, size);
-  magCtx.moveTo(0, size/2); magCtx.lineTo(size, size/2);
+  magCtx.arc(size/2, size/2, 9, 0, Math.PI*2);
+  magCtx.strokeStyle = '#0A1A2E';
+  magCtx.lineWidth = 4.5;
   magCtx.stroke();
   magCtx.beginPath();
-  magCtx.arc(size/2, size/2, 5, 0, Math.PI*2);
-  magCtx.strokeStyle = '#C4645C';
-  magCtx.lineWidth = 2;
+  magCtx.arc(size/2, size/2, 9, 0, Math.PI*2);
+  magCtx.strokeStyle = '#FF5A4E';
+  magCtx.lineWidth = 2.5;
   magCtx.stroke();
   magCtx.restore();
 }
@@ -3641,22 +3662,33 @@ function getPopState(el){
 }
 
 function drawAimMarker(ctx, x, y, snapped){
-  const ringColor = snapped==='point' ? '#7FC98A' : (snapped==='angle' ? '#3E7CB1' : '#B5934C');
+  const ringColor = snapped==='point' ? '#7FC98A' : (snapped==='angle' ? '#4FA8E8' : '#FFC94D');
+  const ringR = snapped ? 12 : 10;
   ctx.save();
-  ctx.strokeStyle = ringColor;
-  ctx.lineWidth = snapped ? 2.5 : 1.5;
+  ctx.lineCap = 'round';
+  // A dark halo pass under the bright ring/crosshair keeps it legible over a
+  // plan of any color -- a plain thin line the same tone as the drawing
+  // underneath it was disappearing exactly where precision matters most.
+  [{c:'rgba(10,26,46,0.75)', dw:2.4}, {c:ringColor, dw:0}].forEach(pass=>{
+    ctx.strokeStyle = pass.c;
+    ctx.lineWidth = (snapped ? 2.8 : 2) + pass.dw;
+    ctx.beginPath();
+    ctx.arc(x, y, ringR, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x-16,y); ctx.lineTo(x-5,y);
+    ctx.moveTo(x+5,y); ctx.lineTo(x+16,y);
+    ctx.moveTo(x,y-16); ctx.lineTo(x,y-5);
+    ctx.moveTo(x,y+5); ctx.lineTo(x,y+16);
+    ctx.stroke();
+  });
   ctx.beginPath();
-  ctx.arc(x, y, snapped ? 11 : 9, 0, Math.PI*2);
-  ctx.stroke();
+  ctx.arc(x, y, 3, 0, Math.PI*2);
+  ctx.fillStyle = '#0A1A2E';
+  ctx.fill();
   ctx.beginPath();
-  ctx.moveTo(x-14,y); ctx.lineTo(x-4,y);
-  ctx.moveTo(x+4,y); ctx.lineTo(x+14,y);
-  ctx.moveTo(x,y-14); ctx.lineTo(x,y-4);
-  ctx.moveTo(x,y+4); ctx.lineTo(x,y+14);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.arc(x, y, 2.5, 0, Math.PI*2);
-  ctx.fillStyle = '#C4645C';
+  ctx.arc(x, y, 2, 0, Math.PI*2);
+  ctx.fillStyle = '#FF5A4E';
   ctx.fill();
   ctx.restore();
 }
@@ -4409,6 +4441,14 @@ function drawDimensionElement(ctx, el, selected){
   const headLen = 9, headAng = Math.PI/7;
   ctx.save();
   ctx.globalAlpha *= getPopState(el).alpha;
+  ctx.lineCap = 'round';
+  // A dark halo pass under the line and arrowheads keeps a dimension legible
+  // whenever its own color happens to sit close to the plan underneath it.
+  ctx.strokeStyle = 'rgba(10,26,46,0.65)';
+  ctx.lineWidth = (selected ? 2.2 : 1.6) + 2.4;
+  ctx.beginPath();
+  ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
+  ctx.stroke();
   ctx.strokeStyle = el.color;
   ctx.fillStyle = el.color;
   ctx.lineWidth = selected ? 2.2 : 1.6;
@@ -4417,11 +4457,12 @@ function drawDimensionElement(ctx, el, selected){
   ctx.moveTo(p1.x,p1.y); ctx.lineTo(p2.x,p2.y);
   ctx.stroke();
   [[p1,ang],[p2,ang+Math.PI]].forEach(([p,a])=>{
+    const hx1 = p.x-headLen*Math.cos(a-headAng), hy1 = p.y-headLen*Math.sin(a-headAng);
+    const hx2 = p.x-headLen*Math.cos(a+headAng), hy2 = p.y-headLen*Math.sin(a+headAng);
     ctx.beginPath();
-    ctx.moveTo(p.x,p.y);
-    ctx.lineTo(p.x-headLen*Math.cos(a-headAng), p.y-headLen*Math.sin(a-headAng));
-    ctx.lineTo(p.x-headLen*Math.cos(a+headAng), p.y-headLen*Math.sin(a+headAng));
-    ctx.closePath();
+    ctx.moveTo(p.x,p.y); ctx.lineTo(hx1,hy1); ctx.lineTo(hx2,hy2); ctx.closePath();
+    ctx.strokeStyle = 'rgba(10,26,46,0.65)'; ctx.lineWidth = 2.2; ctx.stroke();
+    ctx.fillStyle = el.color;
     ctx.fill();
   });
   ctx.restore();
@@ -4509,17 +4550,30 @@ function drawInProgress(ctx, drawing){
   const aiming = state.aiming && state.aiming.kind==='draw' ? state.aiming : null;
   const previewPts = aiming ? pts.concat([{x:aiming.x,y:aiming.y}]) : pts;
   ctx.save();
-  ctx.strokeStyle = drawing.color;
-  ctx.fillStyle = drawing.color;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([4,3]);
+  // A dark halo pass under the dashed preview line and the placed-point dots
+  // keeps them visible against a plan whose own lines happen to be a close
+  // shade of the tool's own color (easy to lose track of where you've
+  // already tapped otherwise).
   if(previewPts.length>=2){
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(10,26,46,0.7)';
+    ctx.lineWidth = 4.5;
+    ctx.setLineDash([4,3]);
     strokePolyline(ctx, previewPts, drawing.shape==='polygon');
+    ctx.strokeStyle = drawing.color;
+    ctx.lineWidth = 2.2;
+    strokePolyline(ctx, previewPts, drawing.shape==='polygon');
+    ctx.setLineDash([]);
   }
-  ctx.setLineDash([]);
   pts.forEach((p,i)=>{
+    const r = i===0?7:5;
     ctx.beginPath();
-    ctx.arc(p.x,p.y, i===0?6:4, 0, Math.PI*2);
+    ctx.arc(p.x,p.y, r+1.5, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(10,26,46,0.75)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(p.x,p.y, r, 0, Math.PI*2);
+    ctx.fillStyle = drawing.color;
     ctx.fill();
   });
   ctx.restore();
@@ -4532,7 +4586,7 @@ function drawInProgress(ctx, drawing){
       let label = formatNum(fromFt(distFt, state.unit))+' '+state.unit+'  ∠'+Math.round(angDeg)+'°';
       if(aiming.snapped==='point') label = '⊙ snapped to point';
       else if(aiming.snapped==='angle') label += '  (snapped)';
-      drawLabelChip(ctx, aiming.x, aiming.y-24, label, aiming.snapped==='point' ? '#7FC98A' : (aiming.snapped==='angle' ? '#3E7CB1' : '#E7ECF2'));
+      drawLabelChip(ctx, aiming.x, aiming.y-24, label, aiming.snapped==='point' ? '#7FC98A' : (aiming.snapped==='angle' ? '#4FA8E8' : '#E7ECF2'));
     }
   }
 }
@@ -4947,11 +5001,32 @@ function renderElementsList(){
       dims.appendChild(areaInfo);
       appendCutoutControls(dims, el);
     } else if(el.shape==='path'){
-      const info = document.createElement('span');
-      info.textContent = el.isDimension
-        ? formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()
-        : formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
-      dims.appendChild(info);
+      if(el.isDimension){
+        const lenIn = document.createElement('input'); lenIn.type='number'; lenIn.step='0.01'; lenIn.min='0.01';
+        lenIn.value = formatNum(pathLengthDisplay(el.points));
+        lenIn.title = 'Correct this measurement by typing the real distance -- the far point slides along the same line to match';
+        lenIn.addEventListener('click', e=>e.stopPropagation());
+        lenIn.addEventListener('change', ()=>{
+          const v = parseFloat(lenIn.value);
+          const [p1,p2] = el.points;
+          const curPx = Math.hypot(p2.x-p1.x, p2.y-p1.y);
+          if(v>0 && curPx>0 && state.scalePxPerFt){
+            pushUndo();
+            const targetPx = toFt(v, state.unit)*state.scalePxPerFt;
+            const scale = targetPx/curPx;
+            el.points[1] = { x: p1.x+(p2.x-p1.x)*scale, y: p1.y+(p2.y-p1.y)*scale };
+            drawOverlay(); renderElementsList();
+          } else {
+            lenIn.value = formatNum(pathLengthDisplay(el.points));
+          }
+        });
+        dims.appendChild(lenIn);
+        dims.appendChild(document.createTextNode(unitAbbrev()));
+      } else {
+        const info = document.createElement('span');
+        info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
+        dims.appendChild(info);
+      }
     } else if(el.shape==='polygon'){
       const info = document.createElement('span');
       info.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
