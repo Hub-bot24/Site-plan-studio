@@ -1963,15 +1963,16 @@ function drawTvViewingZones(ctx){
 // seconds with the existing "Custom area" tool, or reusing any rect already
 // on the plan), this reasons about the actual layout, not just "biggest
 // first against the nearest wall":
-//  - TVs get placed before seating, so sofas/armchairs can react to where
+//  - TVs get placed before seating and beds, so they can react to where
 //    the TV actually ended up.
 //  - Every candidate spot is checked against everything already placed --
 //    a real footprint collision is a hard rejection (never overlap another
 //    piece, even one on a different wall meeting at a corner), and landing
 //    inside another item's recommended clearance zone is a soft penalty.
-//  - Seating landing inside a TV's recommended viewing-distance band is
-//    rewarded, so a sofa naturally gravitates to the wall facing the TV at
-//    roughly the right distance, not just wherever has empty wall space.
+//  - Seating or a bed landing inside a TV's recommended viewing-distance
+//    band is rewarded, so a sofa or bed naturally gravitates to the wall
+//    facing the TV at roughly the right distance, not just wherever has
+//    empty wall space.
 function isValidRoomEl(el){
   // Any rectangle works as a room outline -- EXCEPT another piece of
   // furniture, which would be a confusing thing to "arrange other furniture
@@ -2155,12 +2156,13 @@ function runArrangementPass(roomEl, sorted){
         if(otherClearanceFt>0) clearancePenaltyPx2 += polygonIntersectionAreaPx(footprintPoly, elementClearancePolygonPx(other, otherClearanceFt));
       });
 
-      // Seating landing inside an already-placed TV's recommended viewing
-      // distance is a strong positive signal -- that's a "correct" spot for
-      // a sofa/armchair, not just an empty one.
+      // Seating -- or a bed, just as commonly watched from as a sofa in a
+      // bedroom with a TV -- landing inside an already-placed TV's
+      // recommended viewing distance is a strong positive signal -- that's
+      // a "correct" spot, not just an empty one.
       let viewingBonusPx2 = 0;
       const icon = PRESETS[el.presetKey].icon;
-      if(icon==='sofa' || icon==='armchair'){
+      if(icon==='sofa' || icon==='armchair' || icon==='bed'){
         getTvViewingZones().forEach(z=>{ viewingBonusPx2 += polygonIntersectionAreaPx(footprintPoly, z.poly); });
       }
 
