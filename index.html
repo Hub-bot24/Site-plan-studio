@@ -1841,6 +1841,12 @@ function zOrderedElements(){
 
 /* ---- Recommended furniture clearance zones ---- */
 function getClearanceFt(el){
+  // A side table is typically a nightstand or small accent table meant to
+  // sit snug against whatever it's paired with -- unlike a coffee table
+  // (which shares the same icon), it doesn't carry its own walking-space
+  // requirement, so it shouldn't flag a "conflict" just for being right
+  // next to a bed the way it's supposed to be.
+  if(el.presetKey==='table_side') return 0;
   const preset = PRESETS[el.presetKey];
   if(!preset || !preset.icon) return 0;
   const inches = CLEARANCE_IN[preset.icon];
@@ -2063,25 +2069,10 @@ function runArrangementPass(roomEl, sorted){
   const unplaced = [];
   let totalConflictPx2 = 0;
 
-  // A coffee (or side) table belongs in the open floor space in front of
-  // whatever seating it goes with -- a sofa preferred, an armchair if
-  // there's no sofa -- not against a wall like everything else. Returns
-  // one candidate spot, already checked to land fully inside the room and
-  // not collide with anything placed so far; null if there's no seating
-  // placed yet, or it genuinely doesn't fit there.
-  function floatingTableCandidate(el){
-    if(el.presetKey!=='table_coffee' && el.presetKey!=='table_side') return null;
-    const seatingPlaced = placed.filter(p=>{ const ic=PRESETS[p.presetKey].icon; return ic==='sofa'||ic==='armchair'; });
-    if(!seatingPlaced.length) return null;
-    const seat = seatingPlaced.find(p=>PRESETS[p.presetKey].icon==='sofa') || seatingPlaced[0];
-    const seatRad = seat.rotationDeg*Math.PI/180;
-    const frontX = -Math.sin(seatRad), frontY = Math.cos(seatRad);
-    const gapPx = 1.5*state.scalePxPerFt; // ~18in, typical coffee-table-to-sofa spacing
-    const forwardPx = seat.hFt*state.scalePxPerFt/2 + gapPx + el.hFt*state.scalePxPerFt/2;
-    const worldX = seat.xPx + frontX*forwardPx;
-    const worldY = seat.yPx + frontY*forwardPx;
-    const rotDeg = seat.rotationDeg;
-
+  // A rotated-rect candidate's world-space validity check, shared by every
+  // "floating" (non-wall) placement below: must land fully inside the room
+  // and not collide with anything already placed.
+  function validFloatingSpot(el, worldX, worldY, rotDeg){
     const virt = {shape:'rect', id:-1, xPx:worldX, yPx:worldY, wFt:el.wFt, hFt:el.hFt, rotationDeg:rotDeg, presetKey:el.presetKey};
     const corners = elementToPolygonPoints(virt);
     const eps = 1;
@@ -2090,10 +2081,53 @@ function runArrangementPass(roomEl, sorted){
       const lx = dx*Math.cos(rad)+dy*Math.sin(rad), ly = -dx*Math.sin(rad)+dy*Math.cos(rad);
       return lx>=-halfW-eps && lx<=halfW+eps && ly>=-halfH-eps && ly<=halfH+eps;
     });
-    if(!insideRoom) return null;
-    const collides = placed.some(other => polygonIntersectionAreaPx(corners, elementToPolygonPoints(other)) > minOverlapPx2);
-    if(collides) return null;
-    return {worldX, worldY, rotDeg};
+    if(!insideRoom) return false;
+    return !placed.some(other => polygonIntersectionAreaPx(corners, elementToPolygonPoints(other)) > minOverlapPx2);
+  }
+  // A coffee/side table isn't just ordinary wall-hugging furniture -- it
+  // belongs somewhere specific relative to other furniture:
+  //  - A side table flanking a bed's headboard (a nightstand) -- one
+  //    candidate on each side, flush against the same wall as the bed.
+  //  - A coffee or side table sitting in the open floor space in front of
+  //    whatever seating it goes with (sofa preferred, armchair otherwise).
+  // Returns every geometrically valid option (already bounds/collision
+  // checked) so the normal scoring picks whichever one actually works --
+  // e.g. the second nightstand naturally lands on the free side once the
+  // first has already claimed one.
+  function floatingTableCandidates(el){
+    if(el.presetKey!=='table_coffee' && el.presetKey!=='table_side') return [];
+    const out = [];
+    const gapPx = (el.presetKey==='table_side' ? 0.25 : 1.5)*state.scalePxPerFt;
+
+    if(el.presetKey==='table_side'){
+      placed.filter(p=>PRESETS[p.presetKey].icon==='bed').forEach(bed=>{
+        const bedRad = bed.rotationDeg*Math.PI/180;
+        const frontX = -Math.sin(bedRad), frontY = Math.cos(bedRad);
+        const sideX = Math.cos(bedRad), sideY = Math.sin(bedRad);
+        const alongOffset = bed.wFt*state.scalePxPerFt/2 + gapPx + el.wFt*state.scalePxPerFt/2;
+        // Flush against the bed's own wall, not out at the bed's own
+        // center depth -- a nightstand sits right at the headboard.
+        const depthOffset = el.hFt*state.scalePxPerFt/2 - bed.hFt*state.scalePxPerFt/2;
+        [-1,1].forEach(side=>{
+          const worldX = bed.xPx + sideX*alongOffset*side + frontX*depthOffset;
+          const worldY = bed.yPx + sideY*alongOffset*side + frontY*depthOffset;
+          if(validFloatingSpot(el, worldX, worldY, bed.rotationDeg)) out.push({worldX, worldY, rotDeg:bed.rotationDeg});
+        });
+      });
+    }
+
+    const seatingPlaced = placed.filter(p=>{ const ic=PRESETS[p.presetKey].icon; return ic==='sofa'||ic==='armchair'; });
+    if(seatingPlaced.length){
+      const seat = seatingPlaced.find(p=>PRESETS[p.presetKey].icon==='sofa') || seatingPlaced[0];
+      const seatRad = seat.rotationDeg*Math.PI/180;
+      const frontX = -Math.sin(seatRad), frontY = Math.cos(seatRad);
+      const forwardPx = seat.hFt*state.scalePxPerFt/2 + gapPx + el.hFt*state.scalePxPerFt/2;
+      const worldX = seat.xPx + frontX*forwardPx;
+      const worldY = seat.yPx + frontY*forwardPx;
+      if(validFloatingSpot(el, worldX, worldY, seat.rotationDeg)) out.push({worldX, worldY, rotDeg:seat.rotationDeg});
+    }
+
+    return out;
   }
 
   sorted.forEach(el=>{
@@ -2158,8 +2192,7 @@ function runArrangementPass(roomEl, sorted){
         evaluate(world.x, world.y, rotDeg, {wallName:w, alongPx:p.alongPx, side:p.side, firstOnWall:p.firstOnWall});
       });
     });
-    const floatCand = floatingTableCandidate(el);
-    if(floatCand) evaluate(floatCand.worldX, floatCand.worldY, floatCand.rotDeg, null);
+    floatingTableCandidates(el).forEach(c=> evaluate(c.worldX, c.worldY, c.rotDeg, null));
 
     if(!best){ unplaced.push(el); return; }
     el.xPx = best.worldX; el.yPx = best.worldY; el.rotationDeg = best.rotDeg;
@@ -2197,10 +2230,22 @@ function autoArrangeFurniture(roomEl){
   const original = furniture.map(el=>({el, xPx:el.xPx, yPx:el.yPx, rotationDeg:el.rotationDeg}));
   function restoreOriginal(){ original.forEach(o=>{ o.el.xPx=o.xPx; o.el.yPx=o.yPx; o.el.rotationDeg=o.rotationDeg; }); }
 
-  // TVs always go first (tier 0) in every strategy, regardless of their
-  // footprint area -- a TV is physically small/shallow but functionally
-  // anchors the room, and seating needs an already-positioned TV to react to.
-  const placementTier = el => PRESETS[el.presetKey].icon==='tv' ? 0 : 1;
+  // Placement order isn't just about footprint size -- some items need
+  // another one to already exist before they can find their real spot:
+  //  - TVs always go first (tier 0), regardless of footprint area -- a TV
+  //    is physically small/shallow but functionally anchors the room, and
+  //    seating needs an already-positioned TV to react to.
+  //  - Coffee/side tables always go last (tier 2), regardless of area --
+  //    they pair with a bed or seating that has to be placed first, or
+  //    they'd just grab a wall slot for themselves before their anchor
+  //    exists (a real bug the smallest-first strategy used to hit: a tiny
+  //    nightstand claiming a wall before the bed it's supposed to flank).
+  const placementTier = el => {
+    const icon = PRESETS[el.presetKey].icon;
+    if(icon==='tv') return 0;
+    if(el.presetKey==='table_coffee' || el.presetKey==='table_side') return 2;
+    return 1;
+  };
   const areaOf = el => el.wFt*el.hFt;
   const strategies = [
     (a,b)=> placementTier(a)-placementTier(b) || areaOf(b)-areaOf(a),
@@ -2243,11 +2288,21 @@ function autoArrangeWithSizeFallback(roomEl){
     const conflicted = getClearanceZones().filter(z=>z.conflict);
     if(!conflicted.length) break;
     const conflictedIds = new Set(conflicted.map(z=>z.id));
-    const furniture = currentPageElements().filter(e=>
-      e.id!==roomEl.id && conflictedIds.has(e.id) && !failedIds.has(e.id) && smallerSizeKey(e.presetKey)
+    const downsizable = currentPageElements().filter(e=>
+      e.id!==roomEl.id && !failedIds.has(e.id) && smallerSizeKey(e.presetKey)
     );
-    if(!furniture.length) break;
-    const el = furniture.slice().sort((a,b)=> (b.wFt*b.hFt)-(a.wFt*a.hFt))[0];
+    if(!downsizable.length) break;
+    // Prefer shrinking something that's itself flagged tight -- the direct
+    // fix. But if none of the conflicted items have a smaller size (e.g. a
+    // wardrobe has no size family), a big downsizable item elsewhere in the
+    // room -- the bed, most often -- can still free up enough space to
+    // resolve someone else's conflict, so it's still worth trying.
+    const furniture = downsizable.slice().sort((a,b)=>{
+      const aConflicted = conflictedIds.has(a.id) ? 0 : 1;
+      const bConflicted = conflictedIds.has(b.id) ? 0 : 1;
+      return aConflicted-bConflicted || (b.wFt*b.hFt)-(a.wFt*a.hFt);
+    });
+    const el = furniture[0];
 
     const prevConflictCount = conflicted.length;
     const prevUnplaced = result.unplaced.length;
