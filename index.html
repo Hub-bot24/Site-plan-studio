@@ -1927,9 +1927,17 @@ function drawTvViewingZones(ctx){
 // Any selected rectangle can stand in for a room outline -- the app can't
 // detect walls from the PDF itself, but given a rectangle (drawn in a few
 // seconds with the existing "Custom area" tool, or reusing any rect already
-// on the plan), this lays furniture out against its walls, biggest pieces
-// first, spread from each wall's center outward so items don't all pile
-// into one corner, and skips anything that genuinely doesn't fit.
+// on the plan), this reasons about the actual layout, not just "biggest
+// first against the nearest wall":
+//  - TVs get placed before seating, so sofas/armchairs can react to where
+//    the TV actually ended up.
+//  - Every candidate spot is checked against everything already placed --
+//    a real footprint collision is a hard rejection (never overlap another
+//    piece, even one on a different wall meeting at a corner), and landing
+//    inside another item's recommended clearance zone is a soft penalty.
+//  - Seating landing inside a TV's recommended viewing-distance band is
+//    rewarded, so a sofa naturally gravitates to the wall facing the TV at
+//    roughly the right distance, not just wherever has empty wall space.
 function isValidRoomEl(el){
   // Any rectangle works as a room outline -- EXCEPT another piece of
   // furniture, which would be a confusing thing to "arrange other furniture
@@ -1950,7 +1958,13 @@ function autoArrangeFurniture(roomEl){
   const furniture = currentPageElements().filter(e=>
     e.id!==roomEl.id && e.shape==='rect' && !e.isCutout && PRESETS[e.presetKey] && PRESETS[e.presetKey].icon
   );
-  const sorted = furniture.slice().sort((a,b)=> (b.wFt*b.hFt) - (a.wFt*a.hFt));
+  // TVs first (tier 0) regardless of their footprint area -- a TV is
+  // physically small/shallow but functionally anchors the room, and seating
+  // placed later needs an already-positioned TV to react to.
+  const placementTier = el => PRESETS[el.presetKey].icon==='tv' ? 0 : 1;
+  const sorted = furniture.slice().sort((a,b)=>
+    placementTier(a)-placementTier(b) || (b.wFt*b.hFt)-(a.wFt*a.hFt)
+  );
 
   // Each wall fills outward from its own midpoint in both directions, so
   // the first (biggest) item on a wall sits centered rather than jammed
@@ -1966,37 +1980,117 @@ function autoArrangeFurniture(roomEl){
     const alongPx = el.wFt*state.scalePxPerFt;
     const depthPx = el.hFt*state.scalePxPerFt;
     if(depthPx > wall.depthAvail) return null;
-    if(wall.leftUsed + wall.rightUsed + alongPx > wall.lengthPx) return null;
-    const side = wall.leftUsed <= wall.rightUsed ? 'left' : 'right';
-    const centerAlong = side==='left' ? -(wall.leftUsed + alongPx/2) : (wall.rightUsed + alongPx/2);
+    if(alongPx > wall.lengthPx) return null;
+    const halfLen = wall.lengthPx/2;
+    let side, centerAlong, firstOnWall;
+    if(wall.leftUsed===0 && wall.rightUsed===0){
+      // Nothing on this wall yet -- center the first item across the
+      // midpoint rather than offsetting it to one side. Offsetting would
+      // otherwise only let each side grow up to half the wall's length,
+      // which is wrong for a single item bigger than that (e.g. a bed
+      // spanning most of an 8ft wall) even though it obviously fits.
+      firstOnWall = true;
+      side = 'left';
+      centerAlong = 0;
+    } else {
+      firstOnWall = false;
+      side = wall.leftUsed <= wall.rightUsed ? 'left' : 'right';
+      const used = side==='left' ? wall.leftUsed : wall.rightUsed;
+      if(used + alongPx > halfLen) return null;
+      centerAlong = side==='left' ? -(used + alongPx/2) : (used + alongPx/2);
+    }
     let lx,ly,rotDeg;
     if(wallName==='top'){ lx=centerAlong; ly=-halfH+depthPx/2; rotDeg=0; }
     else if(wallName==='bottom'){ lx=centerAlong; ly=halfH-depthPx/2; rotDeg=180; }
     else if(wallName==='left'){ lx=-halfW+depthPx/2; ly=centerAlong; rotDeg=270; }
     else { lx=halfW-depthPx/2; ly=centerAlong; rotDeg=90; }
-    return {lx, ly, rotDeg, alongPx, side};
+
+    // Safety net, independent of the wall-budget bookkeeping above: verify
+    // this candidate's actual (rotated) footprint stays fully inside the
+    // room. Guarantees nothing can ever end up poking out through a wall,
+    // even if some edge case in the budget math above is wrong.
+    const rad2 = rotDeg*Math.PI/180;
+    const corners = [[-alongPx/2,-depthPx/2],[alongPx/2,-depthPx/2],[alongPx/2,depthPx/2],[-alongPx/2,depthPx/2]].map(([cx,cy])=>({
+      x: lx + cx*Math.cos(rad2) - cy*Math.sin(rad2),
+      y: ly + cx*Math.sin(rad2) + cy*Math.cos(rad2),
+    }));
+    const eps = 1;
+    const fits = corners.every(c => c.x>=-halfW-eps && c.x<=halfW+eps && c.y>=-halfH-eps && c.y<=halfH+eps);
+    if(!fits) return null;
+
+    return {lx, ly, rotDeg, alongPx, side, firstOnWall};
   }
 
+  // A real overlap threshold in px^2 (~0.15 sqft), same convention used by
+  // the clearance-zone conflict check, to ignore float-rounding noise at a
+  // shared edge without letting genuine collisions slide.
+  const minOverlapPx2 = 0.15 * state.scalePxPerFt * state.scalePxPerFt;
+  const placed = []; // real elements, already moved to their final spot
   const unplaced = [];
-  let placedCount = 0;
+
   sorted.forEach(el=>{
-    let best = null, bestWall = null, bestRemaining = -Infinity;
+    let best = null, bestWall = null, bestScore = -Infinity;
     ['top','bottom','left','right'].forEach(w=>{
       const p = tryWall(w, el);
       if(!p) return;
-      const wall = walls[w];
-      const remaining = wall.lengthPx - (wall.leftUsed + wall.rightUsed + p.alongPx);
-      if(remaining > bestRemaining){ bestRemaining = remaining; best = p; bestWall = w; }
+      const world = toWorld(p.lx, p.ly);
+      const rotDeg = ((roomEl.rotationDeg + p.rotDeg) % 360 + 360) % 360;
+      // A "what if placed here" stand-in, scored without touching the real
+      // element yet -- lets every wall be judged on equal footing.
+      const virt = {shape:'rect', id:-1, xPx:world.x, yPx:world.y, wFt:el.wFt, hFt:el.hFt, rotationDeg:rotDeg, presetKey:el.presetKey};
+      const footprintPoly = elementToPolygonPoints(virt);
+
+      // Hard rule: never let two pieces of furniture actually overlap,
+      // including two items on different walls colliding near a corner --
+      // checked against everything already placed, not just the same wall.
+      const collides = placed.some(other => polygonIntersectionAreaPx(footprintPoly, elementToPolygonPoints(other)) > minOverlapPx2);
+      if(collides) return;
+
+      const clearanceFt = getClearanceFt(virt);
+      const clearancePoly = clearanceFt>0 ? elementClearancePolygonPx(virt, clearanceFt) : null;
+      let clearancePenaltyPx2 = 0;
+      placed.forEach(other=>{
+        const otherFootprint = elementToPolygonPoints(other);
+        if(clearancePoly) clearancePenaltyPx2 += polygonIntersectionAreaPx(clearancePoly, otherFootprint);
+        const otherClearanceFt = getClearanceFt(other);
+        if(otherClearanceFt>0) clearancePenaltyPx2 += polygonIntersectionAreaPx(footprintPoly, elementClearancePolygonPx(other, otherClearanceFt));
+      });
+
+      // Seating landing inside an already-placed TV's recommended viewing
+      // distance is a strong positive signal -- that's a "correct" spot for
+      // a sofa/armchair, not just an empty one.
+      let viewingBonusPx2 = 0;
+      const icon = PRESETS[el.presetKey].icon;
+      if(icon==='sofa' || icon==='armchair'){
+        getTvViewingZones().forEach(z=>{ viewingBonusPx2 += polygonIntersectionAreaPx(footprintPoly, z.poly); });
+      }
+
+      const remainingPx = walls[w].lengthPx - (walls[w].leftUsed + walls[w].rightUsed + p.alongPx);
+      const scalePx2 = state.scalePxPerFt*state.scalePxPerFt;
+      // Everything converted to roughly "sqft of effect" so the terms
+      // compare sensibly: clearance conflicts matter most, TV-facing
+      // seating is rewarded, and remaining wall room is a light tiebreaker
+      // that spreads furniture across walls when scores are otherwise tied.
+      const score = (viewingBonusPx2 - clearancePenaltyPx2*2)/scalePx2 + (remainingPx/state.scalePxPerFt)*0.03;
+      if(score > bestScore){ bestScore = score; best = p; bestWall = w; }
     });
     if(!best){ unplaced.push(el); return; }
     const world = toWorld(best.lx, best.ly);
     el.xPx = world.x; el.yPx = world.y;
     el.rotationDeg = ((roomEl.rotationDeg + best.rotDeg) % 360 + 360) % 360;
-    if(best.side==='left') walls[bestWall].leftUsed += best.alongPx + gapPx;
-    else walls[bestWall].rightUsed += best.alongPx + gapPx;
-    placedCount++;
+    if(best.firstOnWall){
+      // A centered item eats into both sides' budgets equally, so whatever
+      // gets added next (to either side) correctly starts from its edges.
+      walls[bestWall].leftUsed += best.alongPx/2 + gapPx/2;
+      walls[bestWall].rightUsed += best.alongPx/2 + gapPx/2;
+    } else if(best.side==='left'){
+      walls[bestWall].leftUsed += best.alongPx + gapPx;
+    } else {
+      walls[bestWall].rightUsed += best.alongPx + gapPx;
+    }
+    placed.push(el);
   });
-  return {placedCount, unplaced};
+  return {placedCount: placed.length, unplaced};
 }
 
 // How full each room outline is -- furniture footprint area vs. the room's
