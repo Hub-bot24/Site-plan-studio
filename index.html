@@ -92,6 +92,14 @@
     50%{box-shadow:0 0 0 7px rgba(181,147,76,0);}
   }
   .btn.pulse-attention{animation:pulseAttention 1.5s ease-in-out infinite;background:var(--accent);color:var(--navy-deep);border-color:var(--accent);}
+  /* Groups the topbar's growing button count into labeled clusters instead of
+     one undifferentiated row -- a flat wall of identical pills reads as
+     cluttered no matter how good any individual button looks. */
+  .tb-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .tb-divider{width:1px;align-self:stretch;min-height:22px;background:var(--line);flex-shrink:0;margin:0 2px;}
+  @media (max-width:880px){
+    .tb-divider{margin:0;}
+  }
 
   /* ---------- Main layout ---------- */
   #main{flex:1;display:flex;min-height:0;}
@@ -418,6 +426,14 @@
        every time a new tool ships. Tooltips (title=) still work on tap-hold. */
     #topbar .btn .btn-label{display:none;}
     #topbar .btn{padding:8px 10px;}
+    /* The group wrappers/dividers exist to visually cluster buttons on a
+       wide desktop toolbar -- on a narrow phone they just add extra wrap
+       points and grow the bar taller, eating into canvas height for no
+       benefit (icon-only buttons already read as compact). Flatten back to
+       plain flex children of #topbar so wrapping behaves exactly like one
+       continuous row again. */
+    .tb-group{display:contents;}
+    .tb-divider{display:none;}
   }
 </style>
 </head>
@@ -440,57 +456,68 @@
       <input type="range" id="sensitivityInput" min="8" max="100" value="50">
       <span class="pval" id="sensitivityLabel">50%</span>
     </div>
-    <button class="btn secondary" id="setScaleBtn" disabled title="Set scale — tap both ends of something on the plan whose real length you know (a wall, a door, a fence line) so every measurement and cost on this plan is accurate">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.4 2.4 0 0 1 0-3.4l2.6-2.6a2.4 2.4 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg>
-      <span class="btn-label">Set scale</span>
-    </button>
-    <button class="btn secondary toggled-on" id="labelsToggleBtn" title="Show/hide the name labels on every placed item — turn off for a clean, uncluttered view of just the plan and shapes">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.42 0l7.58-7.58a1 1 0 0 0 0-1.42z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>
-      <span class="btn-label">Labels</span>
-    </button>
-    <button class="btn secondary toggled-on" id="clearancesToggleBtn" title="Show/hide space-planning helpers: recommended clearance zones around furniture (walking/access space — turns red if blocked by another item), plus a recommended seating-distance band for TVs, sized to each screen size.">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2" stroke-dasharray="3 2"/><rect x="7" y="9" width="10" height="6" rx="1"/></svg>
-      <span class="btn-label">Clearances</span>
-    </button>
-    <button class="btn secondary toggled-on" id="roomSpaceToggleBtn" title="Show/hide a colored border around every room outline (any rectangle used for Auto-arrange) showing how much good open floor space is left — green means plenty of room, amber means it's filling up, red means it's packed.">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/></svg>
-      <span class="btn-label">Room space</span>
-    </button>
-    <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
-    <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
-      <span class="btn-label">Undo</span>
-    </button>
-    <button class="btn secondary" id="measureBtn" title="Measure — tap two points on the plan to see the real-world distance between them">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 12 5-5 3 3 2-2 3 3 2-2 5 5"/><path d="M2 12v6a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-6"/></svg>
-      <span class="btn-label">Measure</span>
-    </button>
-    <button class="btn secondary" id="pasteBtn" title="Paste the cut element back onto the plan, at the current view (works across pages too)" disabled>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
-      <span class="btn-label">Paste</span>
-    </button>
-    <button class="btn secondary" id="eraseBtn" title="Erase mode — tap any element on the plan to delete it">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l5.3 5.3a2 2 0 0 1 0 2.8L13 19"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
-      <span class="btn-label">Erase</span>
-    </button>
-    <button class="btn secondary" id="cutPdfBtn" title="Erase PDF — drag over the plan like a normal eraser to permanently remove that part of the imported drawing (e.g. an unwanted existing feature). This edits the plan itself, not just placed elements.">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg>
-      <span class="btn-label">Erase PDF</span>
-    </button>
-    <button class="btn secondary" id="cutMoveBtn" title="Cut &amp; Move — drag a box around part of the plan (a room, a label, anything) to lift it out and drop it somewhere else. The spot it came from is left blank, ready to draw over.">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><path d="M14 3h7v7"/><path d="M21 3 13 11"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-      <span class="btn-label">Cut &amp; Move</span>
-    </button>
+    <div class="tb-divider"></div>
+    <div class="tb-group">
+      <button class="btn secondary" id="setScaleBtn" disabled title="Set scale — tap both ends of something on the plan whose real length you know (a wall, a door, a fence line) so every measurement and cost on this plan is accurate">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.4 2.4 0 0 1 0-3.4l2.6-2.6a2.4 2.4 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg>
+        <span class="btn-label">Set scale</span>
+      </button>
+      <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
+    </div>
+    <div class="tb-divider"></div>
+    <div class="tb-group">
+      <button class="btn secondary toggled-on" id="labelsToggleBtn" title="Show/hide the name labels on every placed item — turn off for a clean, uncluttered view of just the plan and shapes">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.42 0l7.58-7.58a1 1 0 0 0 0-1.42z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>
+        <span class="btn-label">Labels</span>
+      </button>
+      <button class="btn secondary toggled-on" id="clearancesToggleBtn" title="Show/hide space-planning helpers: recommended clearance zones around furniture (walking/access space — turns red if blocked by another item), plus a recommended seating-distance band for TVs, sized to each screen size.">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2" stroke-dasharray="3 2"/><rect x="7" y="9" width="10" height="6" rx="1"/></svg>
+        <span class="btn-label">Clearances</span>
+      </button>
+      <button class="btn secondary toggled-on" id="roomSpaceToggleBtn" title="Show/hide a colored border around every room outline (any rectangle used for Auto-arrange) showing how much good open floor space is left — green means plenty of room, amber means it's filling up, red means it's packed.">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/></svg>
+        <span class="btn-label">Room space</span>
+      </button>
+    </div>
+    <div class="tb-divider"></div>
+    <div class="tb-group">
+      <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+        <span class="btn-label">Undo</span>
+      </button>
+      <button class="btn secondary" id="measureBtn" title="Measure — tap two points on the plan to see the real-world distance between them">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m2 12 5-5 3 3 2-2 3 3 2-2 5 5"/><path d="M2 12v6a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-6"/></svg>
+        <span class="btn-label">Measure</span>
+      </button>
+      <button class="btn secondary" id="eraseBtn" title="Erase mode — tap any element on the plan to delete it">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3a2 2 0 0 1 0-2.8l9.6-9.6a2 2 0 0 1 2.8 0l5.3 5.3a2 2 0 0 1 0 2.8L13 19"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+        <span class="btn-label">Erase</span>
+      </button>
+      <button class="btn secondary" id="cutPdfBtn" title="Erase PDF — drag over the plan like a normal eraser to permanently remove that part of the imported drawing (e.g. an unwanted existing feature). This edits the plan itself, not just placed elements.">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/></svg>
+        <span class="btn-label">Erase PDF</span>
+      </button>
+      <button class="btn secondary" id="cutMoveBtn" title="Cut &amp; Move — drag a box around part of the plan (a room, a label, anything) to lift it out and drop it somewhere else. The spot it came from is left blank, ready to draw over.">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><path d="M14 3h7v7"/><path d="M21 3 13 11"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+        <span class="btn-label">Cut &amp; Move</span>
+      </button>
+      <button class="btn secondary" id="pasteBtn" title="Paste the cut element back onto the plan, at the current view (works across pages too)" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>
+        <span class="btn-label">Paste</span>
+      </button>
+    </div>
     <div class="spacer"></div>
-    <button class="btn secondary" id="exportPdfBtn" disabled>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
-      <span class="btn-label">Export PDF</span>
-    </button>
-    <button class="btn secondary" id="presentBtn" disabled title="Presentation view — hide all the editing chrome for a clean, full-screen look at just the plan (great for showing a client)">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
-      <span class="btn-label">Present</span>
-    </button>
-    <button class="btn" id="exportBtn" disabled>Export PNG</button>
+    <div class="tb-group">
+      <button class="btn secondary" id="exportPdfBtn" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+        <span class="btn-label">Export PDF</span>
+      </button>
+      <button class="btn secondary" id="presentBtn" disabled title="Presentation view — hide all the editing chrome for a clean, full-screen look at just the plan (great for showing a client)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+        <span class="btn-label">Present</span>
+      </button>
+      <button class="btn secondary" id="exportBtn" disabled>Export PNG</button>
+    </div>
   </div>
 
   <div id="main">
@@ -1975,7 +2002,7 @@ function drawTvViewingZones(ctx){
   });
   ctx.restore();
   zones.forEach(({label, minFt, maxFt})=>{
-    const text = formatNum(fromFt(minFt,state.unit))+'–'+formatNum(fromFt(maxFt,state.unit))+' '+unitAbbrev();
+    const text = 'TV zone: '+formatNum(fromFt(minFt,state.unit))+'–'+formatNum(fromFt(maxFt,state.unit))+' '+unitAbbrev();
     drawLabelChip(ctx, label.x, label.y, text, '#6FA8D6');
   });
 }
@@ -2969,6 +2996,19 @@ function finishDrawing(){
   cutoutParentWrap.style.display='none';
   renderElementsList();
   drawOverlay();
+  if(el.isDimension){
+    // A rough tap-to-tap measurement is often not the exact number you
+    // actually want -- surface the just-added row's editable distance field
+    // immediately instead of leaving the user to hunt for it further down
+    // the sidebar list.
+    const newRow = elementsList.querySelector('.elrow[data-id="'+el.id+'"]');
+    const lenInput = newRow && newRow.querySelector('.dims input[type=number]');
+    if(lenInput){
+      newRow.scrollIntoView({block:'center', behavior:'smooth'});
+      lenInput.focus();
+      lenInput.select();
+    }
+  }
 }
 drawFinishBtn.addEventListener('click', finishDrawing);
 function updateDrawBar(){
