@@ -87,6 +87,11 @@
   .btn.active-erase,.btn.active-cut{background:var(--danger);color:#fff;border-color:var(--danger);}
   .btn.active-cutmove{background:var(--accent);color:var(--navy-deep);border-color:var(--accent);}
   .btn.secondary.toggled-on{border-color:var(--accent);color:var(--accent);}
+  @keyframes pulseAttention{
+    0%,100%{box-shadow:0 0 0 0 rgba(181,147,76,0.55);}
+    50%{box-shadow:0 0 0 7px rgba(181,147,76,0);}
+  }
+  .btn.pulse-attention{animation:pulseAttention 1.5s ease-in-out infinite;background:var(--accent);color:var(--navy-deep);border-color:var(--accent);}
 
   /* ---------- Main layout ---------- */
   #main{flex:1;display:flex;min-height:0;}
@@ -435,6 +440,10 @@
       <input type="range" id="sensitivityInput" min="8" max="100" value="50">
       <span class="pval" id="sensitivityLabel">50%</span>
     </div>
+    <button class="btn secondary" id="setScaleBtn" disabled title="Set scale — tap both ends of something on the plan whose real length you know (a wall, a door, a fence line) so every measurement and cost on this plan is accurate">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.4 2.4 0 0 1 0-3.4l2.6-2.6a2.4 2.4 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg>
+      <span class="btn-label">Set scale</span>
+    </button>
     <button class="btn secondary toggled-on" id="labelsToggleBtn" title="Show/hide the name labels on every placed item — turn off for a clean, uncluttered view of just the plan and shapes">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.42 0l7.58-7.58a1 1 0 0 0 0-1.42z"/><circle cx="7" cy="7" r="1.5" fill="currentColor" stroke="none"/></svg>
       <span class="btn-label">Labels</span>
@@ -1003,6 +1012,7 @@ const pageOfText = document.getElementById('pageOfText');
 const prevPageBtn = document.getElementById('prevPageBtn');
 const nextPageBtn = document.getElementById('nextPageBtn');
 
+const setScaleBtn = document.getElementById('setScaleBtn');
 const calibratePanel = document.getElementById('calibratePanel');
 const calibrateBtn = document.getElementById('calibrateBtn');
 const cancelCalibrateBtn = document.getElementById('cancelCalibrateBtn');
@@ -1494,6 +1504,8 @@ async function applyLoadedProjectRecord(rec, name){
   exportPdfBtn.disabled = false;
   exportProjectBtn.disabled = false;
   presentBtn.disabled = false;
+  setScaleBtn.disabled = false;
+  updateSetScaleFlash();
 
   if(state.scalePxPerFt){
     scaleStatus.textContent = scaleStatusText();
@@ -2636,6 +2648,8 @@ newPlanBtn.addEventListener('click', ()=>{
   planStatusText.textContent = 'No plan loaded yet.';
   undoStack.length = 0;
   undoBtn.disabled = true;
+  setScaleBtn.disabled = true;
+  updateSetScaleFlash();
   renderElementsList();
   drawOverlay();
 });
@@ -2665,6 +2679,8 @@ async function loadFile(file){
     exportPdfBtn.disabled = false;
     exportProjectBtn.disabled = false;
     presentBtn.disabled = false;
+    setScaleBtn.disabled = false;
+    updateSetScaleFlash();
   }catch(err){
     console.error(err);
     showUploadError("Couldn't read that PDF. Try re-exporting it or use a different file.");
@@ -2817,6 +2833,15 @@ calibrateBtn.addEventListener('click', ()=>{
   scaleStatus.textContent = 'Tap the first point…';
   drawOverlay();
 });
+// A topbar shortcut to the same sidebar action -- calibrating the scale is
+// the one thing every other measurement/cost on the plan depends on, so it
+// shouldn't be something you have to scroll the sidebar to find. Flashes
+// gold while a plan is loaded but not yet calibrated, and stops the moment
+// it is, so it can't be missed but also doesn't nag forever.
+function updateSetScaleFlash(){
+  setScaleBtn.classList.toggle('pulse-attention', !!state.pdfBytes && !state.scalePxPerFt);
+}
+setScaleBtn.addEventListener('click', ()=> calibrateBtn.click());
 cancelCalibrateBtn.addEventListener('click', cancelCalibration);
 function cancelCalibration(){
   state.calibrating=false;
@@ -2842,6 +2867,7 @@ confirmCalBtn.addEventListener('click', ()=>{
   cancelCalibrateBtn.style.display='none';
   scaleStatus.textContent = scaleStatusText();
   scaleStatus.classList.add('ok');
+  updateSetScaleFlash();
   addPanel.classList.remove('disabled');
   elementsPanel.classList.remove('disabled');
   titleBlockPanel.classList.remove('disabled');
