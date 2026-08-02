@@ -907,6 +907,7 @@ const FURNITURE_ITEMS = {
   desk:          {name:'Desk',                   label:'Desk (48×24 in)',                     wIn:48, hIn:24},
   sofa_2seat:    {name:'2-seat sofa',             label:'Sofa — 2 seat (60×35 in)',            wIn:60, hIn:35},
   sofa_3seat:    {name:'3-seat sofa',             label:'Sofa — 3 seat (84×35 in)',            wIn:84, hIn:35},
+  sofa_corner:   {name:'Corner sofa',             label:'Corner sofa / sectional (92×92 in)',  wIn:92, hIn:92},
   armchair:      {name:'Armchair',               label:'Armchair (33×34 in)',                  wIn:33, hIn:34},
   dresser:       {name:'Dresser',                label:'Dresser (60×18 in)',                   wIn:60, hIn:18},
   wardrobe:      {name:'Wardrobe',               label:'Wardrobe (48×24 in)',                  wIn:48, hIn:24},
@@ -922,7 +923,7 @@ const FURNITURE_ICONS = {
   bed_twin:'bed', bed_full:'bed', bed_queen:'bed', bed_king:'bed', bed_calking:'bed',
   tv_32:'tv', tv_43:'tv', tv_55:'tv', tv_65:'tv', tv_75:'tv', tv_85:'tv',
   table_side:'table', table_coffee:'table', table_dining4:'table_dining', table_dining6:'table_dining', desk:'desk',
-  sofa_2seat:'sofa', sofa_3seat:'sofa', armchair:'armchair',
+  sofa_2seat:'sofa', sofa_3seat:'sofa', sofa_corner:'sofa_corner', armchair:'armchair',
   dresser:'dresser', wardrobe:'wardrobe',
   fridge:'fridge', kitchen_island:'island',
   bath_vanity:'vanity', toilet:'toilet',
@@ -930,7 +931,7 @@ const FURNITURE_ICONS = {
 };
 const FURNITURE_COLORS = {
   bed:'#DCD3C4', tv:'#20242A', table:'#9C7A54', table_dining:'#9C7A54', desk:'#9C7A54',
-  sofa:'#6E7B8C', armchair:'#6E7B8C', dresser:'#8A7360', wardrobe:'#8A7360',
+  sofa:'#6E7B8C', sofa_corner:'#6E7B8C', armchair:'#6E7B8C', dresser:'#8A7360', wardrobe:'#8A7360',
   fridge:'#C7CDD1', island:'#B9B2A6', vanity:'#C9C2B4', toilet:'#E8ECED',
   power:'#EDE8DC',
 };
@@ -946,7 +947,7 @@ Object.keys(FURNITURE_ITEMS).forEach(key=>{
 // default; items with no meaningful "keep this clear" zone (TVs, power
 // points) are simply left out.
 const CLEARANCE_IN = {
-  bed:24, table:18, table_dining:36, desk:36, sofa:18, armchair:18,
+  bed:24, table:18, table_dining:36, desk:36, sofa:18, sofa_corner:18, armchair:18,
   dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24,
 };
 // Recommended TV viewing distance, per screen diagonal -- the widely used
@@ -2129,9 +2130,9 @@ function runArrangementPass(roomEl, sorted){
       });
     }
 
-    const seatingPlaced = placed.filter(p=>{ const ic=PRESETS[p.presetKey].icon; return ic==='sofa'||ic==='armchair'; });
+    const seatingPlaced = placed.filter(p=>{ const ic=PRESETS[p.presetKey].icon; return ic==='sofa'||ic==='sofa_corner'||ic==='armchair'; });
     if(seatingPlaced.length){
-      const seat = seatingPlaced.find(p=>PRESETS[p.presetKey].icon==='sofa') || seatingPlaced[0];
+      const seat = seatingPlaced.find(p=>{ const ic=PRESETS[p.presetKey].icon; return ic==='sofa'||ic==='sofa_corner'; }) || seatingPlaced[0];
       const seatRad = seat.rotationDeg*Math.PI/180;
       const frontX = -Math.sin(seatRad), frontY = Math.cos(seatRad);
       const forwardPx = seat.hFt*state.scalePxPerFt/2 + gapPx + el.hFt*state.scalePxPerFt/2;
@@ -2174,7 +2175,7 @@ function runArrangementPass(roomEl, sorted){
       // a "correct" spot, not just an empty one.
       let viewingBonusPx2 = 0;
       const icon = PRESETS[el.presetKey].icon;
-      if(icon==='sofa' || icon==='armchair' || icon==='bed'){
+      if(icon==='sofa' || icon==='sofa_corner' || icon==='armchair' || icon==='bed'){
         getTvViewingZones().forEach(z=>{ viewingBonusPx2 += polygonIntersectionAreaPx(footprintPoly, z.poly); });
       }
 
@@ -3877,6 +3878,48 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
       ctx.beginPath(); ctx.moveTo(lx,y+backH); ctx.lineTo(lx,y+h-short*0.03); ctx.stroke();
     }
     roundRectPath(ctx,x,y,w,h,short*0.16);
+    ctx.strokeStyle=shadeColor(baseColor,-0.35); ctx.lineWidth=1.4; ctx.stroke();
+  } else if(icon==='sofa_corner'){
+    // Drawn as an L in its default (unrotated) orientation -- arm along the
+    // top, arm along the left, corner seat where they meet -- the same
+    // rotation handle everything else uses turns it to face any corner.
+    const armDepth = short*0.36;
+    ctx.fillStyle = shadeColor(baseColor,0.05);
+    roundRectPath(ctx,x,y,w,armDepth,short*0.06); ctx.fill();
+    roundRectPath(ctx,x,y,armDepth,h,short*0.06); ctx.fill();
+
+    const backT = armDepth*0.3;
+    ctx.fillStyle = shadeColor(baseColor,-0.2);
+    ctx.fillRect(x,y,w,backT);
+    ctx.fillRect(x,y,backT,h);
+
+    // Arm rests at the two open (non-corner) ends.
+    ctx.fillStyle = shadeColor(baseColor,-0.12);
+    roundRectPath(ctx, x+w-armDepth*0.34, y, armDepth*0.34, armDepth, short*0.1); ctx.fill();
+    roundRectPath(ctx, x, y+h-armDepth*0.34, armDepth, armDepth*0.34, short*0.1); ctx.fill();
+
+    ctx.strokeStyle='rgba(0,0,0,0.16)'; ctx.lineWidth=1.2;
+    const longArmLen = w-armDepth, longArmSeats = Math.max(2, Math.round(longArmLen/(armDepth*1.3)));
+    for(let i=1;i<longArmSeats;i++){
+      const lx = x+armDepth+(longArmLen-armDepth*0.34)*(i/longArmSeats);
+      ctx.beginPath(); ctx.moveTo(lx,y+backT); ctx.lineTo(lx,y+armDepth-short*0.03); ctx.stroke();
+    }
+    const shortArmLen = h-armDepth, shortArmSeats = Math.max(1, Math.round(shortArmLen/(armDepth*1.3)));
+    for(let i=1;i<shortArmSeats;i++){
+      const ly = y+armDepth+(shortArmLen-armDepth*0.34)*(i/shortArmSeats);
+      ctx.beginPath(); ctx.moveTo(x+backT,ly); ctx.lineTo(x+armDepth-short*0.03,ly); ctx.stroke();
+    }
+
+    // A single sharp-cornered outline traced over the two filled arms, so
+    // their overlapping seam doesn't show as a crossing stroke line.
+    ctx.beginPath();
+    ctx.moveTo(x,y);
+    ctx.lineTo(x+w,y);
+    ctx.lineTo(x+w,y+armDepth);
+    ctx.lineTo(x+armDepth,y+armDepth);
+    ctx.lineTo(x+armDepth,y+h);
+    ctx.lineTo(x,y+h);
+    ctx.closePath();
     ctx.strokeStyle=shadeColor(baseColor,-0.35); ctx.lineWidth=1.4; ctx.stroke();
   } else if(icon==='dresser' || icon==='wardrobe'){
     roundRectPath(ctx,x,y,w,h,short*0.06);
