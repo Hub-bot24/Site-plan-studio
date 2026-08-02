@@ -2063,15 +2063,46 @@ function runArrangementPass(roomEl, sorted){
   const unplaced = [];
   let totalConflictPx2 = 0;
 
+  // A coffee (or side) table belongs in the open floor space in front of
+  // whatever seating it goes with -- a sofa preferred, an armchair if
+  // there's no sofa -- not against a wall like everything else. Returns
+  // one candidate spot, already checked to land fully inside the room and
+  // not collide with anything placed so far; null if there's no seating
+  // placed yet, or it genuinely doesn't fit there.
+  function floatingTableCandidate(el){
+    if(el.presetKey!=='table_coffee' && el.presetKey!=='table_side') return null;
+    const seatingPlaced = placed.filter(p=>{ const ic=PRESETS[p.presetKey].icon; return ic==='sofa'||ic==='armchair'; });
+    if(!seatingPlaced.length) return null;
+    const seat = seatingPlaced.find(p=>PRESETS[p.presetKey].icon==='sofa') || seatingPlaced[0];
+    const seatRad = seat.rotationDeg*Math.PI/180;
+    const frontX = -Math.sin(seatRad), frontY = Math.cos(seatRad);
+    const gapPx = 1.5*state.scalePxPerFt; // ~18in, typical coffee-table-to-sofa spacing
+    const forwardPx = seat.hFt*state.scalePxPerFt/2 + gapPx + el.hFt*state.scalePxPerFt/2;
+    const worldX = seat.xPx + frontX*forwardPx;
+    const worldY = seat.yPx + frontY*forwardPx;
+    const rotDeg = seat.rotationDeg;
+
+    const virt = {shape:'rect', id:-1, xPx:worldX, yPx:worldY, wFt:el.wFt, hFt:el.hFt, rotationDeg:rotDeg, presetKey:el.presetKey};
+    const corners = elementToPolygonPoints(virt);
+    const eps = 1;
+    const insideRoom = corners.every(c=>{
+      const dx = c.x-roomEl.xPx, dy = c.y-roomEl.yPx;
+      const lx = dx*Math.cos(rad)+dy*Math.sin(rad), ly = -dx*Math.sin(rad)+dy*Math.cos(rad);
+      return lx>=-halfW-eps && lx<=halfW+eps && ly>=-halfH-eps && ly<=halfH+eps;
+    });
+    if(!insideRoom) return null;
+    const collides = placed.some(other => polygonIntersectionAreaPx(corners, elementToPolygonPoints(other)) > minOverlapPx2);
+    if(collides) return null;
+    return {worldX, worldY, rotDeg};
+  }
+
   sorted.forEach(el=>{
-    let best = null, bestWall = null, bestScore = -Infinity, bestConflictPx2 = 0;
-    ['top','bottom','left','right'].forEach(w=>{
-      wallCandidates(w, el).forEach(p=>{
-      const world = toWorld(p.lx, p.ly);
-      const rotDeg = ((roomEl.rotationDeg + p.rotDeg) % 360 + 360) % 360;
-      // A "what if placed here" stand-in, scored without touching the real
-      // element yet -- lets every wall be judged on equal footing.
-      const virt = {shape:'rect', id:-1, xPx:world.x, yPx:world.y, wFt:el.wFt, hFt:el.hFt, rotationDeg:rotDeg, presetKey:el.presetKey};
+    let best = null, bestScore = -Infinity, bestConflictPx2 = 0;
+
+    // Shared by both wall slots and the floating in-front-of-seating spot,
+    // so collision/clearance/TV-facing logic isn't duplicated between them.
+    function evaluate(worldX, worldY, rotDeg, wallMeta){
+      const virt = {shape:'rect', id:-1, xPx:worldX, yPx:worldY, wFt:el.wFt, hFt:el.hFt, rotationDeg:rotDeg, presetKey:el.presetKey};
       const footprintPoly = elementToPolygonPoints(virt);
 
       // Hard rule: never let two pieces of furniture actually overlap,
@@ -2099,29 +2130,51 @@ function runArrangementPass(roomEl, sorted){
         getTvViewingZones().forEach(z=>{ viewingBonusPx2 += polygonIntersectionAreaPx(footprintPoly, z.poly); });
       }
 
-      const remainingPx = walls[w].lengthPx - (walls[w].leftUsed + walls[w].rightUsed + p.alongPx);
       const scalePx2 = state.scalePxPerFt*state.scalePxPerFt;
-      // Everything converted to roughly "sqft of effect" so the terms
-      // compare sensibly: clearance conflicts matter most, TV-facing
-      // seating is rewarded, and remaining wall room is a light tiebreaker
-      // that spreads furniture across walls when scores are otherwise tied.
-      const score = (viewingBonusPx2 - clearancePenaltyPx2*2)/scalePx2 + (remainingPx/state.scalePxPerFt)*0.03;
-      if(score > bestScore){ bestScore = score; best = p; bestWall = w; bestConflictPx2 = clearancePenaltyPx2; }
+      let score = (viewingBonusPx2 - clearancePenaltyPx2*2)/scalePx2;
+      if(wallMeta){
+        // A light tiebreaker that spreads furniture across walls when
+        // scores are otherwise tied.
+        const remainingPx = walls[wallMeta.wallName].lengthPx - (walls[wallMeta.wallName].leftUsed + walls[wallMeta.wallName].rightUsed + wallMeta.alongPx);
+        score += (remainingPx/state.scalePxPerFt)*0.03;
+      } else {
+        // The floating "in front of the seating" spot for a coffee/side
+        // table is the definitively correct answer whenever it's
+        // geometrically valid (already collision/bounds-checked) -- prefer
+        // it decisively over any wall slot, not just as one more option.
+        score += 1000;
+      }
+      if(score > bestScore){
+        bestScore = score;
+        best = {worldX, worldY, rotDeg, wallMeta};
+        bestConflictPx2 = clearancePenaltyPx2;
+      }
+    }
+
+    ['top','bottom','left','right'].forEach(w=>{
+      wallCandidates(w, el).forEach(p=>{
+        const world = toWorld(p.lx, p.ly);
+        const rotDeg = ((roomEl.rotationDeg + p.rotDeg) % 360 + 360) % 360;
+        evaluate(world.x, world.y, rotDeg, {wallName:w, alongPx:p.alongPx, side:p.side, firstOnWall:p.firstOnWall});
       });
     });
+    const floatCand = floatingTableCandidate(el);
+    if(floatCand) evaluate(floatCand.worldX, floatCand.worldY, floatCand.rotDeg, null);
+
     if(!best){ unplaced.push(el); return; }
-    const world = toWorld(best.lx, best.ly);
-    el.xPx = world.x; el.yPx = world.y;
-    el.rotationDeg = ((roomEl.rotationDeg + best.rotDeg) % 360 + 360) % 360;
-    if(best.firstOnWall){
-      // A centered item eats into both sides' budgets equally, so whatever
-      // gets added next (to either side) correctly starts from its edges.
-      walls[bestWall].leftUsed += best.alongPx/2 + gapPx/2;
-      walls[bestWall].rightUsed += best.alongPx/2 + gapPx/2;
-    } else if(best.side==='left'){
-      walls[bestWall].leftUsed += best.alongPx + gapPx;
-    } else {
-      walls[bestWall].rightUsed += best.alongPx + gapPx;
+    el.xPx = best.worldX; el.yPx = best.worldY; el.rotationDeg = best.rotDeg;
+    if(best.wallMeta){
+      const wm = best.wallMeta;
+      if(wm.firstOnWall){
+        // A centered item eats into both sides' budgets equally, so whatever
+        // gets added next (to either side) correctly starts from its edges.
+        walls[wm.wallName].leftUsed += wm.alongPx/2 + gapPx/2;
+        walls[wm.wallName].rightUsed += wm.alongPx/2 + gapPx/2;
+      } else if(wm.side==='left'){
+        walls[wm.wallName].leftUsed += wm.alongPx + gapPx;
+      } else {
+        walls[wm.wallName].rightUsed += wm.alongPx + gapPx;
+      }
     }
     placed.push(el);
     totalConflictPx2 += bestConflictPx2;
