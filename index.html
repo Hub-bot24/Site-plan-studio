@@ -947,6 +947,34 @@ const CLEARANCE_IN = {
 // showing roughly where seating *should* go, so it's rendered and reasoned
 // about separately.
 const TV_DIAGONAL_IN = { tv_32:32, tv_43:43, tv_55:55, tv_65:65, tv_75:75, tv_85:85 };
+// Preset families ordered smallest to largest -- lets auto-arrange step
+// down to a smaller real-world size (e.g. a Queen instead of a King bed)
+// when the room genuinely can't give the original size its recommended
+// clearance, rather than just leaving it flagged tight.
+const SIZE_FAMILIES = [
+  ['bed_twin','bed_full','bed_queen','bed_king','bed_calking'],
+  ['sofa_2seat','sofa_3seat'],
+  ['table_dining4','table_dining6'],
+  ['tv_32','tv_43','tv_55','tv_65','tv_75','tv_85'],
+];
+function smallerSizeKey(presetKey){
+  for(const family of SIZE_FAMILIES){
+    const i = family.indexOf(presetKey);
+    if(i>0) return family[i-1];
+  }
+  return null;
+}
+// Swaps an element to a smaller size within its own family. Only rewrites
+// the label if it still matches the old size's default name -- a label the
+// user customized by hand (e.g. "Kids room bed") is left alone.
+function applySmallerPreset(el, newPresetKey){
+  const oldItem = FURNITURE_ITEMS[el.presetKey];
+  const newItem = FURNITURE_ITEMS[newPresetKey];
+  if(oldItem && el.label===oldItem.name) el.label = newItem.name;
+  el.presetKey = newPresetKey;
+  el.wFt = newItem.wIn/12;
+  el.hFt = newItem.hIn/12;
+}
 
 /* ============================ DOM refs ============================ */
 const pdfInput = document.getElementById('pdfInput');
@@ -2145,6 +2173,50 @@ function autoArrangeFurniture(roomEl){
   });
   bestSnapshot.forEach(s=>{ s.el.xPx=s.xPx; s.el.yPx=s.yPx; s.el.rotationDeg=s.rotationDeg; });
   return {placedCount: bestPlacedCount, unplaced: bestUnplaced};
+}
+
+// Runs auto-arrange, and if the result still leaves something tighter than
+// its recommended clearance, tries stepping a same-family item down a real
+// size (e.g. King -> Queen -> Full) and re-arranging, keeping the swap only
+// if it actually improves things. Repeats until nothing's left to try or
+// the room is clean, biggest conflicted item first (most likely the actual
+// culprit), and never retries an item whose downsize already failed to help.
+function autoArrangeWithSizeFallback(roomEl){
+  let result = autoArrangeFurniture(roomEl);
+  const downsized = [];
+  const failedIds = new Set();
+  let guard = 0;
+  while(guard++ < 30){
+    const conflicted = getClearanceZones().filter(z=>z.conflict);
+    if(!conflicted.length) break;
+    const conflictedIds = new Set(conflicted.map(z=>z.id));
+    const furniture = currentPageElements().filter(e=>
+      e.id!==roomEl.id && conflictedIds.has(e.id) && !failedIds.has(e.id) && smallerSizeKey(e.presetKey)
+    );
+    if(!furniture.length) break;
+    const el = furniture.slice().sort((a,b)=> (b.wFt*b.hFt)-(a.wFt*a.hFt))[0];
+
+    const prevConflictCount = conflicted.length;
+    const prevUnplaced = result.unplaced.length;
+    const snapshot = {presetKey:el.presetKey, label:el.label, wFt:el.wFt, hFt:el.hFt};
+    const fromName = FURNITURE_ITEMS[el.presetKey].name;
+
+    applySmallerPreset(el, smallerSizeKey(el.presetKey));
+    const newResult = autoArrangeFurniture(roomEl);
+    const newConflictCount = getClearanceZones().filter(z=>z.conflict).length;
+
+    if(newConflictCount < prevConflictCount || newResult.unplaced.length < prevUnplaced){
+      downsized.push({id: el.id, from: fromName, to: FURNITURE_ITEMS[el.presetKey].name});
+      result = newResult;
+      // Left conflicted even at its smaller size -- leave it eligible to
+      // step down again on a later pass through the loop.
+    } else {
+      el.presetKey = snapshot.presetKey; el.label = snapshot.label; el.wFt = snapshot.wFt; el.hFt = snapshot.hFt;
+      result = autoArrangeFurniture(roomEl); // restore the arrangement that matches the original size
+      failedIds.add(el.id);
+    }
+  }
+  return {placedCount: result.placedCount, unplaced: result.unplaced, downsized};
 }
 
 // How full each room outline is -- furniture footprint area vs. the room's
@@ -4937,7 +5009,7 @@ autoArrangeBtn.addEventListener('click', ()=>{
   const roomEl = getElementById(state.selectedId);
   if(!isValidRoomEl(roomEl)) return;
   pushUndo();
-  const {placedCount, unplaced} = autoArrangeFurniture(roomEl);
+  const {placedCount, unplaced, downsized} = autoArrangeWithSizeFallback(roomEl);
   renderElementsList();
   drawOverlay();
   autoArrangeStatus.style.display = 'block';
@@ -4949,6 +5021,12 @@ autoArrangeBtn.addEventListener('click', ()=>{
   let msg = unplaced.length
     ? 'Arranged '+placedCount+' item'+(placedCount===1?'':'s')+' — '+unplaced.length+' didn\'t fit against a wall ('+unplaced.map(nameOf).join(', ')+').'
     : 'Arranged all '+placedCount+' item'+(placedCount===1?'':'s')+' around the room.';
+  // If a same-family size (e.g. Queen instead of King) was the difference
+  // between fitting cleanly and not, say so plainly -- it's a real change
+  // to what's on the plan, not just a repositioning.
+  if(downsized.length){
+    msg += ' Downsized to fit: '+downsized.map(d=>d.from+' → '+d.to).join(', ')+'.';
+  }
   // Everything that fit is still worth flagging by name if the room was
   // too tight to give it its full recommended clearance -- e.g. a bed and
   // wardrobe that genuinely can't both get their normal breathing room in
