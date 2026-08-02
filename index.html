@@ -443,6 +443,10 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="10" rx="2" stroke-dasharray="3 2"/><rect x="7" y="9" width="10" height="6" rx="1"/></svg>
       <span class="btn-label">Clearances</span>
     </button>
+    <button class="btn secondary toggled-on" id="roomSpaceToggleBtn" title="Show/hide a colored border around every room outline (any rectangle used for Auto-arrange) showing how much good open floor space is left — green means plenty of room, amber means it's filling up, red means it's packed.">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/></svg>
+      <span class="btn-label">Room space</span>
+    </button>
     <button class="btn secondary" id="newPlanBtn" style="display:none;">Upload different plan</button>
     <button class="btn secondary" id="undoBtn" title="Undo (Ctrl/Cmd+Z)" disabled>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
@@ -840,6 +844,7 @@ const state = {
   zoom:1,
   showLabels:true,
   showClearances:true,
+  showRoomSpace:true,
   companyName:'',
   companyLogo:null,
   clientName:'',
@@ -1079,6 +1084,12 @@ const clearancesToggleBtn = document.getElementById('clearancesToggleBtn');
 clearancesToggleBtn.addEventListener('click', ()=>{
   state.showClearances = !state.showClearances;
   clearancesToggleBtn.classList.toggle('toggled-on', state.showClearances);
+  drawOverlay();
+});
+const roomSpaceToggleBtn = document.getElementById('roomSpaceToggleBtn');
+roomSpaceToggleBtn.addEventListener('click', ()=>{
+  state.showRoomSpace = !state.showRoomSpace;
+  roomSpaceToggleBtn.classList.toggle('toggled-on', state.showRoomSpace);
   drawOverlay();
 });
 
@@ -1986,6 +1997,57 @@ function autoArrangeFurniture(roomEl){
     placedCount++;
   });
   return {placedCount, unplaced};
+}
+
+// How full each room outline is -- furniture footprint area vs. the room's
+// own floor area, bucketed into good/ok/tight and drawn as a colored
+// border, so it's obvious at a glance where there's still good open space
+// to add more without opening the sidebar or running Auto-arrange again.
+function getRoomSpaceBorders(){
+  if(!state.scalePxPerFt) return [];
+  const rooms = currentPageElements().filter(e=>isValidRoomEl(e));
+  if(!rooms.length) return [];
+  const furniture = currentPageElements().filter(e=>PRESETS[e.presetKey] && PRESETS[e.presetKey].icon);
+  return rooms.map(room=>{
+    const roomAreaFt = room.wFt*room.hFt;
+    const roomPoly = elementToPolygonPoints(room);
+    const occupiedFt = furniture.reduce((sum,el)=>
+      pointInPolygon(el.xPx, el.yPx, roomPoly) ? sum + el.wFt*el.hFt : sum
+    , 0);
+    const fullness = roomAreaFt>0 ? occupiedFt/roomAreaFt : 0;
+    const level = fullness < 0.35 ? 'good' : (fullness < 0.6 ? 'ok' : 'tight');
+    return {id:room.id, poly:roomPoly, fullness, level};
+  });
+}
+const ROOM_SPACE_COLORS = {
+  good:  {stroke:'rgba(108,143,99,0.9)',  text:'#8FBF82'},
+  ok:    {stroke:'rgba(181,147,76,0.9)',  text:'#D8BC7C'},
+  tight: {stroke:'rgba(196,100,92,0.9)',  text:'#E29089'},
+};
+const ROOM_SPACE_TEXT = {
+  good:  'Plenty of open floor space',
+  ok:    'Filling up',
+  tight: 'Tight — little open floor space left',
+};
+function drawRoomSpaceBorders(ctx){
+  if(!state.showRoomSpace) return;
+  const borders = getRoomSpaceBorders();
+  if(!borders.length) return;
+  ctx.save();
+  ctx.lineWidth = 3/Math.max(state.zoom,0.01);
+  borders.forEach(({poly, level})=>{
+    ctx.strokeStyle = ROOM_SPACE_COLORS[level].stroke;
+    ctx.beginPath();
+    poly.forEach((p,i)=> i===0 ? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y));
+    ctx.closePath();
+    ctx.stroke();
+  });
+  ctx.restore();
+  borders.forEach(({poly, level, fullness})=>{
+    const top = poly.reduce((a,p)=> p.y<a.y ? p : a, poly[0]);
+    const text = Math.round(fullness*100)+'% full — '+ROOM_SPACE_TEXT[level];
+    drawLabelChip(ctx, top.x, top.y-14/Math.max(state.zoom,0.01), text, ROOM_SPACE_COLORS[level].text);
+  });
 }
 
 function updateUnitLabels(){
@@ -3104,6 +3166,7 @@ function requestMagnifierUpdate(){
 }
 function drawOverlay(){
   ctxOverlay.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
+  drawRoomSpaceBorders(ctxOverlay);
   drawClearanceZones(ctxOverlay);
   drawTvViewingZones(ctxOverlay);
   zOrderedElements().forEach(el=>drawElement(ctxOverlay, el, el.id===state.selectedId));
