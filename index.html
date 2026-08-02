@@ -1945,7 +1945,12 @@ function isValidRoomEl(el){
   const isFurniture = el && PRESETS[el.presetKey] && PRESETS[el.presetKey].icon;
   return !!el && el.shape==='rect' && el.wFt>0 && el.hFt>0 && !isFurniture;
 }
-function autoArrangeFurniture(roomEl){
+// One full greedy placement pass for a given furniture ORDER -- mutates the
+// real elements as it goes (so getTvViewingZones() sees accurate live
+// positions for anything already placed this pass), and reports how much
+// total clearance-zone conflict the resulting arrangement has, so multiple
+// orders can be tried and the least-conflicted one kept.
+function runArrangementPass(roomEl, sorted){
   const halfW = roomEl.wFt*state.scalePxPerFt/2;
   const halfH = roomEl.hFt*state.scalePxPerFt/2;
   const rad = roomEl.rotationDeg*Math.PI/180;
@@ -1954,17 +1959,6 @@ function autoArrangeFurniture(roomEl){
     y: roomEl.yPx + lx*Math.sin(rad) + ly*Math.cos(rad),
   });
   const gapPx = 0.5*state.scalePxPerFt; // 6in breathing room between adjacent wall items
-
-  const furniture = currentPageElements().filter(e=>
-    e.id!==roomEl.id && e.shape==='rect' && !e.isCutout && PRESETS[e.presetKey] && PRESETS[e.presetKey].icon
-  );
-  // TVs first (tier 0) regardless of their footprint area -- a TV is
-  // physically small/shallow but functionally anchors the room, and seating
-  // placed later needs an already-positioned TV to react to.
-  const placementTier = el => PRESETS[el.presetKey].icon==='tv' ? 0 : 1;
-  const sorted = furniture.slice().sort((a,b)=>
-    placementTier(a)-placementTier(b) || (b.wFt*b.hFt)-(a.wFt*a.hFt)
-  );
 
   // Each wall fills outward from its own midpoint in both directions, so
   // the first (biggest) item on a wall sits centered rather than jammed
@@ -2039,9 +2033,10 @@ function autoArrangeFurniture(roomEl){
   const minOverlapPx2 = 0.15 * state.scalePxPerFt * state.scalePxPerFt;
   const placed = []; // real elements, already moved to their final spot
   const unplaced = [];
+  let totalConflictPx2 = 0;
 
   sorted.forEach(el=>{
-    let best = null, bestWall = null, bestScore = -Infinity;
+    let best = null, bestWall = null, bestScore = -Infinity, bestConflictPx2 = 0;
     ['top','bottom','left','right'].forEach(w=>{
       wallCandidates(w, el).forEach(p=>{
       const world = toWorld(p.lx, p.ly);
@@ -2083,7 +2078,7 @@ function autoArrangeFurniture(roomEl){
       // seating is rewarded, and remaining wall room is a light tiebreaker
       // that spreads furniture across walls when scores are otherwise tied.
       const score = (viewingBonusPx2 - clearancePenaltyPx2*2)/scalePx2 + (remainingPx/state.scalePxPerFt)*0.03;
-      if(score > bestScore){ bestScore = score; best = p; bestWall = w; }
+      if(score > bestScore){ bestScore = score; best = p; bestWall = w; bestConflictPx2 = clearancePenaltyPx2; }
       });
     });
     if(!best){ unplaced.push(el); return; }
@@ -2101,8 +2096,55 @@ function autoArrangeFurniture(roomEl){
       walls[bestWall].rightUsed += best.alongPx + gapPx;
     }
     placed.push(el);
+    totalConflictPx2 += bestConflictPx2;
   });
-  return {placedCount: placed.length, unplaced};
+  return {placedCount: placed.length, unplaced, totalConflictPx2};
+}
+
+// Greedy placement is order-sensitive -- which item gets first pick of a
+// wall changes what's left for everything after it. Rather than committing
+// to one fixed order, this tries a few genuinely different strategies
+// (biggest first, smallest first, most-demanding-clearance first) and keeps
+// whichever full arrangement ends up with the fewest unplaced items and the
+// least total clearance-zone conflict, instead of just the first attempt.
+function autoArrangeFurniture(roomEl){
+  const furniture = currentPageElements().filter(e=>
+    e.id!==roomEl.id && e.shape==='rect' && !e.isCutout && PRESETS[e.presetKey] && PRESETS[e.presetKey].icon
+  );
+  if(!furniture.length) return {placedCount:0, unplaced:[]};
+
+  const original = furniture.map(el=>({el, xPx:el.xPx, yPx:el.yPx, rotationDeg:el.rotationDeg}));
+  function restoreOriginal(){ original.forEach(o=>{ o.el.xPx=o.xPx; o.el.yPx=o.yPx; o.el.rotationDeg=o.rotationDeg; }); }
+
+  // TVs always go first (tier 0) in every strategy, regardless of their
+  // footprint area -- a TV is physically small/shallow but functionally
+  // anchors the room, and seating needs an already-positioned TV to react to.
+  const placementTier = el => PRESETS[el.presetKey].icon==='tv' ? 0 : 1;
+  const areaOf = el => el.wFt*el.hFt;
+  const strategies = [
+    (a,b)=> placementTier(a)-placementTier(b) || areaOf(b)-areaOf(a),
+    (a,b)=> placementTier(a)-placementTier(b) || areaOf(a)-areaOf(b),
+    (a,b)=> placementTier(a)-placementTier(b) || (getClearanceFt(b)-getClearanceFt(a)) || areaOf(b)-areaOf(a),
+  ];
+
+  let bestScore = Infinity, bestSnapshot = null, bestPlacedCount = 0, bestUnplaced = [];
+  strategies.forEach(cmp=>{
+    restoreOriginal();
+    const ordered = furniture.slice().sort(cmp);
+    const {placedCount, unplaced, totalConflictPx2} = runArrangementPass(roomEl, ordered);
+    const scalePx2 = state.scalePxPerFt*state.scalePxPerFt;
+    // An unplaced item is always worse than any amount of tightness --
+    // getting everything in the room, even snugly, beats leaving something out.
+    const score = unplaced.length*1e6 + totalConflictPx2/scalePx2;
+    if(score < bestScore){
+      bestScore = score;
+      bestSnapshot = furniture.map(el=>({el, xPx:el.xPx, yPx:el.yPx, rotationDeg:el.rotationDeg}));
+      bestPlacedCount = placedCount;
+      bestUnplaced = unplaced;
+    }
+  });
+  bestSnapshot.forEach(s=>{ s.el.xPx=s.xPx; s.el.yPx=s.yPx; s.el.rotationDeg=s.rotationDeg; });
+  return {placedCount: bestPlacedCount, unplaced: bestUnplaced};
 }
 
 // How full each room outline is -- furniture footprint area vs. the room's
@@ -4899,13 +4941,27 @@ autoArrangeBtn.addEventListener('click', ()=>{
   renderElementsList();
   drawOverlay();
   autoArrangeStatus.style.display = 'block';
+  const nameOf = e => e.label || PRESETS[e.presetKey].label;
   if(placedCount===0){
     autoArrangeStatus.textContent = 'No furniture on this page to arrange yet — add some, then try again.';
-  } else if(unplaced.length){
-    autoArrangeStatus.textContent = 'Arranged '+placedCount+' item'+(placedCount===1?'':'s')+' — '+unplaced.length+' didn\'t fit against a wall ('+unplaced.map(e=>e.label||PRESETS[e.presetKey].label).join(', ')+').';
-  } else {
-    autoArrangeStatus.textContent = 'Arranged all '+placedCount+' item'+(placedCount===1?'':'s')+' around the room.';
+    return;
   }
+  let msg = unplaced.length
+    ? 'Arranged '+placedCount+' item'+(placedCount===1?'':'s')+' — '+unplaced.length+' didn\'t fit against a wall ('+unplaced.map(nameOf).join(', ')+').'
+    : 'Arranged all '+placedCount+' item'+(placedCount===1?'':'s')+' around the room.';
+  // Everything that fit is still worth flagging by name if the room was
+  // too tight to give it its full recommended clearance -- e.g. a bed and
+  // wardrobe that genuinely can't both get their normal breathing room in
+  // a room this size, not just an unlabeled red rectangle on the canvas.
+  const conflictNames = new Set();
+  getClearanceZones().filter(z=>z.conflict).forEach(z=>{
+    const el = getElementById(z.id);
+    if(el) conflictNames.add(nameOf(el));
+  });
+  if(conflictNames.size){
+    msg += ' Tighter than the recommended clearance for this room size: '+Array.from(conflictNames).join(', ')+'.';
+  }
+  autoArrangeStatus.textContent = msg;
 });
 
 /* ============================ Title block inputs ============================ */
