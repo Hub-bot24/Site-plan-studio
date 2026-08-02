@@ -1975,50 +1975,62 @@ function autoArrangeFurniture(roomEl){
     left:   { lengthPx: halfH*2, depthAvail: halfW*2, leftUsed:0, rightUsed:0 },
     right:  { lengthPx: halfH*2, depthAvail: halfW*2, leftUsed:0, rightUsed:0 },
   };
-  function tryWall(wallName, el){
+  // Every workable spot along a wall for this item -- both the "next slot
+  // on the left" and "next slot on the right" (not just whichever side
+  // currently has less used), so a conflict on one side doesn't rule out a
+  // perfectly good spot on the other. A single item's original single-slot
+  // version missed real conflict-free spots this way: e.g. a big bed on one
+  // wall could still leave the FAR end of an adjacent wall clear, but only
+  // trying "the next slot from whichever side is emptier" could land right
+  // in the bed's clearance zone instead of dodging to the free end.
+  function wallCandidates(wallName, el){
     const wall = walls[wallName];
     const alongPx = el.wFt*state.scalePxPerFt;
     const depthPx = el.hFt*state.scalePxPerFt;
-    if(depthPx > wall.depthAvail) return null;
-    if(alongPx > wall.lengthPx) return null;
+    if(depthPx > wall.depthAvail) return [];
+    if(alongPx > wall.lengthPx) return [];
     const halfLen = wall.lengthPx/2;
-    let side, centerAlong, firstOnWall;
+
+    function build(side, centerAlong, firstOnWall){
+      let lx,ly,rotDeg;
+      if(wallName==='top'){ lx=centerAlong; ly=-halfH+depthPx/2; rotDeg=0; }
+      else if(wallName==='bottom'){ lx=centerAlong; ly=halfH-depthPx/2; rotDeg=180; }
+      else if(wallName==='left'){ lx=-halfW+depthPx/2; ly=centerAlong; rotDeg=270; }
+      else { lx=halfW-depthPx/2; ly=centerAlong; rotDeg=90; }
+
+      // Safety net, independent of the wall-budget bookkeeping above:
+      // verify this candidate's actual (rotated) footprint stays fully
+      // inside the room, regardless of any edge case in the budget math.
+      const rad2 = rotDeg*Math.PI/180;
+      const corners = [[-alongPx/2,-depthPx/2],[alongPx/2,-depthPx/2],[alongPx/2,depthPx/2],[-alongPx/2,depthPx/2]].map(([cx,cy])=>({
+        x: lx + cx*Math.cos(rad2) - cy*Math.sin(rad2),
+        y: ly + cx*Math.sin(rad2) + cy*Math.cos(rad2),
+      }));
+      const eps = 1;
+      const fits = corners.every(c => c.x>=-halfW-eps && c.x<=halfW+eps && c.y>=-halfH-eps && c.y<=halfH+eps);
+      if(!fits) return null;
+      return {lx, ly, rotDeg, alongPx, side, firstOnWall};
+    }
+
     if(wall.leftUsed===0 && wall.rightUsed===0){
       // Nothing on this wall yet -- center the first item across the
       // midpoint rather than offsetting it to one side. Offsetting would
       // otherwise only let each side grow up to half the wall's length,
       // which is wrong for a single item bigger than that (e.g. a bed
       // spanning most of an 8ft wall) even though it obviously fits.
-      firstOnWall = true;
-      side = 'left';
-      centerAlong = 0;
-    } else {
-      firstOnWall = false;
-      side = wall.leftUsed <= wall.rightUsed ? 'left' : 'right';
-      const used = side==='left' ? wall.leftUsed : wall.rightUsed;
-      if(used + alongPx > halfLen) return null;
-      centerAlong = side==='left' ? -(used + alongPx/2) : (used + alongPx/2);
+      const c = build('left', 0, true);
+      return c ? [c] : [];
     }
-    let lx,ly,rotDeg;
-    if(wallName==='top'){ lx=centerAlong; ly=-halfH+depthPx/2; rotDeg=0; }
-    else if(wallName==='bottom'){ lx=centerAlong; ly=halfH-depthPx/2; rotDeg=180; }
-    else if(wallName==='left'){ lx=-halfW+depthPx/2; ly=centerAlong; rotDeg=270; }
-    else { lx=halfW-depthPx/2; ly=centerAlong; rotDeg=90; }
-
-    // Safety net, independent of the wall-budget bookkeeping above: verify
-    // this candidate's actual (rotated) footprint stays fully inside the
-    // room. Guarantees nothing can ever end up poking out through a wall,
-    // even if some edge case in the budget math above is wrong.
-    const rad2 = rotDeg*Math.PI/180;
-    const corners = [[-alongPx/2,-depthPx/2],[alongPx/2,-depthPx/2],[alongPx/2,depthPx/2],[-alongPx/2,depthPx/2]].map(([cx,cy])=>({
-      x: lx + cx*Math.cos(rad2) - cy*Math.sin(rad2),
-      y: ly + cx*Math.sin(rad2) + cy*Math.cos(rad2),
-    }));
-    const eps = 1;
-    const fits = corners.every(c => c.x>=-halfW-eps && c.x<=halfW+eps && c.y>=-halfH-eps && c.y<=halfH+eps);
-    if(!fits) return null;
-
-    return {lx, ly, rotDeg, alongPx, side, firstOnWall};
+    const out = [];
+    if(wall.leftUsed + alongPx <= halfLen){
+      const c = build('left', -(wall.leftUsed + alongPx/2), false);
+      if(c) out.push(c);
+    }
+    if(wall.rightUsed + alongPx <= halfLen){
+      const c = build('right', wall.rightUsed + alongPx/2, false);
+      if(c) out.push(c);
+    }
+    return out;
   }
 
   // A real overlap threshold in px^2 (~0.15 sqft), same convention used by
@@ -2031,8 +2043,7 @@ function autoArrangeFurniture(roomEl){
   sorted.forEach(el=>{
     let best = null, bestWall = null, bestScore = -Infinity;
     ['top','bottom','left','right'].forEach(w=>{
-      const p = tryWall(w, el);
-      if(!p) return;
+      wallCandidates(w, el).forEach(p=>{
       const world = toWorld(p.lx, p.ly);
       const rotDeg = ((roomEl.rotationDeg + p.rotDeg) % 360 + 360) % 360;
       // A "what if placed here" stand-in, scored without touching the real
@@ -2073,6 +2084,7 @@ function autoArrangeFurniture(roomEl){
       // that spreads furniture across walls when scores are otherwise tied.
       const score = (viewingBonusPx2 - clearancePenaltyPx2*2)/scalePx2 + (remainingPx/state.scalePxPerFt)*0.03;
       if(score > bestScore){ bestScore = score; best = p; bestWall = w; }
+      });
     });
     if(!best){ unplaced.push(el); return; }
     const world = toWorld(best.lx, best.ly);
