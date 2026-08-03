@@ -364,6 +364,29 @@
   .gallery-tile canvas{width:48px;height:48px;border-radius:7px;}
   .gallery-tile span{font-size:10.5px;color:var(--ink-dim);text-align:center;line-height:1.25;}
   .gallery-tile.selected span{color:var(--ink);}
+
+  /* ---------- 3D Preview ---------- */
+  #preview3dOverlay{
+    position:fixed;inset:0;z-index:200;
+    background:#0B1D34;
+    display:none;flex-direction:column;
+  }
+  #preview3dOverlay.visible{display:flex;}
+  #preview3dHeader{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;border-bottom:1px solid var(--line);flex-shrink:0;
+    background:linear-gradient(180deg, #133055 0%, var(--navy-panel) 100%);
+  }
+  #preview3dHeader h3{margin:0;font-size:14px;font-weight:700;color:var(--ink);}
+  #preview3dHint{font-size:12px;color:var(--ink-dim);}
+  #preview3dBody{flex:1;position:relative;min-height:0;}
+  #preview3dCanvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;}
+  #preview3dCanvas:active{cursor:grabbing;}
+  #preview3dLoading{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--ink-dim);font-family:'Space Mono',monospace;font-size:13px;
+    pointer-events:none;
+  }
   .row2{display:flex;gap:8px;}
   .row2 .field{flex:1;}
   .helptext{font-size:12px;color:var(--ink-dim);line-height:1.5;margin:0 0 10px 0;}
@@ -515,6 +538,10 @@
       <button class="btn secondary" id="presentBtn" disabled title="Presentation view — hide all the editing chrome for a clean, full-screen look at just the plan (great for showing a client)">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
         <span class="btn-label">Present</span>
+      </button>
+      <button class="btn secondary" id="preview3dBtn" disabled title="3D Preview — an orbitable 3D view of your plan, walls and materials extruded to real height. Drag to rotate, scroll to zoom.">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7Z"/><path d="M3 7l9 5 9-5"/><path d="M12 12v10"/></svg>
+        <span class="btn-label">3D Preview</span>
       </button>
       <button class="btn secondary" id="exportBtn" disabled>Export PNG</button>
     </div>
@@ -842,6 +869,21 @@
   </div>
 </div>
 
+<div id="preview3dOverlay">
+  <div id="preview3dHeader">
+    <h3>3D Preview</h3>
+    <span id="preview3dHint">Drag to rotate &middot; scroll or pinch to zoom &middot; right-drag to pan</span>
+    <button type="button" id="close3dPreviewBtn" class="icnbtn" title="Close">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div id="preview3dBody">
+    <canvas id="preview3dCanvas"></canvas>
+    <div id="preview3dLoading">Building 3D scene…</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
@@ -1027,6 +1069,7 @@ const newPlanBtn = document.getElementById('newPlanBtn');
 const exportBtn = document.getElementById('exportBtn');
 const exportPdfBtn = document.getElementById('exportPdfBtn');
 const presentBtn = document.getElementById('presentBtn');
+const preview3dBtn = document.getElementById('preview3dBtn');
 const exitPresentBtn = document.getElementById('exitPresentBtn');
 const appEl = document.getElementById('app');
 const zoomBar = document.getElementById('zoomBar');
@@ -1543,6 +1586,7 @@ async function applyLoadedProjectRecord(rec, name){
   exportPdfBtn.disabled = false;
   exportProjectBtn.disabled = false;
   presentBtn.disabled = false;
+  preview3dBtn.disabled = false;
   setScaleBtn.disabled = false;
   updateSetScaleFlash();
 
@@ -2694,6 +2738,8 @@ newPlanBtn.addEventListener('click', ()=>{
   exportPdfBtn.disabled = true;
   exportProjectBtn.disabled = true;
   presentBtn.disabled = true;
+  preview3dBtn.disabled = true;
+  close3DPreview();
   setPresentMode(false);
   pdfInput.value='';
   state.pdf = null;
@@ -2761,6 +2807,7 @@ async function loadFile(file){
     exportPdfBtn.disabled = false;
     exportProjectBtn.disabled = false;
     presentBtn.disabled = false;
+    preview3dBtn.disabled = false;
     setScaleBtn.disabled = false;
     updateSetScaleFlash();
   }catch(err){
@@ -5927,6 +5974,357 @@ exportProposalBtn.addEventListener('click', async ()=>{
   link.href = url;
   link.click();
   URL.revokeObjectURL(url);
+});
+
+/* ============================ 3D Preview ============================ */
+// A "simple" orbitable 3D view, not a full walkthrough: every placed
+// element gets extruded to a real-world height and rendered from outside,
+// reusing the exact same 2D fillMaterial() renders (baked to a canvas
+// texture) for the top face of ground-level materials -- so all the
+// realism work already done on the 2D textures carries straight over
+// instead of needing a second, parallel set of 3D-only textures.
+const preview3dOverlay = document.getElementById('preview3dOverlay');
+const preview3dCanvas = document.getElementById('preview3dCanvas');
+const preview3dLoading = document.getElementById('preview3dLoading');
+const close3dPreviewBtn = document.getElementById('close3dPreviewBtn');
+
+const WALL_HEIGHT_FT_3D = 8;
+const AREA_HEIGHT_FT_3D = {
+  deck:0.3, patio:0.2, concrete:0.2, gravel:0.15, lawn:0.1, turf:0.15,
+  gardenbed:0.25, pool:0.15, custom:0.2,
+};
+const ROOF_PRESETS_3D = new Set(['roof_tile','roof_metal','roof_shingle']);
+const FURNITURE_HEIGHT_FT_3D = {
+  bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
+  sofa:2.6, sofa_corner:2.6, armchair:2.7,
+  dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, toilet:1.3,
+};
+const HEIGHT_OVERRIDES_FT_3D = { table_coffee:1.5, table_side:2.3 };
+function furnitureHeightFt3D(presetKey, icon){
+  if(HEIGHT_OVERRIDES_FT_3D[presetKey]!=null) return HEIGHT_OVERRIDES_FT_3D[presetKey];
+  return FURNITURE_HEIGHT_FT_3D[icon] != null ? FURNITURE_HEIGHT_FT_3D[icon] : 2.2;
+}
+
+const state3d = {
+  renderer:null, scene:null, camera:null, animId:null,
+  target:{x:0,y:0,z:0}, radius:40, theta:Math.PI/4, phi:Math.PI/3.2,
+  _teardown:null,
+};
+
+function open3DPreview(){
+  if(!state.scalePxPerFt){
+    alert('Calibrate the scale first (see step 02 in the sidebar), then you can open the 3D preview.');
+    return;
+  }
+  if(typeof THREE === 'undefined'){
+    alert("The 3D preview library didn't load (no internet connection?). Try again once you're back online.");
+    return;
+  }
+  preview3dOverlay.classList.add('visible');
+  preview3dLoading.style.display='flex';
+  preview3dLoading.textContent = 'Building 3D scene…';
+  requestAnimationFrame(()=>{
+    try{
+      init3DScene();
+      preview3dLoading.style.display='none';
+    }catch(err){
+      console.error(err);
+      preview3dLoading.textContent = 'Could not build the 3D preview.';
+    }
+  });
+}
+function close3DPreview(){
+  if(!preview3dOverlay.classList.contains('visible')) return;
+  preview3dOverlay.classList.remove('visible');
+  if(state3d.animId){ cancelAnimationFrame(state3d.animId); state3d.animId=null; }
+  teardown3DInteraction();
+  window.removeEventListener('resize', resize3DCanvas);
+  if(state3d.renderer){
+    dispose3DSceneObjects(state3d.scene);
+    state3d.renderer.dispose();
+    state3d.renderer = null;
+  }
+  state3d.scene = null;
+  state3d.camera = null;
+}
+function dispose3DSceneObjects(scene){
+  if(!scene) return;
+  scene.traverse(obj=>{
+    if(obj.geometry) obj.geometry.dispose();
+    if(obj.material){
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      mats.forEach(m=>{ if(m.map) m.map.dispose(); m.dispose(); });
+    }
+  });
+}
+
+function ftPos3D(el, groundWFt, groundHFt){
+  return {
+    x: el.xPx/state.scalePxPerFt - groundWFt/2,
+    z: el.yPx/state.scalePxPerFt - groundHFt/2,
+  };
+}
+// Renders the element's own material (the same fillMaterial() used on the
+// 2D canvas) onto a small offscreen canvas and returns it as a texture --
+// the ground-level 3D faces literally reuse the 2D texture work.
+function materialTextureFor3D(presetKey, color, pxW, pxH){
+  const canvas = document.createElement('canvas');
+  const res = 128;
+  const aspect = pxW>0 && pxH>0 ? pxW/pxH : 1;
+  canvas.width = aspect>=1 ? res : Math.max(16, Math.round(res*aspect));
+  canvas.height = aspect>=1 ? Math.max(16, Math.round(res/aspect)) : res;
+  const ctx = canvas.getContext('2d');
+  const bounds = {minX:0, maxX:canvas.width, minY:0, maxY:canvas.height};
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0,0,canvas.width,canvas.height);
+  fillMaterial(ctx, presetKey, bounds, color);
+  ctx.restore();
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
+function build3DFurnitureMesh(el, preset){
+  if(el.shape!=='rect' || preset.icon==='power') return null;
+  const baseColor = el.color || preset.color || '#B5934C';
+  const heightFt = furnitureHeightFt3D(el.presetKey, preset.icon);
+  const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
+  const mesh = new THREE.Mesh(geo, mat);
+  const baseY = preset.icon==='tv' ? 2.6 : 0; // TVs read as wall-mounted, floating at a sensible height
+  mesh.position.set(el.xPx/state.scalePxPerFt, baseY+heightFt/2, el.yPx/state.scalePxPerFt);
+  mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return mesh;
+}
+function build3DTreeMesh(el, groundWFt, groundHFt){
+  const pos = ftPos3D(el, groundWFt, groundHFt);
+  const canopyR = Math.max(1, (el.dFt||6)/2);
+  const trunkH = Math.min(4, canopyR*0.8);
+  const canopyH = Math.max(4, canopyR*1.6);
+  const group = new THREE.Group();
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(canopyR*0.09, canopyR*0.12, trunkH, 10),
+    new THREE.MeshStandardMaterial({color:0x6B4A32, roughness:1})
+  );
+  trunk.position.set(pos.x, trunkH/2, pos.z);
+  group.add(trunk);
+  const canopy = new THREE.Mesh(
+    new THREE.SphereGeometry(canopyR, 14, 10),
+    new THREE.MeshStandardMaterial({color:new THREE.Color('#4A6B44'), roughness:1})
+  );
+  canopy.scale.y = canopyH/(canopyR*2);
+  canopy.position.set(pos.x, trunkH+canopyH*0.4, pos.z);
+  group.add(canopy);
+  return group;
+}
+function build3DPathMesh(el, groundWFt, groundHFt){
+  const pts = el.points;
+  if(!pts || pts.length<2) return null;
+  const isHedge = el.presetKey==='hedge';
+  const heightFt = isHedge ? 3.5 : 3.0;
+  const widthFt = isHedge ? HEDGE_WIDTH_FT : 0.15;
+  const color = isHedge ? '#4A7A3E' : (el.color || '#D8DEE5');
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(color), roughness: isHedge?1:0.6});
+  for(let i=0;i<pts.length-1;i++){
+    const a = pts[i], b = pts[i+1];
+    const ax = a.x/state.scalePxPerFt - groundWFt/2, az = a.y/state.scalePxPerFt - groundHFt/2;
+    const bx = b.x/state.scalePxPerFt - groundWFt/2, bz = b.y/state.scalePxPerFt - groundHFt/2;
+    const dx = bx-ax, dz = bz-az;
+    const segLen = Math.hypot(dx,dz);
+    if(segLen<0.01) continue;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(segLen, heightFt, widthFt), mat);
+    mesh.position.set((ax+bx)/2, heightFt/2, (az+bz)/2);
+    mesh.rotation.y = -Math.atan2(dz, dx);
+    group.add(mesh);
+  }
+  return group;
+}
+function build3DAreaMesh(el, preset, groundWFt, groundHFt){
+  const baseColor = el.color || preset.color || '#B5934C';
+  const isRoof = ROOF_PRESETS_3D.has(el.presetKey);
+  const isWall = el.presetKey==='clad_stone';
+  let heightFt = AREA_HEIGHT_FT_3D[el.presetKey] != null ? AREA_HEIGHT_FT_3D[el.presetKey] : 0.2;
+  let baseY = 0;
+  if(isRoof) baseY = WALL_HEIGHT_FT_3D;
+  if(isWall){ heightFt = WALL_HEIGHT_FT_3D; baseY = 0; }
+
+  if(el.shape==='polygon'){
+    if(!el.points || el.points.length<3) return null;
+    const cx = el.points.reduce((s,p)=>s+p.x,0)/el.points.length;
+    const cy = el.points.reduce((s,p)=>s+p.y,0)/el.points.length;
+    const shape = new THREE.Shape(el.points.map(p=>new THREE.Vector2(
+      (p.x-cx)/state.scalePxPerFt, -(p.y-cy)/state.scalePxPerFt
+    )));
+    const geo = new THREE.ExtrudeGeometry(shape, {depth:heightFt, bevelEnabled:false});
+    geo.rotateX(-Math.PI/2);
+    geo.translate(0, heightFt, 0);
+    const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.9});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, baseY, cy/state.scalePxPerFt - groundHFt/2);
+    return mesh;
+  }
+
+  let wFt, hFt, geo, faceMats;
+  const texTop = materialTextureFor3D(el.presetKey, baseColor,
+    (el.shape==='circle' ? el.dFt : el.wFt)*40, (el.shape==='circle' ? el.dFt : el.hFt)*40);
+  const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.9});
+  const topMat = new THREE.MeshStandardMaterial({map:texTop, roughness:0.85});
+  if(el.shape==='rect'){
+    wFt=el.wFt; hFt=el.hFt;
+    geo = new THREE.BoxGeometry(wFt, heightFt, hFt);
+    faceMats = [sideMat, sideMat, topMat, sideMat, sideMat, sideMat];
+  } else if(el.shape==='circle'){
+    wFt=hFt=el.dFt;
+    geo = new THREE.CylinderGeometry(el.dFt/2, el.dFt/2, heightFt, 28);
+    faceMats = [sideMat, topMat, sideMat];
+  } else {
+    return null;
+  }
+  const mesh = new THREE.Mesh(geo, faceMats);
+  const pos = ftPos3D(el, groundWFt, groundHFt);
+  mesh.position.set(pos.x, baseY+heightFt/2, pos.z);
+  if(el.shape==='rect') mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return mesh;
+}
+function build3DElementMesh(el, groundWFt, groundHFt){
+  const preset = PRESETS[el.presetKey];
+  if(!preset) return null;
+  if(preset.icon) return build3DFurnitureMesh(el, preset);
+  if(el.presetKey==='tree') return build3DTreeMesh(el, groundWFt, groundHFt);
+  if(el.shape==='path') return build3DPathMesh(el, groundWFt, groundHFt);
+  return build3DAreaMesh(el, preset, groundWFt, groundHFt);
+}
+
+function updateCamera3D(){
+  const {radius, theta, phi, target} = state3d;
+  const x = target.x + radius*Math.sin(phi)*Math.sin(theta);
+  const y = target.y + radius*Math.cos(phi);
+  const z = target.z + radius*Math.sin(phi)*Math.cos(theta);
+  state3d.camera.position.set(x,y,z);
+  state3d.camera.lookAt(target.x, target.y, target.z);
+}
+function resize3DCanvas(){
+  if(!state3d.renderer) return;
+  const bodyEl = document.getElementById('preview3dBody');
+  const w = Math.max(1,bodyEl.clientWidth), h = Math.max(1,bodyEl.clientHeight);
+  state3d.renderer.setSize(w, h, false);
+  state3d.camera.aspect = w/h;
+  state3d.camera.updateProjectionMatrix();
+}
+function setup3DInteraction(){
+  const canvas = preview3dCanvas;
+  let dragging = null;
+  const onPointerDown = (e)=>{
+    dragging = { x:e.clientX, y:e.clientY, pan: e.button===2 || e.shiftKey };
+    canvas.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = (e)=>{
+    if(!dragging) return;
+    const dx = e.clientX-dragging.x, dy = e.clientY-dragging.y;
+    dragging.x = e.clientX; dragging.y = e.clientY;
+    if(dragging.pan){
+      const panSpeed = state3d.radius*0.0016;
+      const camDir = new THREE.Vector3();
+      state3d.camera.getWorldDirection(camDir);
+      const right = new THREE.Vector3().crossVectors(camDir, state3d.camera.up).normalize();
+      const up = new THREE.Vector3().crossVectors(right, camDir).normalize();
+      state3d.target.x += (-right.x*dx + up.x*dy)*panSpeed;
+      state3d.target.y += (-right.y*dx + up.y*dy)*panSpeed;
+      state3d.target.z += (-right.z*dx + up.z*dy)*panSpeed;
+    } else {
+      state3d.theta -= dx*0.008;
+      state3d.phi = Math.min(Math.max(state3d.phi - dy*0.008, 0.05), Math.PI/2-0.02);
+    }
+    updateCamera3D();
+  };
+  const onPointerUp = (e)=>{ dragging=null; try{canvas.releasePointerCapture(e.pointerId);}catch(_){} };
+  const onWheel = (e)=>{
+    e.preventDefault();
+    state3d.radius = Math.min(Math.max(state3d.radius*(1+e.deltaY*0.001), 3), 800);
+    updateCamera3D();
+  };
+  const onContextMenu = (e)=> e.preventDefault();
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerUp);
+  canvas.addEventListener('wheel', onWheel, {passive:false});
+  canvas.addEventListener('contextmenu', onContextMenu);
+  state3d._teardown = ()=>{
+    canvas.removeEventListener('pointerdown', onPointerDown);
+    canvas.removeEventListener('pointermove', onPointerMove);
+    canvas.removeEventListener('pointerup', onPointerUp);
+    canvas.removeEventListener('pointercancel', onPointerUp);
+    canvas.removeEventListener('wheel', onWheel);
+    canvas.removeEventListener('contextmenu', onContextMenu);
+  };
+}
+function teardown3DInteraction(){
+  if(state3d._teardown){ state3d._teardown(); state3d._teardown=null; }
+}
+function init3DScene(){
+  const canvas = preview3dCanvas;
+  const bodyEl = document.getElementById('preview3dBody');
+  const w = Math.max(1,bodyEl.clientWidth), h = Math.max(1,bodyEl.clientHeight);
+
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
+  renderer.setSize(w, h, false);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0B1D34);
+
+  const groundWFt = Math.max(20, bgCanvas.width/state.scalePxPerFt);
+  const groundHFt = Math.max(20, bgCanvas.height/state.scalePxPerFt);
+  scene.fog = new THREE.Fog(0x0B1D34, Math.max(groundWFt,groundHFt)*1.2, Math.max(groundWFt,groundHFt)*5);
+
+  const camera = new THREE.PerspectiveCamera(50, w/h, 0.1, 5000);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(groundWFt*0.3, Math.max(groundWFt,groundHFt)*0.6, groundHFt*0.25);
+  scene.add(sun);
+  scene.add(new THREE.HemisphereLight(0xbfd6ff, 0x2a2318, 0.35));
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(groundWFt*1.4, groundHFt*1.4),
+    new THREE.MeshStandardMaterial({color:0x25344a, roughness:1})
+  );
+  ground.rotation.x = -Math.PI/2;
+  ground.position.y = -0.02;
+  scene.add(ground);
+
+  const group = new THREE.Group();
+  currentPageElements().forEach(el=>{
+    if(el.isDimension || el.shape==='image') return;
+    const mesh = build3DElementMesh(el, groundWFt, groundHFt);
+    if(mesh) group.add(mesh);
+  });
+  scene.add(group);
+
+  state3d.renderer = renderer;
+  state3d.scene = scene;
+  state3d.camera = camera;
+  state3d.target = {x:0, y:Math.min(6, WALL_HEIGHT_FT_3D*0.35), z:0};
+  state3d.radius = Math.max(groundWFt, groundHFt, 15)*0.95;
+  state3d.theta = Math.PI/4;
+  state3d.phi = Math.PI/3.2;
+  updateCamera3D();
+
+  setup3DInteraction();
+  window.addEventListener('resize', resize3DCanvas);
+  const loop = ()=>{
+    state3d.animId = requestAnimationFrame(loop);
+    renderer.render(scene, camera);
+  };
+  loop();
+}
+
+preview3dBtn.addEventListener('click', open3DPreview);
+close3dPreviewBtn.addEventListener('click', close3DPreview);
+preview3dOverlay.addEventListener('click', (e)=>{ if(e.target===preview3dOverlay) close3DPreview(); });
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape' && preview3dOverlay.classList.contains('visible')) close3DPreview();
 });
 </script>
 </body>
