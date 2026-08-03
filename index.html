@@ -3797,19 +3797,44 @@ function getTilePattern(ctx, texture, scalePxPerFt){
     tctx.strokeStyle='rgba(35,22,10,0.28)'; tctx.lineWidth=1;
     tctx.beginPath(); tctx.moveTo(0,size-0.5); tctx.lineTo(size,size-0.5); tctx.stroke();
   } else if(texture==='paver'){
-    size = Math.max(14, Math.round(scalePxPerFt*1.0));
-    tile.width=size; tile.height=size;
-    tctx.fillStyle='#9AA0A6'; tctx.fillRect(0,0,size,size);
-    tctx.strokeStyle='rgba(55,60,66,0.35)';
-    tctx.lineWidth=Math.max(1,size*0.025);
-    tctx.strokeRect(0.5,0.5,size-1,size-1);
+    // A perfectly uniform grid of identical squares reads as a flat game
+    // tile, not laid pavers -- each paver in this repeating block gets its
+    // own shade plus a beveled highlight/shadow edge for real laid-stone depth.
+    const cell = Math.max(14, Math.round(scalePxPerFt*1.0));
+    const cols=3, rows=3;
+    tile.width=cell*cols; tile.height=cell*rows;
+    const shades = ['#9AA0A6','#A3A9AE','#93999E','#9DA3A8','#989EA3'];
+    for(let r=0;r<rows;r++){
+      for(let c=0;c<cols;c++){
+        const seed = r*31+c*7+1;
+        const px=c*cell, py=r*cell;
+        tctx.fillStyle = shades[Math.floor(seededRand(seed)*shades.length)];
+        tctx.fillRect(px,py,cell,cell);
+        tctx.strokeStyle='rgba(255,255,255,0.18)'; tctx.lineWidth=1;
+        tctx.beginPath(); tctx.moveTo(px+0.5,py+cell-1); tctx.lineTo(px+0.5,py+0.5); tctx.lineTo(px+cell-1,py+0.5); tctx.stroke();
+        tctx.strokeStyle='rgba(40,44,48,0.3)'; tctx.lineWidth=1;
+        tctx.beginPath(); tctx.moveTo(px+cell-0.5,py+0.5); tctx.lineTo(px+cell-0.5,py+cell-0.5); tctx.lineTo(px+0.5,py+cell-0.5); tctx.stroke();
+      }
+    }
+    size = cell;
   } else if(texture==='concrete'){
-    size = Math.max(30, Math.round(scalePxPerFt*4));
+    // Real concrete reads as a speckled aggregate surface with control/
+    // expansion joints every few feet, not a smooth grey blur -- a flat
+    // gradient with just a border line was closer to a placeholder swatch
+    // than a poured slab.
+    size = Math.max(40, Math.round(scalePxPerFt*6));
     tile.width=size; tile.height=size;
     tctx.fillStyle='#A8ACAE'; tctx.fillRect(0,0,size,size);
-    tctx.fillStyle='rgba(255,255,255,0.05)';
-    tctx.fillRect(0,0,size,size/2);
-    tctx.strokeStyle='rgba(58,62,66,0.22)'; tctx.lineWidth=1;
+    const grad = tctx.createLinearGradient(0,0,0,size);
+    grad.addColorStop(0,'rgba(255,255,255,0.07)');
+    grad.addColorStop(1,'rgba(0,0,0,0.06)');
+    tctx.fillStyle=grad; tctx.fillRect(0,0,size,size);
+    for(let i=0;i<40;i++){
+      const r1=seededRand(i*4.3+1), r2=seededRand(i*6.1+2), r3=seededRand(i*2.7+3);
+      tctx.fillStyle = r3<0.5 ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.08)';
+      tctx.beginPath(); tctx.arc(r1*size, r2*size, 0.8, 0, Math.PI*2); tctx.fill();
+    }
+    tctx.strokeStyle='rgba(50,54,58,0.35)'; tctx.lineWidth=Math.max(1,size*0.012);
     tctx.strokeRect(0.5,0.5,size-1,size-1);
   } else if(texture==='gravel'){
     size = 13;
@@ -3968,12 +3993,22 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     ctx.strokeStyle=shadeColor(baseColor,-0.3); ctx.lineWidth=1.4; ctx.stroke();
   } else if(icon==='tv'){
     roundRectPath(ctx,x,y,w,h,h*0.3);
-    ctx.fillStyle='#181B20'; ctx.fill();
-    const inset=h*0.16;
-    roundRectPath(ctx,x+inset*1.6,y+inset*0.5,w-inset*3.2,h-inset,h*0.14);
-    const scr = ctx.createLinearGradient(x,y,x,y+h);
-    scr.addColorStop(0,'#4C6270'); scr.addColorStop(1,'#2C3A44');
-    ctx.fillStyle = scr; ctx.fill();
+    ctx.fillStyle='#14171B'; ctx.fill();
+    const inset=h*0.15;
+    ctx.save();
+    roundRectPath(ctx,x+inset*1.5,y+inset*0.5,w-inset*3,h-inset,h*0.12);
+    ctx.clip();
+    const scr = ctx.createLinearGradient(x,y,x+w,y+h);
+    scr.addColorStop(0,'#5A7683'); scr.addColorStop(0.55,'#2C3A44'); scr.addColorStop(1,'#1B262E');
+    ctx.fillStyle = scr; ctx.fillRect(x,y,w,h);
+    // A soft diagonal reflection streak -- a glossy screen catching light,
+    // not just a flat panel of color.
+    const streak = ctx.createLinearGradient(x,y,x+w*0.5,y+h);
+    streak.addColorStop(0,'rgba(255,255,255,0.16)');
+    streak.addColorStop(0.18,'rgba(255,255,255,0.05)');
+    streak.addColorStop(0.32,'rgba(255,255,255,0)');
+    ctx.fillStyle = streak; ctx.fillRect(x,y,w,h);
+    ctx.restore();
   } else if(icon==='table' || icon==='desk' || icon==='table_dining'){
     const pat = getTilePattern(ctx,'wood', state.scalePxPerFt||40);
     roundRectPath(ctx,x,y,w,h,short*0.1);
@@ -4010,7 +4045,10 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     }
   } else if(icon==='sofa' || icon==='armchair'){
     roundRectPath(ctx,x,y,w,h,short*0.16);
-    ctx.fillStyle = shadeColor(baseColor,0.05);
+    const seatGrad = ctx.createLinearGradient(x,y,x,y+h);
+    seatGrad.addColorStop(0, shadeColor(baseColor,0.16));
+    seatGrad.addColorStop(1, shadeColor(baseColor,-0.02));
+    ctx.fillStyle = seatGrad;
     ctx.fill();
     const backH = h*0.24;
     roundRectPath(ctx,x,y,w,backH,short*0.14);
@@ -4070,46 +4108,92 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     ctx.lineTo(x,y+h);
     ctx.closePath();
     ctx.strokeStyle=shadeColor(baseColor,-0.35); ctx.lineWidth=1.4; ctx.stroke();
-  } else if(icon==='dresser' || icon==='wardrobe'){
+  } else if(icon==='dresser'){
+    // Each drawer front rendered as its own inset, individually-shaded panel
+    // (not just a flat box with thin divider lines) so it reads as a real
+    // chest of drawers, with an actual pull bar per drawer instead of a dot.
     roundRectPath(ctx,x,y,w,h,short*0.06);
-    ctx.fillStyle = shadeColor(baseColor,0.08);
+    ctx.fillStyle = shadeColor(baseColor,-0.15);
     ctx.fill();
-    ctx.strokeStyle = shadeColor(baseColor,-0.3);
-    ctx.lineWidth=1.2;
-    if(icon==='dresser'){
-      const rows = w>h*2 ? 2 : 3;
-      for(let i=1;i<rows;i++){
-        const ly = y+(h/rows)*i;
-        ctx.beginPath(); ctx.moveTo(x+w*0.06,ly); ctx.lineTo(x+w*0.94,ly); ctx.stroke();
-      }
-      ctx.fillStyle = shadeColor(baseColor,-0.4);
-      for(let i=0;i<rows;i++){
-        const cy = y+(h/rows)*(i+0.5);
-        ctx.fillRect(x+w*0.42, cy-1, w*0.16, 2);
-      }
-    } else {
-      ctx.beginPath(); ctx.moveTo(x+w/2,y+h*0.06); ctx.lineTo(x+w/2,y+h*0.94); ctx.stroke();
-      ctx.fillStyle = shadeColor(baseColor,-0.4);
-      ctx.beginPath(); ctx.arc(x+w/2-w*0.06, y+h/2, 1.6, 0, Math.PI*2); ctx.fill();
-      ctx.beginPath(); ctx.arc(x+w/2+w*0.06, y+h/2, 1.6, 0, Math.PI*2); ctx.fill();
+    const rows = w>h*2 ? 2 : 3;
+    const pad = Math.max(1.5, short*0.035);
+    const rowH = (h-pad*(rows+1))/rows;
+    for(let i=0;i<rows;i++){
+      const ry = y+pad+i*(rowH+pad), rx = x+pad, rw = w-pad*2;
+      roundRectPath(ctx, rx, ry, rw, rowH, short*0.03);
+      const dg = ctx.createLinearGradient(0,ry,0,ry+rowH);
+      dg.addColorStop(0, shadeColor(baseColor,0.22));
+      dg.addColorStop(1, shadeColor(baseColor,0.0));
+      ctx.fillStyle = dg;
+      ctx.fill();
+      ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1;
+      roundRectPath(ctx, rx, ry, rw, rowH, short*0.03); ctx.stroke();
+      ctx.strokeStyle = shadeColor(baseColor,-0.6);
+      ctx.lineWidth = Math.max(1.3, short*0.022); ctx.lineCap='round';
+      ctx.beginPath();
+      ctx.moveTo(x+w*0.5-w*0.09, ry+rowH*0.5);
+      ctx.lineTo(x+w*0.5+w*0.09, ry+rowH*0.5);
+      ctx.stroke();
     }
+    ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1.4;
+    roundRectPath(ctx,x,y,w,h,short*0.06); ctx.stroke();
+  } else if(icon==='wardrobe'){
+    // Two paneled doors, each shaded so it catches light unevenly (like real
+    // wood/laminate), with a handle bar on each door near the meeting edge
+    // instead of a pair of plain dots.
     roundRectPath(ctx,x,y,w,h,short*0.06);
-    ctx.stroke();
+    ctx.fillStyle = shadeColor(baseColor,-0.15);
+    ctx.fill();
+    const pad = Math.max(1.5, short*0.04);
+    const doorW = (w-pad*3)/2;
+    [x+pad, x+pad*2+doorW].forEach((dx,i)=>{
+      roundRectPath(ctx, dx, y+pad, doorW, h-pad*2, short*0.03);
+      const dg = ctx.createLinearGradient(dx,0,dx+doorW,0);
+      dg.addColorStop(0, shadeColor(baseColor, i===0?0.04:0.22));
+      dg.addColorStop(1, shadeColor(baseColor, i===0?0.22:0.04));
+      ctx.fillStyle = dg;
+      ctx.fill();
+      ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1;
+      roundRectPath(ctx, dx, y+pad, doorW, h-pad*2, short*0.03); ctx.stroke();
+    });
+    ctx.strokeStyle = shadeColor(baseColor,-0.6);
+    ctx.lineWidth = Math.max(1.3, short*0.022); ctx.lineCap='round';
+    const midX = x+w/2;
+    [midX-w*0.045, midX+w*0.045].forEach(hx=>{
+      ctx.beginPath(); ctx.moveTo(hx, y+h*0.42); ctx.lineTo(hx, y+h*0.58); ctx.stroke();
+    });
+    ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1.4;
+    roundRectPath(ctx,x,y,w,h,short*0.06); ctx.stroke();
   } else if(icon==='fridge'){
+    // A brushed-steel-look gradient and TWO door handles (one per door),
+    // not a flat panel with a single divider line and one stray handle mark.
     roundRectPath(ctx,x,y,w,h,short*0.08);
-    ctx.fillStyle = shadeColor(baseColor,0.3);
+    const grad = ctx.createLinearGradient(x,y,x+w,y);
+    grad.addColorStop(0, shadeColor(baseColor,0.32));
+    grad.addColorStop(0.5, shadeColor(baseColor,0.1));
+    grad.addColorStop(1, shadeColor(baseColor,0.32));
+    ctx.fillStyle = grad;
     ctx.fill();
     ctx.strokeStyle = shadeColor(baseColor,-0.35); ctx.lineWidth=1.4;
     roundRectPath(ctx,x,y,w,h,short*0.08); ctx.stroke();
-    const splitY = w>=h ? null : y+h*0.35;
-    if(splitY){
-      ctx.beginPath(); ctx.moveTo(x+w*0.05,splitY); ctx.lineTo(x+w*0.95,splitY); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.25)'; ctx.lineWidth=1;
+    roundRectPath(ctx,x+w*0.04,y+h*0.04,w*0.92,h*0.92,short*0.06); ctx.stroke();
+    const vertical = h>=w;
+    ctx.strokeStyle = shadeColor(baseColor,-0.45); ctx.lineWidth=1.6;
+    ctx.fillStyle = shadeColor(baseColor,-0.5);
+    if(vertical){
+      const splitY = y+h*0.42;
+      ctx.beginPath(); ctx.moveTo(x+w*0.06,splitY); ctx.lineTo(x+w*0.94,splitY); ctx.stroke();
+      [y+h*0.21, y+h*0.71].forEach(hy=>{
+        roundRectPath(ctx, x+w*0.5-w*0.02, hy-h*0.09, w*0.04, h*0.18, w*0.02); ctx.fill();
+      });
     } else {
       const splitX = x+w*0.4;
-      ctx.beginPath(); ctx.moveTo(splitX,y+h*0.05); ctx.lineTo(splitX,y+h*0.95); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(splitX,y+h*0.06); ctx.lineTo(splitX,y+h*0.94); ctx.stroke();
+      [splitX-w*0.08, splitX+w*0.08].forEach(hx=>{
+        roundRectPath(ctx, hx-w*0.02, y+h*0.5-h*0.09, w*0.04, h*0.18, w*0.02); ctx.fill();
+      });
     }
-    ctx.fillStyle = shadeColor(baseColor,-0.4);
-    ctx.fillRect(x+w*0.06,y+h*0.45,w*0.03,h*0.1);
   } else if(icon==='island'){
     // A smooth stone-look gradient plus a light scatter of flecks sized to
     // the island's OWN footprint -- the outdoor concrete tile pattern repeats
@@ -4300,6 +4384,29 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor){
     grad.addColorStop(1,'#33492E');
     ctx.fillStyle = grad;
     ctx.fill();
+    // A flat gradient disc reads as a ball, not foliage -- scatter mottled
+    // leaf-cluster blobs across the canopy (clipped to the circle already
+    // set as the current path) so it reads as real, lumpy top-down foliage,
+    // then darken the rim a touch more so it still holds together as round.
+    ctx.save();
+    ctx.clip();
+    const blobCount = Math.max(10, Math.round(r*0.7));
+    for(let i=0;i<blobCount;i++){
+      const ang = seededRand(i*3.1+1)*Math.PI*2;
+      const dist = seededRand(i*5.7+2)*r*0.85;
+      const bx = cx+Math.cos(ang)*dist, by = cy+Math.sin(ang)*dist;
+      const br = r*(0.14+seededRand(i*7.3+3)*0.16);
+      ctx.beginPath();
+      ctx.arc(bx,by,br,0,Math.PI*2);
+      ctx.fillStyle = seededRand(i*9.1+4) < 0.45 ? 'rgba(150,190,120,0.28)' : 'rgba(20,35,20,0.22)';
+      ctx.fill();
+    }
+    const rim = ctx.createRadialGradient(cx,cy,r*0.7,cx,cy,r);
+    rim.addColorStop(0,'rgba(0,0,0,0)');
+    rim.addColorStop(1,'rgba(0,0,0,0.25)');
+    ctx.fillStyle = rim;
+    ctx.fillRect(bounds.minX,bounds.minY,bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
+    ctx.restore();
   } else {
     ctx.fillStyle = fallbackColor;
     ctx.fill();
