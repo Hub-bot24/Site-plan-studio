@@ -898,6 +898,7 @@ const PRESETS = {
   lawn:      {label:'Lawn (grass)',    color:'#6C8F63', texture:'grass',    quick:'rect'},
   turf:      {label:'Artificial turf', color:'#4F8F52', texture:'turf',     quick:'rect'},
   gardenbed: {label:'Garden bed',      color:'#5A4A38', texture:'mulch',    quick:'rect'},
+  hedge:     {label:'Hedge',           color:'#4A7A3E', texture:null,       quick:'none'},
   pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect'},
   tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
   custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
@@ -1841,9 +1842,47 @@ function ensureCCW(poly){
   }
   return area < 0 ? poly.slice().reverse() : poly;
 }
+// Ear-clipping triangulation of a simple polygon -- works for both convex
+// and concave shapes (unlike a naive fan-from-vertex-0 triangulation, which
+// only produces the correct area breakdown for a convex polygon). Needed so
+// cutout-area math can clip against a concave "parent" shape (e.g. an
+// L-shaped or notched paving slab traced by hand), since Sutherland-Hodgman
+// below only clips correctly against a convex window on its own.
+function triangulatePolygon(poly){
+  const pts = ensureCCW(poly).slice();
+  const triangles = [];
+  const cross = (a,b,c) => (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x);
+  const inTriangle = (p,a,b,c) => {
+    const d1 = cross(a,b,p), d2 = cross(b,c,p), d3 = cross(c,a,p);
+    const hasNeg = d1<0 || d2<0 || d3<0, hasPos = d1>0 || d2>0 || d3>0;
+    return !(hasNeg && hasPos);
+  };
+  let guard = 0;
+  while(pts.length>3 && guard++ < 2000){
+    let clipped = false;
+    for(let i=0;i<pts.length;i++){
+      const a = pts[(i-1+pts.length)%pts.length], b = pts[i], c = pts[(i+1)%pts.length];
+      if(cross(a,b,c) <= 0) continue; // reflex vertex -- can't be an ear
+      let containsOther = false;
+      for(let j=0;j<pts.length;j++){
+        if(j===i || pts[j]===a || pts[j]===c) continue;
+        if(inTriangle(pts[j],a,b,c)){ containsOther = true; break; }
+      }
+      if(containsOther) continue;
+      triangles.push([a,b,c]);
+      pts.splice(i,1);
+      clipped = true;
+      break;
+    }
+    if(!clipped) break; // degenerate/self-intersecting input -- stop rather than loop forever
+  }
+  if(pts.length===3) triangles.push(pts);
+  return triangles;
+}
 // Sutherland-Hodgman polygon clipping: clips `subject` against `clip`. `clip`
-// must be convex (true for our rect/circle-as-ngon shapes; a hand-traced
-// concave "parent" polygon is a known limitation this doesn't fully handle).
+// must be convex -- true for our rect/circle-as-ngon shapes, and for the
+// individual triangles polygonIntersectionAreaPx below decomposes any
+// concave clip polygon into.
 function clipPolygon(subject, clip){
   let output = subject;
   const clipCCW = ensureCCW(clip);
@@ -1874,12 +1913,16 @@ function clipPolygon(subject, clip){
 }
 // Real overlap area (px^2) between two shapes' outlines, not just their own
 // footprint -- e.g. a pool only half-dragged onto a paving slab only
-// subtracts the half that's actually on top of it.
+// subtracts the half that's actually on top of it. polyA (the "clip" side --
+// typically the parent shape a cutout is linked to) is triangulated first so
+// this stays correct even when it's a concave, hand-traced shape (an L-shaped
+// or notched patio), not just a plain rect/circle.
 function polygonIntersectionAreaPx(polyA, polyB){
   if(polyA.length<3 || polyB.length<3) return 0;
-  const clipped = clipPolygon(polyB, polyA);
-  if(clipped.length<3) return 0;
-  return polygonAreaPx(clipped);
+  return triangulatePolygon(polyA).reduce((sum, tri)=>{
+    const clipped = clipPolygon(polyB, tri);
+    return sum + (clipped.length<3 ? 0 : polygonAreaPx(clipped));
+  }, 0);
 }
 function currentPageElements(){
   return state.elements.filter(e=>(e.page||1)===state.currentPage);
@@ -2436,7 +2479,7 @@ function updateUnitLabels(){
 
 /* ============================ Type select population ============================ */
 const TYPE_GROUPS = [
-  {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','pool','tree','custom']},
+  {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','tree','custom']},
   {label:'Roofing', keys:['roof_tile','roof_metal','roof_shingle']},
   {label:'Cladding', keys:['clad_stone']},
   {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS).filter(k=>k!=='power_point')]},
@@ -4554,9 +4597,69 @@ function drawDimensionElement(ctx, el, selected){
     ctx.restore();
   }
 }
+const HEDGE_WIDTH_FT = 1.5;
+function drawHedgeElement(ctx, el, selected){
+  const pts = el.points;
+  const widthPx = Math.max(6, HEDGE_WIDTH_FT*(state.scalePxPerFt||40));
+  ctx.save();
+  ctx.globalAlpha *= getPopState(el).alpha;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // A dark-edged, lighter-cored ribbon reads as a solid trimmed hedge body
+  // (not just a fat line) before the leafy texture goes on top of it.
+  ctx.strokeStyle = shadeColor(el.color,-0.22);
+  ctx.lineWidth = widthPx;
+  strokePolyline(ctx, pts, false);
+  ctx.strokeStyle = el.color;
+  ctx.lineWidth = widthPx*0.78;
+  strokePolyline(ctx, pts, false);
+
+  // Scatter small leaf-cluster blobs along the ribbon's length and width so
+  // it reads as bumpy, trimmed foliage rather than a flat painted stripe.
+  const spacing = Math.max(5, widthPx*0.3);
+  let totalDist = 0, nextMarkerAt = spacing/2, blobIndex = 0;
+  for(let i=0;i<pts.length-1;i++){
+    const a = pts[i], b = pts[i+1];
+    const dx = b.x-a.x, dy = b.y-a.y;
+    const segLen = Math.hypot(dx,dy);
+    if(segLen>0.001){
+      const ux = dx/segLen, uy = dy/segLen, perpX = -uy, perpY = ux;
+      while(nextMarkerAt <= totalDist+segLen){
+        const d = nextMarkerAt-totalDist;
+        const cx = a.x+ux*d, cy = a.y+uy*d;
+        for(let k=0;k<3;k++){
+          const seed = el.id*97+blobIndex*11+k*3;
+          const t = seededRand(seed)-0.5;
+          const bx = cx+perpX*t*widthPx*0.82, by = cy+perpY*t*widthPx*0.82;
+          const r = widthPx*(0.13+seededRand(seed+1)*0.09);
+          ctx.beginPath();
+          ctx.fillStyle = shadeColor(el.color, (seededRand(seed+2)-0.5)*0.32);
+          ctx.arc(bx,by,r,0,Math.PI*2);
+          ctx.fill();
+        }
+        blobIndex++;
+        nextMarkerAt += spacing;
+      }
+      totalDist += segLen;
+    }
+  }
+  ctx.restore();
+  drawElementLabel(ctx, el, '#E7ECF2', selected);
+  if(selected){
+    ctx.save();
+    ctx.shadowColor = 'rgba(181,147,76,0.55)';
+    ctx.shadowBlur = 10/Math.max(state.zoom, 0.01);
+    ctx.setLineDash([6,4]);
+    ctx.strokeStyle = '#B5934C';
+    ctx.lineWidth = 1.5;
+    strokePolyline(ctx, pts, false);
+    ctx.restore();
+  }
+}
 function drawPathElement(ctx, el, selected){
   if(el.points.length<2) return;
   if(el.isDimension){ drawDimensionElement(ctx, el, selected); return; }
+  if(el.presetKey==='hedge'){ drawHedgeElement(ctx, el, selected); return; }
   ctx.save();
   ctx.globalAlpha *= getPopState(el).alpha;
   ctx.strokeStyle = el.color;
