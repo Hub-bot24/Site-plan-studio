@@ -387,6 +387,30 @@
     color:var(--ink-dim);font-family:'Space Mono',monospace;font-size:13px;
     pointer-events:none;
   }
+
+  /* ---------- Resume-existing-project prompt ---------- */
+  #resumeProjectOverlay{
+    position:fixed;inset:0;z-index:210;
+    background:rgba(6,14,26,0.6);backdrop-filter:blur(2px);
+    display:none;align-items:center;justify-content:center;padding:24px;
+    animation:galleryFadeIn 0.15s ease;
+  }
+  #resumeProjectOverlay.visible{display:flex;}
+  #resumeProjectPanel{
+    position:relative;
+    width:min(440px, 100%);
+    background:linear-gradient(180deg, var(--navy-panel) 0%, #0D1D34 100%);
+    border:1px solid var(--line);border-radius:14px;
+    box-shadow:0 20px 60px rgba(0,0,0,0.5);
+    padding:22px;
+    animation:galleryPopIn 0.18s cubic-bezier(.2,.8,.3,1.1);
+  }
+  #resumeProjectPanel h3{margin:0 0 10px 0;font-size:16px;font-weight:700;color:var(--ink);padding-right:24px;}
+  #resumeProjectPanel .helptext{margin:0 0 18px 0;}
+  #resumeProjectPanel #closeResumeOverlayBtn{position:absolute;top:14px;right:14px;}
+  #resumeProjectActions{display:flex;flex-direction:column;gap:8px;}
+  #resumeProjectActions .btn{width:100%;justify-content:center;}
+  #resumeProjectName{font-weight:700;}
   .row2{display:flex;gap:8px;}
   .row2 .field{flex:1;}
   .helptext{font-size:12px;color:var(--ink-dim);line-height:1.5;margin:0 0 10px 0;}
@@ -883,6 +907,20 @@
   </div>
 </div>
 
+<div id="resumeProjectOverlay">
+  <div id="resumeProjectPanel">
+    <button type="button" id="closeResumeOverlayBtn" class="icnbtn" title="Cancel">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <h3>Existing project found</h3>
+    <p id="resumeProjectText" class="helptext"></p>
+    <div id="resumeProjectActions">
+      <button type="button" id="resumeProjectBtn" class="btn">Resume "<span id="resumeProjectName"></span>"</button>
+      <button type="button" id="startNewProjectBtn" class="btn secondary">Start a new project</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
 <script>
@@ -895,6 +933,7 @@ const state = {
   unit:'m',
   pdf:null,
   pdfBytes:null,
+  pdfFingerprint:null,
   numPages:1,
   currentPage:1,
   bgLoaded:false,
@@ -1443,6 +1482,36 @@ async function idbGetAllProjectNames(){
     req.onerror = ()=>reject(req.error);
   });
 }
+async function idbGetAllProjectRecords(){
+  const db = await openProjectsDB();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).getAll();
+    req.onsuccess = ()=>resolve(req.result || []);
+    req.onerror = ()=>reject(req.error);
+  });
+}
+// A content hash of the PDF's raw bytes -- lets a re-upload of the same PDF
+// (via "Choose PDF file", not the Save/Load dropdown) be recognized as the
+// same plan, so previously saved work against it can be offered back instead
+// of silently starting blank. Filename is deliberately not part of this: the
+// same PDF renamed should still match.
+async function sha256Hex(buf){
+  const digest = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+// Newest-saved match wins if more than one saved project happens to be
+// against the same PDF. Records saved before this feature existed have no
+// pdfFingerprint and simply never match -- they stay reachable exactly as
+// before, through the Saved projects dropdown.
+async function findProjectByFingerprint(fingerprint){
+  if(!fingerprint) return null;
+  const all = await idbGetAllProjectRecords();
+  const matches = all.filter(r=>r.pdfFingerprint === fingerprint);
+  if(!matches.length) return null;
+  matches.sort((a,b)=>(b.savedAt||0)-(a.savedAt||0));
+  return matches[0];
+}
 async function idbDeleteProject(name){
   const db = await openProjectsDB();
   return new Promise((resolve, reject)=>{
@@ -1497,6 +1566,7 @@ saveProjectBtn.addEventListener('click', async ()=>{
     // engine when a large ArrayBuffer is inlined directly into a record —
     // Blobs are handled by a separate, more robust disk-backed code path.
     pdfBytes: new Blob([state.pdfBytes]),
+    pdfFingerprint: state.pdfFingerprint || null,
     currentPage: state.currentPage,
     scalePxPerFt: state.scalePxPerFt,
     unit: state.unit,
@@ -1542,6 +1612,11 @@ async function applyLoadedProjectRecord(rec, name){
   // newer ones store a Blob — support loading either.
   const bytes = (rec.pdfBytes instanceof Blob) ? await rec.pdfBytes.arrayBuffer() : rec.pdfBytes;
   state.pdfBytes = bytes.slice(0);
+  // Records saved before this feature existed have no stored fingerprint --
+  // compute one now so this session (and any future save of it) can still be
+  // recognized on a later re-upload of the same PDF.
+  try{ state.pdfFingerprint = rec.pdfFingerprint || await sha256Hex(bytes); }
+  catch(e){ console.error('Could not fingerprint PDF:', e); state.pdfFingerprint = rec.pdfFingerprint || null; }
   const pdf = await pdfjsLib.getDocument({data:bytes}).promise;
   state.pdf = pdf;
   state.numPages = pdf.numPages;
@@ -1670,6 +1745,7 @@ exportProjectBtn.addEventListener('click', ()=>{
     name,
     savedAt: Date.now(),
     pdfBytesBase64: arrayBufferToBase64(state.pdfBytes),
+    pdfFingerprint: state.pdfFingerprint || null,
     currentPage: state.currentPage,
     scalePxPerFt: state.scalePxPerFt,
     unit: state.unit,
@@ -2744,6 +2820,7 @@ newPlanBtn.addEventListener('click', ()=>{
   pdfInput.value='';
   state.pdf = null;
   state.pdfBytes = null;
+  state.pdfFingerprint = null;
   state.bgLoaded = false;
   state.scalePxPerFt = null;
   state.elements = [];
@@ -2782,6 +2859,65 @@ newPlanBtn.addEventListener('click', ()=>{
   drawOverlay();
 });
 
+/* ---- "Existing project found" prompt, shown when a re-uploaded PDF matches a saved project ---- */
+const resumeProjectOverlay = document.getElementById('resumeProjectOverlay');
+const resumeProjectText = document.getElementById('resumeProjectText');
+const resumeProjectName = document.getElementById('resumeProjectName');
+const resumeProjectBtn = document.getElementById('resumeProjectBtn');
+const startNewProjectBtn = document.getElementById('startNewProjectBtn');
+const closeResumeOverlayBtn = document.getElementById('closeResumeOverlayBtn');
+let resumeChoiceResolve = null;
+// Resolves to 'resume' | 'new' | 'cancel'. Any dismissal (X, backdrop click,
+// Escape) resolves 'cancel' -- the neutral, no-data-touched default -- never
+// silently falling into either loading the saved project or overwriting it.
+function promptResumeOrNew(rec){
+  const savedDate = rec.savedAt ? new Date(rec.savedAt).toLocaleString() : 'an earlier session';
+  resumeProjectName.textContent = rec.name;
+  resumeProjectText.textContent = 'This PDF matches a project you already saved — "'+rec.name+'" (saved '+savedDate+'). Resume it to keep everything you added, or start a new project from this PDF — either way, your saved project stays exactly as it is.';
+  resumeProjectOverlay.classList.add('visible');
+  return new Promise(resolve=>{
+    resumeChoiceResolve = (choice)=>{
+      resumeProjectOverlay.classList.remove('visible');
+      resumeChoiceResolve = null;
+      resolve(choice);
+    };
+  });
+}
+resumeProjectBtn.addEventListener('click', ()=>{ if(resumeChoiceResolve) resumeChoiceResolve('resume'); });
+startNewProjectBtn.addEventListener('click', ()=>{ if(resumeChoiceResolve) resumeChoiceResolve('new'); });
+closeResumeOverlayBtn.addEventListener('click', ()=>{ if(resumeChoiceResolve) resumeChoiceResolve('cancel'); });
+resumeProjectOverlay.addEventListener('click', (e)=>{ if(e.target===resumeProjectOverlay && resumeChoiceResolve) resumeChoiceResolve('cancel'); });
+document.addEventListener('keydown', (e)=>{
+  if(e.key==='Escape' && resumeProjectOverlay.classList.contains('visible') && resumeChoiceResolve) resumeChoiceResolve('cancel');
+});
+
+// The actual "start fresh from these PDF bytes" logic, unchanged from
+// before -- factored out so both a genuinely new PDF and a user's explicit
+// "Start a new project" choice (from the resume-prompt below) go through
+// the exact same path.
+async function loadPdfBytesFresh(buf, fingerprint){
+  state.pdfBytes = buf.slice(0);
+  state.pdfFingerprint = fingerprint || null;
+  state.pdfMasks = [];
+  const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+  state.pdf = pdf;
+  state.numPages = pdf.numPages;
+  pageOfText.textContent = 'of ' + pdf.numPages;
+  pageNav.style.display = pdf.numPages>1 ? 'block' : 'none';
+  pageInput.max = pdf.numPages;
+  pageInput.value = 1;
+  placeholder.classList.add('hidden');
+  canvasScroll.classList.add('visible');
+  await renderPage(1);
+  newPlanBtn.style.display='inline-block';
+  exportBtn.disabled = false;
+  exportPdfBtn.disabled = false;
+  exportProjectBtn.disabled = false;
+  presentBtn.disabled = false;
+  preview3dBtn.disabled = false;
+  setScaleBtn.disabled = false;
+  updateSetScaleFlash();
+}
 async function loadFile(file){
   uploadError.style.display='none';
   if(file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')){
@@ -2790,26 +2926,37 @@ async function loadFile(file){
   }
   try{
     const buf = await file.arrayBuffer();
-    state.pdfBytes = buf.slice(0);
-    state.pdfMasks = [];
-    const pdf = await pdfjsLib.getDocument({data:buf}).promise;
-    state.pdf = pdf;
-    state.numPages = pdf.numPages;
-    pageOfText.textContent = 'of ' + pdf.numPages;
-    pageNav.style.display = pdf.numPages>1 ? 'block' : 'none';
-    pageInput.max = pdf.numPages;
-    pageInput.value = 1;
-    placeholder.classList.add('hidden');
-    canvasScroll.classList.add('visible');
-    await renderPage(1);
-    newPlanBtn.style.display='inline-block';
-    exportBtn.disabled = false;
-    exportPdfBtn.disabled = false;
-    exportProjectBtn.disabled = false;
-    presentBtn.disabled = false;
-    preview3dBtn.disabled = false;
-    setScaleBtn.disabled = false;
-    updateSetScaleFlash();
+
+    // Re-uploading the exact same PDF (by content, not filename) that
+    // already has saved work against it used to silently start a blank
+    // project, orphaning that work -- fingerprint it and offer to resume
+    // instead of guessing. Bounded to a few seconds: storage being slow or
+    // completely stuck (rare, but Save/Load already has to handle it) must
+    // never hold up simply opening a PDF -- that's a plain upload, not a
+    // save, and shouldn't inherit Save's own much longer timeout.
+    let fingerprint = null;
+    try{ fingerprint = await sha256Hex(buf); }catch(e){ console.error('Could not fingerprint PDF:', e); }
+    if(fingerprint){
+      let existing = null;
+      try{
+        existing = await Promise.race([
+          findProjectByFingerprint(fingerprint),
+          new Promise((_,reject)=>setTimeout(()=>reject(new Error('resume-check timed out')), 2500)),
+        ]);
+      }catch(e){ console.error('Could not check for an existing saved project (continuing without it):', e); }
+      if(existing){
+        const choice = await promptResumeOrNew(existing);
+        if(choice === 'cancel'){ pdfInput.value=''; return; }
+        if(choice === 'resume'){
+          await applyLoadedProjectRecord(existing, existing.name);
+          return;
+        }
+        // choice === 'new' falls through to the normal fresh load below --
+        // the matched saved project is never touched by that choice.
+      }
+    }
+
+    await loadPdfBytesFresh(buf, fingerprint);
   }catch(err){
     console.error(err);
     showUploadError("Couldn't read that PDF. Try re-exporting it or use a different file.");
