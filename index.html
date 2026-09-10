@@ -753,7 +753,7 @@
             <input type="number" id="widthInput" step="0.1" placeholder="12">
           </div>
           <div class="field">
-            <label>Height (<span class="unit-label">m</span>)</label>
+            <label id="heightFieldLabel">Height (<span class="unit-label">m</span>)</label>
             <input type="number" id="heightInput" step="0.1" placeholder="10">
           </div>
         </div>
@@ -1048,8 +1048,55 @@ const FURNITURE_COLORS = {
 Object.keys(FURNITURE_ITEMS).forEach(key=>{
   const item = FURNITURE_ITEMS[key];
   const icon = FURNITURE_ICONS[key];
-  PRESETS[key] = {label:item.label, color:FURNITURE_COLORS[icon]||'#8A7B6B', texture:'flat', quick:'rect', name:item.name, wIn:item.wIn, hIn:item.hIn, icon};
+  // isIndoorFurniture flags exactly this set for the room-arranging features
+  // below (clearance zones, auto-arrange, room-fullness) -- narrower than
+  // "has an icon", which cars/fire pits also do, so those outdoor items
+  // never get pulled into a bedroom layout algorithm.
+  PRESETS[key] = {label:item.label, color:FURNITURE_COLORS[icon]||'#8A7B6B', texture:'flat', quick:'rect', name:item.name, wIn:item.wIn, hIn:item.hIn, icon, isIndoorFurniture:true};
 });
+
+// Real-world vehicle footprints (metres, length x width as measured directly
+// from above), same "pick it and it's already the right real-world size"
+// pattern as FURNITURE_ITEMS above -- just specified in metres, since that's
+// how vehicle dimensions are normally given, instead of inches. hM is the
+// vehicle's length (the axis it "faces", same convention as a bed's
+// head-to-foot hIn) and wM is its width -- so on the plan a car is drawn
+// nose-up, matching every other directional icon (bed head, sofa back, ...).
+const VEHICLE_COLOR = '#6C7986';
+const VEHICLE_ITEMS = {
+  car_hatch_small:   {name:'Small hatchback',   label:'Small hatchback (4.0 × 1.75 m)',   wM:1.75, hM:4.0,  icon:'car'},
+  car_sedan_medium:  {name:'Medium sedan',      label:'Medium sedan (4.7 × 1.85 m)',      wM:1.85, hM:4.7,  icon:'car'},
+  car_sedan_large:   {name:'Large sedan',       label:'Large sedan (5.0 × 1.90 m)',       wM:1.90, hM:5.0,  icon:'car'},
+  car_suv_small:     {name:'Small SUV',         label:'Small SUV (4.4 × 1.85 m)',         wM:1.85, hM:4.4,  icon:'car'},
+  car_suv_medium:    {name:'Medium SUV',        label:'Medium SUV (4.7 × 1.90 m)',        wM:1.90, hM:4.7,  icon:'car'},
+  car_suv_large:     {name:'Large SUV / 4WD',   label:'Large SUV / 4WD (5.0 × 2.0 m)',    wM:2.0,  hM:5.0,  icon:'car'},
+  car_ute_dualcab:   {name:'Dual-cab ute',      label:'Dual-cab ute (5.3 × 1.9 m)',       wM:1.9,  hM:5.3,  icon:'ute'},
+  car_ute_dualcab_lg:{name:'Large dual-cab ute',label:'Large dual-cab ute (5.45 × 2.0 m)',wM:2.0,  hM:5.45, icon:'ute'},
+  car_ute_singlecab: {name:'Single-cab ute',    label:'Single-cab ute (5.2 × 1.9 m)',     wM:1.9,  hM:5.2,  icon:'ute_single'},
+  car_van:           {name:'Van',               label:'Van (5.3 × 2.0 m)',                wM:2.0,  hM:5.3,  icon:'van'},
+};
+Object.keys(VEHICLE_ITEMS).forEach(key=>{
+  const item = VEHICLE_ITEMS[key];
+  PRESETS[key] = {label:item.label, color:VEHICLE_COLOR, texture:'flat', quick:'rect', name:item.name, wM:item.wM, hM:item.hM, icon:item.icon, isVehicle:true};
+});
+// Custom vehicle -- same idea as "Indoor furniture (custom size)": no fixed
+// wM/hM, so the width/height fields stay blank until the user types the
+// specific vehicle's own length and width.
+PRESETS.car_custom = {label:'Custom vehicle — enter length & width', color:VEHICLE_COLOR, texture:'flat', quick:'rect', icon:'car', isVehicle:true};
+
+// Fire pit footprints (metres). The round ones are circle-shape (dM =
+// diameter, same as a tree's dFt); the square/rectangular ones are
+// rect-shape (wM x hM) -- reusing the app's two existing quick-add shapes
+// rather than inventing a third.
+const FIREPIT_COLOR = '#8A7A6C';
+PRESETS.firepit_round_900 = {label:'Round fire bowl (Ø0.9 m)', color:FIREPIT_COLOR, texture:'flat', quick:'circle', name:'Round fire bowl', dM:0.9, icon:'firepit_round'};
+PRESETS.firepit_round_1200 = {label:'Large round fire pit (Ø1.2 m)', color:FIREPIT_COLOR, texture:'flat', quick:'circle', name:'Large round fire pit', dM:1.2, icon:'firepit_round'};
+PRESETS.firepit_square_900 = {label:'Square fire pit (0.9 × 0.9 m)', color:FIREPIT_COLOR, texture:'flat', quick:'rect', name:'Square fire pit', wM:0.9, hM:0.9, icon:'firepit_square'};
+PRESETS.firepit_rect_1200x700 = {label:'Rectangular fire pit (1.2 × 0.7 m)', color:FIREPIT_COLOR, texture:'flat', quick:'rect', name:'Rectangular fire pit', wM:1.2, hM:0.7, icon:'firepit_square'};
+// Custom fire pit -- no fixed wM/hM, so (like custom vehicle/custom area)
+// width/height stay blank until the user types the real dimensions.
+PRESETS.firepit_custom = {label:'Custom fire pit — enter dimensions', color:FIREPIT_COLOR, texture:'flat', quick:'rect', icon:'firepit_square'};
+
 // Standard recommended clearance (inches) for common furniture -- the same
 // starting-point minimums interior designers use: room to pull a dining
 // chair out and walk behind it, a bed's walk space, a wardrobe/fridge door
@@ -1163,6 +1210,7 @@ const addRotationFieldWrap = document.getElementById('addRotationFieldWrap');
 const addRotationInput = document.getElementById('addRotationInput');
 const widthInput = document.getElementById('widthInput');
 const heightInput = document.getElementById('heightInput');
+const heightFieldLabel = document.getElementById('heightFieldLabel');
 const diameterInput = document.getElementById('diameterInput');
 const addElBtn = document.getElementById('addElBtn');
 const pathFields = document.getElementById('pathFields');
@@ -2090,7 +2138,7 @@ function elementClearancePolygonPx(el, clearanceFt){
 function getClearanceZones(){
   if(!state.scalePxPerFt) return [];
   const onPage = currentPageElements().filter(e=>e.shape==='rect' && !e.isCutout);
-  const furniture = onPage.filter(e=>PRESETS[e.presetKey] && PRESETS[e.presetKey].icon);
+  const furniture = onPage.filter(e=>PRESETS[e.presetKey] && PRESETS[e.presetKey].isIndoorFurniture);
   const withClearance = furniture.map(el=>({el, clearanceFt:getClearanceFt(el)})).filter(x=>x.clearanceFt>0);
   const minOverlapPx2 = 0.15 * state.scalePxPerFt * state.scalePxPerFt; // ~0.15 sq ft of real overlap, to ignore touching-edge float noise
   return withClearance.map(({el, clearanceFt})=>{
@@ -2438,7 +2486,7 @@ function runArrangementPass(roomEl, sorted){
 // least total clearance-zone conflict, instead of just the first attempt.
 function autoArrangeFurniture(roomEl){
   const furniture = currentPageElements().filter(e=>
-    e.id!==roomEl.id && e.shape==='rect' && !e.isCutout && PRESETS[e.presetKey] && PRESETS[e.presetKey].icon
+    e.id!==roomEl.id && e.shape==='rect' && !e.isCutout && PRESETS[e.presetKey] && PRESETS[e.presetKey].isIndoorFurniture
   );
   if(!furniture.length) return {placedCount:0, unplaced:[]};
 
@@ -2550,7 +2598,7 @@ function getRoomSpaceBorders(){
   if(!state.scalePxPerFt) return [];
   const rooms = currentPageElements().filter(e=>isValidRoomEl(e));
   if(!rooms.length) return [];
-  const furniture = currentPageElements().filter(e=>PRESETS[e.presetKey] && PRESETS[e.presetKey].icon);
+  const furniture = currentPageElements().filter(e=>PRESETS[e.presetKey] && PRESETS[e.presetKey].isIndoorFurniture);
   return rooms.map(room=>{
     const roomAreaFt = room.wFt*room.hFt;
     const roomPoly = elementToPolygonPoints(room);
@@ -2600,6 +2648,8 @@ function updateUnitLabels(){
 /* ============================ Type select population ============================ */
 const TYPE_GROUPS = [
   {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','tree','custom']},
+  {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
+  {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
   {label:'Roofing', keys:['roof_tile','roof_metal','roof_shingle']},
   {label:'Cladding', keys:['clad_stone']},
   {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS).filter(k=>k!=='power_point')]},
@@ -2718,11 +2768,23 @@ function updateAddFieldsForType(){
     widthInput.value = formatNum(fromFt(preset.wIn/12, state.unit));
     heightInput.value = formatNum(fromFt(preset.hIn/12, state.unit));
     if(!labelInput.value.trim()) labelInput.value = preset.name;
+  } else if(preset.wM!=null){
+    // Same idea, for presets specified in metres (vehicles, fixed-size fire
+    // pits) instead of inches -- toFt(_,'m') reuses the app's own m->ft
+    // conversion so this lands on exactly the same feet value the unit
+    // toggle would produce for that metric size.
+    widthInput.value = formatNum(fromFt(toFt(preset.wM,'m'), state.unit));
+    heightInput.value = formatNum(fromFt(toFt(preset.hM,'m'), state.unit));
+    if(!labelInput.value.trim()) labelInput.value = preset.name;
+  }
+  if(preset.dM!=null){
+    diameterInput.value = formatNum(fromFt(toFt(preset.dM,'m'), state.unit));
   }
   colorInput.value = preset.color;
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
   addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') ? 'block' : 'none';
+  heightFieldLabel.firstChild.textContent = preset.isVehicle ? 'Length (' : 'Height (';
   addElBtn.style.display = isFence ? 'none' : '';
   pathFields.style.display = 'block';
   freeformDivider.style.display = isFence ? 'none' : 'block';
@@ -4467,12 +4529,182 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     ctx.arc(cx, cy+faceR*0.6, faceR*0.16, 0, Math.PI*2);
     ctx.fillStyle = shadeColor(baseColor,-0.6);
     ctx.fill();
+  } else if(icon==='car' || icon==='van' || icon==='ute' || icon==='ute_single'){
+    drawVehicleIcon(ctx, icon, x, y, w, h, baseColor);
+  } else if(icon==='firepit_round' || icon==='firepit_square'){
+    drawFirepitIcon(ctx, icon, x, y, w, h, baseColor);
   } else {
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = shadeColor(baseColor,0.1);
     ctx.fill();
   }
   ctx.restore();
+}
+// Vehicles, drawn nose-up (front at the top edge, same "faces up" convention
+// as a bed's headboard) so rotation behaves exactly like every other
+// directional icon. Body outline tapers slightly at the front corners (a
+// hood curve) and stays squarer at the rear -- reads as "car", not "box" --
+// and every shape is sized off the actual w/h passed in, so a 4.0x1.75m
+// hatchback and a 5.5x2.0m ute automatically look like different vehicles,
+// not the same icon rescaled.
+function drawVehicleIcon(ctx, icon, x, y, w, h, baseColor){
+  const short = Math.min(w,h);
+  const frontR = short*0.24, rearR = short*0.12;
+  ctx.beginPath();
+  ctx.moveTo(x+frontR, y);
+  ctx.arcTo(x+w, y, x+w, y+frontR, frontR);
+  ctx.lineTo(x+w, y+h-rearR);
+  ctx.arcTo(x+w, y+h, x+w-rearR, y+h, rearR);
+  ctx.lineTo(x+rearR, y+h);
+  ctx.arcTo(x, y+h, x, y+h-rearR, rearR);
+  ctx.lineTo(x, y+frontR);
+  ctx.arcTo(x, y, x+frontR, y, frontR);
+  ctx.closePath();
+  const bodyGrad = ctx.createLinearGradient(x,y,x+w,y);
+  bodyGrad.addColorStop(0, shadeColor(baseColor,-0.12));
+  bodyGrad.addColorStop(0.5, shadeColor(baseColor,0.22));
+  bodyGrad.addColorStop(1, shadeColor(baseColor,-0.12));
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+  ctx.strokeStyle = shadeColor(baseColor,-0.5);
+  ctx.lineWidth = Math.max(1, short*0.018);
+  ctx.stroke();
+
+  const glassFill = (y0,y1)=>{
+    const g = ctx.createLinearGradient(x, y0, x+w, y1);
+    g.addColorStop(0,'rgba(255,255,255,0.32)');
+    g.addColorStop(0.5,'rgba(60,80,95,0.88)');
+    g.addColorStop(1,'rgba(30,42,52,0.92)');
+    return g;
+  };
+
+  if(icon==='ute' || icon==='ute_single'){
+    // A single-cab has a short cab and a long open tray; a dual-cab's cab
+    // takes up nearly half the length -- same two-part layout, different
+    // split point.
+    const cabFrac = icon==='ute_single' ? 0.30 : 0.46;
+    const cabH = h*cabFrac;
+    roundRectPath(ctx, x+w*0.14, y+h*0.07, w*0.72, cabH*0.42, short*0.05);
+    ctx.fillStyle = glassFill(y, y+cabH*0.5);
+    ctx.fill();
+    roundRectPath(ctx, x+w*0.10, y+cabH*0.46, w*0.80, cabH*0.40, short*0.06);
+    ctx.fillStyle = shadeColor(baseColor,-0.08);
+    ctx.fill();
+    const trayY = y+cabH+h*0.03;
+    const trayH = (y+h) - short*0.05 - trayY;
+    roundRectPath(ctx, x+short*0.08, trayY, w-short*0.16, trayH, short*0.05);
+    ctx.fillStyle = shadeColor(baseColor,-0.32);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.55);
+    ctx.lineWidth = Math.max(1, short*0.014);
+    roundRectPath(ctx, x+short*0.08, trayY, w-short*0.16, trayH, short*0.05);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(x+short*0.14, trayY+trayH*0.8); ctx.lineTo(x+w-short*0.14, trayY+trayH*0.8);
+    ctx.stroke();
+    drawVehicleMirrors(ctx, x, y, w, cabH*0.55, short, baseColor);
+  } else if(icon==='van'){
+    // A short, steep windshield right at the nose, then one long boxy cargo
+    // box with no rear glass -- vans read as "one big box", not a car body.
+    roundRectPath(ctx, x+w*0.16, y+h*0.045, w*0.68, h*0.10, short*0.04);
+    ctx.fillStyle = glassFill(y, y+h*0.15);
+    ctx.fill();
+    roundRectPath(ctx, x+short*0.05, y+h*0.16, w-short*0.10, h*0.80, short*0.07);
+    ctx.fillStyle = shadeColor(baseColor,0.05);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.4);
+    ctx.lineWidth = Math.max(1, short*0.012);
+    ctx.beginPath();
+    ctx.moveTo(x+w/2, y+h*0.62); ctx.lineTo(x+w/2, y+h*0.94);
+    ctx.moveTo(x+short*0.05, y+h*0.94); ctx.lineTo(x+w-short*0.05, y+h*0.94);
+    ctx.stroke();
+    drawVehicleMirrors(ctx, x, y, w, h*0.14, short, baseColor);
+  } else {
+    // Hatchback / sedan / SUV: windshield, roof panel, rear glass.
+    roundRectPath(ctx, x+w*0.14, y+h*0.09, w*0.72, h*0.19, short*0.05);
+    ctx.fillStyle = glassFill(y, y+h*0.3);
+    ctx.fill();
+    roundRectPath(ctx, x+w*0.12, y+h*0.30, w*0.76, h*0.38, short*0.06);
+    ctx.fillStyle = shadeColor(baseColor,-0.06);
+    ctx.fill();
+    roundRectPath(ctx, x+w*0.16, y+h*0.70, w*0.68, h*0.16, short*0.05);
+    ctx.fillStyle = glassFill(y+h*0.68, y+h*0.88);
+    ctx.fill();
+    drawVehicleMirrors(ctx, x, y, w, h*0.27, short, baseColor);
+  }
+
+  // Wheel shadows just inside the four corners -- the one detail that reads
+  // instantly as "car" from directly above.
+  ctx.fillStyle = 'rgba(10,12,15,0.55)';
+  const wheelW = short*0.09, wheelH = short*0.20;
+  [h*0.20, h*0.80].forEach(wy=>{
+    roundRectPath(ctx, x+short*0.02, y+wy-wheelH/2, wheelW, wheelH, wheelW*0.4); ctx.fill();
+    roundRectPath(ctx, x+w-short*0.02-wheelW, y+wy-wheelH/2, wheelW, wheelH, wheelW*0.4); ctx.fill();
+  });
+}
+// Mirrors are kept fully inside x..x+w (not protruding past the body edge
+// like a real mirror would) -- the plan footprint must stay exactly the
+// selected width, so nothing decorative is allowed to render outside it.
+function drawVehicleMirrors(ctx, x, y, w, atY, short, baseColor){
+  const mw = short*0.07, mh = short*0.15;
+  ctx.fillStyle = shadeColor(baseColor,-0.35);
+  roundRectPath(ctx, x+short*0.015, y+atY-mh/2, mw, mh, mw*0.4); ctx.fill();
+  roundRectPath(ctx, x+w-short*0.015-mw, y+atY-mh/2, mw, mh, mw*0.4); ctx.fill();
+}
+// Fire pits: a stone/metal surround (round or square, matching whichever
+// shape was picked) around a recessed bowl with a warm ember glow at its
+// center -- kept understated/architectural rather than a literal cartoon
+// flame, the same restraint the rest of the icon set uses (e.g. the power
+// point symbol).
+function drawFirepitIcon(ctx, icon, x, y, w, h, baseColor){
+  const emberGlow = (cx,cy,r)=>{
+    const g = ctx.createRadialGradient(cx,cy,0, cx,cy,Math.max(r,1));
+    g.addColorStop(0,'#F2A65A');
+    g.addColorStop(0.35,'#B5461E');
+    g.addColorStop(0.75,'#3A2119');
+    g.addColorStop(1,'#221512');
+    return g;
+  };
+  const logHints = (cx,cy,r)=>{
+    ctx.strokeStyle = 'rgba(40,26,16,0.6)';
+    ctx.lineWidth = Math.max(1, r*0.16);
+    ctx.lineCap = 'round';
+    [[-0.6,-0.2],[0.5,-0.35],[0.05,0.55]].forEach(([dx,dy])=>{
+      ctx.beginPath();
+      ctx.moveTo(cx-dx*r, cy-dy*r);
+      ctx.lineTo(cx+dx*r, cy+dy*r);
+      ctx.stroke();
+    });
+  };
+  if(icon==='firepit_round'){
+    const cx=x+w/2, cy=y+h/2, r=Math.min(w,h)/2;
+    const rimGrad = ctx.createRadialGradient(cx-r*0.3,cy-r*0.3,r*0.1, cx,cy,r);
+    rimGrad.addColorStop(0, shadeColor(baseColor,0.25));
+    rimGrad.addColorStop(1, shadeColor(baseColor,-0.2));
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.fillStyle = rimGrad; ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.45); ctx.lineWidth = Math.max(1,r*0.05); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx,cy,r*0.68,0,Math.PI*2);
+    ctx.fillStyle = emberGlow(cx,cy,r*0.68); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = Math.max(1,r*0.035); ctx.stroke();
+    logHints(cx,cy,r*0.5);
+  } else {
+    const short = Math.min(w,h);
+    roundRectPath(ctx, x, y, w, h, short*0.12);
+    const rimGrad = ctx.createLinearGradient(x,y,x+w,y+h);
+    rimGrad.addColorStop(0, shadeColor(baseColor,0.22));
+    rimGrad.addColorStop(1, shadeColor(baseColor,-0.18));
+    ctx.fillStyle = rimGrad; ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.45); ctx.lineWidth = Math.max(1,short*0.035); ctx.stroke();
+    const inset = short*0.17;
+    roundRectPath(ctx, x+inset, y+inset, w-inset*2, h-inset*2, Math.max(2,short*0.06));
+    const cx=x+w/2, cy=y+h/2;
+    ctx.fillStyle = emberGlow(cx,cy, Math.max(w-inset*2,h-inset*2)/2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = Math.max(1,short*0.025); ctx.stroke();
+    logHints(cx,cy, Math.min(w-inset*2,h-inset*2)*0.4);
+  }
 }
 // A soft darkened rim + a faint top-left highlight, clipped to whatever path
 // is currently set on ctx. Applied uniformly to every filled shape (deck,
@@ -5491,8 +5723,16 @@ function renderElementsList(){
       hIn.value = formatNum(fromFt(el.hFt,state.unit));
       hIn.addEventListener('click', e=>e.stopPropagation());
       hIn.addEventListener('change', ()=>{ const v=parseFloat(hIn.value); if(v>0){pushUndo(); el.hFt=toFt(v,state.unit); drawOverlay(); renderElementsList();} });
-      dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn);
-      dims.appendChild(document.createTextNode('H')); dims.appendChild(hIn);
+      if(PRESETS[el.presetKey] && PRESETS[el.presetKey].isVehicle){
+        // Vehicles: show Length x Width (in that order) instead of the
+        // generic W/H -- same two inputs/handlers, just relabeled and
+        // reordered to match how a vehicle's size is actually specified.
+        dims.appendChild(document.createTextNode('L')); dims.appendChild(hIn);
+        dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn);
+      } else {
+        dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn);
+        dims.appendChild(document.createTextNode('H')); dims.appendChild(hIn);
+      }
       const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
       rotIn.value = el.rotationDeg;
       rotIn.addEventListener('click', e=>e.stopPropagation());
@@ -6145,6 +6385,8 @@ const FURNITURE_HEIGHT_FT_3D = {
   bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
   sofa:2.6, sofa_corner:2.6, armchair:2.7,
   dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, toilet:1.3,
+  car:4.8, ute:5.9, ute_single:5.9, van:6.7,
+  firepit_round:1.0, firepit_square:1.0,
 };
 const HEIGHT_OVERRIDES_FT_3D = { table_coffee:1.5, table_side:2.3 };
 function furnitureHeightFt3D(presetKey, icon){
