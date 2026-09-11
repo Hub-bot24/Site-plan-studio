@@ -1103,6 +1103,20 @@ PRESETS.firepit_rect_1200x700 = {label:'Rectangular fire pit (1.2 × 0.7 m)', co
 // width/height stay blank until the user types the real dimensions.
 PRESETS.firepit_custom = {label:'Custom fire pit — enter dimensions', color:FIREPIT_COLOR, texture:'flat', quick:'rect', icon:'firepit_square'};
 
+// Outdoor swing furniture footprints (metres) -- same "pick it and it's
+// already the right real-world size" pattern as vehicles/fire pits above.
+// swing_egg is circle-shape (dM, like a fire bowl); the rest are rect-shape
+// (wM x hM, the stand's outer footprint) so they still get a real 3D-preview
+// box, same as everything else with an icon.
+const SWING_COLOR = '#A67C4E';
+PRESETS.swing_egg = {label:'Hanging egg chair (Ø1.1 m)', color:SWING_COLOR, texture:'flat', quick:'circle', name:'Hanging egg chair', dM:1.1, icon:'swing_egg'};
+PRESETS.swing_double = {label:'Double hanging chair (1.5 × 1.1 m)', color:SWING_COLOR, texture:'flat', quick:'rect', name:'Double hanging chair', wM:1.5, hM:1.1, icon:'swing_double'};
+PRESETS.swing_bench2 = {label:'2-seater swing bench (1.55 × 1.25 m)', color:SWING_COLOR, texture:'flat', quick:'rect', name:'2-seater swing bench', wM:1.55, hM:1.25, icon:'swing_bench2'};
+PRESETS.swing_bench3 = {label:'3-seater canopy swing (1.95 × 1.5 m)', color:SWING_COLOR, texture:'flat', quick:'rect', name:'3-seater canopy swing', wM:1.95, hM:1.5, icon:'swing_bench3'};
+PRESETS.swing_hammock = {label:'Hammock with stand (3.6 × 1.15 m)', color:SWING_COLOR, texture:'flat', quick:'rect', name:'Hammock with stand', wM:1.15, hM:3.6, icon:'swing_hammock'};
+// Custom swing -- no fixed wM/hM, same idea as custom vehicle/custom fire pit.
+PRESETS.swing_custom = {label:'Custom swing seat — enter dimensions', color:SWING_COLOR, texture:'flat', quick:'rect', icon:'swing_bench2'};
+
 // Standard recommended clearance (inches) for common furniture -- the same
 // starting-point minimums interior designers use: room to pull a dining
 // chair out and walk behind it, a bed's walk space, a wardrobe/fridge door
@@ -2663,6 +2677,7 @@ const TYPE_GROUPS = [
   {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','tree','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
+  {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom']},
   {label:'Roofing', keys:['roof_tile','roof_metal','roof_shingle']},
   {label:'Cladding', keys:['clad_stone']},
   {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS).filter(k=>k!=='power_point')]},
@@ -4700,6 +4715,8 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     drawVehicleIcon(ctx, icon, x, y, w, h, baseColor);
   } else if(icon==='firepit_round' || icon==='firepit_square'){
     drawFirepitIcon(ctx, icon, x, y, w, h, baseColor);
+  } else if(icon==='swing_egg' || icon==='swing_double' || icon==='swing_bench2' || icon==='swing_bench3' || icon==='swing_hammock'){
+    drawSwingIcon(ctx, icon, x, y, w, h, baseColor);
   } else {
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = shadeColor(baseColor,0.1);
@@ -4898,6 +4915,8 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
     drawVehicleIconBW(ctx, icon, x, y, w, h, short);
   } else if(icon==='firepit_round' || icon==='firepit_square'){
     drawFirepitIconBW(ctx, icon, x, y, w, h, short);
+  } else if(icon==='swing_egg' || icon==='swing_double' || icon==='swing_bench2' || icon==='swing_bench3' || icon==='swing_hammock'){
+    drawSwingIconBW(ctx, icon, x, y, w, h, short);
   } else {
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = BW_PAPER; ctx.fill();
@@ -5317,6 +5336,244 @@ function drawFirepitIcon(ctx, icon, x, y, w, h, baseColor){
     drawLogs(cx,cy, bowlR*0.62);
   }
 }
+// Outdoor swing furniture: a hanging egg chair and a double hanging pod
+// chair (both woven baskets in a round steel hoop stand), two sizes of
+// A-frame swing bench (plain 2-seat, 3-seat with a canopy overhead), and a
+// hammock slung between two end posts. Same "reads as a real object, not a
+// flat tinted shape" treatment as the vehicles/fire pits above -- ground
+// shadow, a woven/fabric texture hint, and a couple of small hardware marks
+// (chain points, foot pads) rather than a plain painted silhouette.
+function drawSwingIcon(ctx, icon, x, y, w, h, baseColor){
+  const short = Math.min(w,h);
+  // Thin concentric rings suggesting a woven rattan basket -- shared by both
+  // hanging-chair icons instead of a flat fill.
+  const weaveArcs = (cx,cy,rMax,count)=>{
+    ctx.save();
+    ctx.strokeStyle = 'rgba(0,0,0,0.14)';
+    ctx.lineWidth = Math.max(0.6, rMax*0.025);
+    for(let i=1;i<=count;i++){
+      const r = rMax*(i/(count+1));
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  if(icon==='swing_egg'){
+    const cx=x+w/2, cy=y+h/2, r=Math.min(w,h)/2;
+    ctx.save();
+    ctx.shadowColor = 'rgba(5,9,14,0.45)';
+    ctx.shadowBlur = r*0.3;
+    ctx.shadowOffsetX = r*0.05;
+    ctx.shadowOffsetY = r*0.09;
+    ctx.fillStyle = 'rgba(5,9,14,0.55)';
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    // Round steel hoop stand the pod hangs inside.
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.strokeStyle = 'rgba(70,74,78,0.9)';
+    ctx.lineWidth = Math.max(1.2, r*0.05);
+    ctx.stroke();
+
+    // Woven pod, a shade darker toward the rim than the centre (a cupped
+    // basket, not a flat disc).
+    const podR = r*0.86;
+    const podGrad = ctx.createRadialGradient(cx-podR*0.3,cy-podR*0.35,podR*0.15, cx,cy,podR);
+    podGrad.addColorStop(0, shadeColor(baseColor,0.22));
+    podGrad.addColorStop(1, shadeColor(baseColor,-0.22));
+    ctx.beginPath(); ctx.arc(cx,cy,podR,0,Math.PI*2);
+    ctx.fillStyle = podGrad; ctx.fill();
+    weaveArcs(cx,cy,podR,4);
+    ctx.strokeStyle = shadeColor(baseColor,-0.5); ctx.lineWidth = Math.max(1,r*0.035);
+    ctx.beginPath(); ctx.arc(cx,cy,podR,0,Math.PI*2); ctx.stroke();
+
+    // Cushion seat visible through the pod's opening.
+    const cushR = r*0.52;
+    ctx.beginPath(); ctx.ellipse(cx,cy+r*0.06,cushR,cushR*0.86,0,0,Math.PI*2);
+    ctx.fillStyle = '#EDE6D8';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.16)'; ctx.lineWidth=1; ctx.stroke();
+    ctx.strokeStyle='rgba(0,0,0,0.12)'; ctx.lineWidth=Math.max(0.6,r*0.02);
+    ctx.beginPath(); ctx.moveTo(cx-cushR*0.55,cy+r*0.06); ctx.lineTo(cx+cushR*0.55,cy+r*0.06); ctx.stroke();
+
+    // The hanging chain/hook, seen end-on from directly above.
+    ctx.beginPath(); ctx.arc(cx,cy-r*0.02,r*0.07,0,Math.PI*2);
+    ctx.fillStyle = 'rgba(40,42,45,0.85)'; ctx.fill();
+  } else if(icon==='swing_double'){
+    // Drawn as a heavily rounded rect (a "stadium" shape) rather than a true
+    // inscribed ellipse -- an ellipse never reaches a rect's corners, which
+    // left the item's own generic footprint outline (drawn behind every
+    // rect-shape element) visibly peeking out as a stray rectangle behind
+    // the basket. A rounded rect with a big radius still reads as a soft
+    // pod/basket shape but -- like the existing sofa/bed icons -- leaves
+    // only a negligible sliver at each corner.
+    const cx=x+w/2, cy=y+h/2;
+    const basketPath = ()=> roundRectPath(ctx, x, y, w, h, short*0.42);
+    ctx.save();
+    ctx.shadowColor = 'rgba(5,9,14,0.42)';
+    ctx.shadowBlur = short*0.2;
+    ctx.shadowOffsetX = short*0.045;
+    ctx.shadowOffsetY = short*0.075;
+    ctx.fillStyle = 'rgba(5,9,14,0.5)';
+    basketPath(); ctx.fill();
+    ctx.restore();
+
+    basketPath();
+    ctx.strokeStyle = 'rgba(70,74,78,0.9)';
+    ctx.lineWidth = Math.max(1.2, short*0.045);
+    ctx.stroke();
+
+    const basketGrad = ctx.createLinearGradient(x,y,x+w,y+h);
+    basketGrad.addColorStop(0, shadeColor(baseColor,0.2));
+    basketGrad.addColorStop(1, shadeColor(baseColor,-0.2));
+    basketPath();
+    ctx.fillStyle = basketGrad; ctx.fill();
+    ctx.save();
+    basketPath(); ctx.clip();
+    weaveArcs(cx,cy,Math.max(w,h)*0.5,4);
+    ctx.restore();
+    basketPath();
+    ctx.strokeStyle = shadeColor(baseColor,-0.5); ctx.lineWidth = Math.max(1,short*0.03);
+    ctx.stroke();
+
+    // Two cushions side by side with a centre fold, not one long pillow.
+    const cushRx = w*0.19, cushRy = h*0.32;
+    [-1,1].forEach(dir=>{
+      ctx.beginPath(); ctx.ellipse(cx+dir*w*0.19,cy,cushRx,cushRy,0,0,Math.PI*2);
+      ctx.fillStyle = '#EDE6D8'; ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,0.15)'; ctx.lineWidth=1; ctx.stroke();
+    });
+    // Two chain points along the rim (a wide basket hangs from two, not one).
+    [-w*0.22, w*0.22].forEach(dx=>{
+      ctx.beginPath(); ctx.arc(cx+dx,y+h*0.06,short*0.035,0,Math.PI*2);
+      ctx.fillStyle='rgba(40,42,45,0.85)'; ctx.fill();
+    });
+  } else if(icon==='swing_bench2' || icon==='swing_bench3'){
+    const is3 = icon==='swing_bench3';
+    // A-frame outrigger legs poking out past the seat at all 4 corners --
+    // the stand's base always splays wider than the bench it carries.
+    const legOut = short*0.16;
+    const corners = [[x,y,-1,-0.6],[x+w,y,1,-0.6],[x,y+h,-1,0.6],[x+w,y+h,1,0.6]];
+    ctx.strokeStyle = 'rgba(60,64,68,0.55)';
+    ctx.lineWidth = Math.max(1.2, short*0.03);
+    ctx.lineCap = 'round';
+    corners.forEach(([lx,ly,sx,sy])=>{
+      ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(lx+sx*legOut,ly+sy*legOut); ctx.stroke();
+    });
+    ctx.fillStyle = 'rgba(5,9,14,0.35)';
+    corners.forEach(([lx,ly,sx,sy])=>{
+      ctx.beginPath(); ctx.ellipse(lx+sx*legOut,ly+sy*legOut, short*0.045, short*0.03,0,0,Math.PI*2); ctx.fill();
+    });
+
+    if(is3){
+      // A canopy overhead, offset slightly beyond the seat on every side --
+      // semi-transparent so the bench underneath still reads through it.
+      const canX = x-short*0.06, canY = y-short*0.05, canW = w+short*0.12, canH = h*0.55;
+      ctx.save();
+      roundRectPath(ctx, canX, canY, canW, canH, short*0.1);
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = shadeColor(baseColor,0.3);
+      ctx.fill();
+      ctx.restore();
+      roundRectPath(ctx, canX, canY, canW, canH, short*0.1);
+      ctx.strokeStyle = shadeColor(baseColor,-0.3);
+      ctx.lineWidth = Math.max(1,short*0.02);
+      ctx.stroke();
+      ctx.strokeStyle='rgba(0,0,0,0.14)'; ctx.lineWidth=Math.max(0.6,short*0.012);
+      for(let f=0.18; f<1; f+=0.2){
+        ctx.beginPath(); ctx.moveTo(canX+canW*f, canY); ctx.lineTo(canX+canW*f, canY+canH); ctx.stroke();
+      }
+    }
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(5,9,14,0.4)';
+    ctx.shadowBlur = short*0.16;
+    ctx.shadowOffsetX = short*0.03;
+    ctx.shadowOffsetY = short*0.06;
+    ctx.fillStyle = 'rgba(5,9,14,0.5)';
+    roundRectPath(ctx,x,y,w,h,short*0.14); ctx.fill();
+    ctx.restore();
+
+    // Seat body -- back band along the top edge, armrests at each end, an
+    // extra seat-divider line for the 3-seat version, same visual language
+    // as the existing sofa icon.
+    roundRectPath(ctx,x,y,w,h,short*0.14);
+    const seatGrad = ctx.createLinearGradient(x,y,x,y+h);
+    seatGrad.addColorStop(0, shadeColor(baseColor,0.16));
+    seatGrad.addColorStop(1, shadeColor(baseColor,-0.02));
+    ctx.fillStyle = seatGrad; ctx.fill();
+    const backH = h*0.22;
+    roundRectPath(ctx,x,y,w,backH,short*0.12);
+    ctx.fillStyle = shadeColor(baseColor,-0.2); ctx.fill();
+    const armW = w*0.1;
+    ctx.fillStyle = shadeColor(baseColor,-0.12);
+    roundRectPath(ctx,x,y,armW,h,short*0.12); ctx.fill();
+    roundRectPath(ctx,x+w-armW,y,armW,h,short*0.12); ctx.fill();
+    const seats = is3 ? 3 : 2;
+    ctx.strokeStyle='rgba(0,0,0,0.16)'; ctx.lineWidth=1.2;
+    for(let i=1;i<seats;i++){
+      const lx = x+armW+(w-armW*2)*(i/seats);
+      ctx.beginPath(); ctx.moveTo(lx,y+backH); ctx.lineTo(lx,y+h-short*0.03); ctx.stroke();
+    }
+    roundRectPath(ctx,x,y,w,h,short*0.14);
+    ctx.strokeStyle=shadeColor(baseColor,-0.4); ctx.lineWidth=1.4; ctx.stroke();
+    // Two hanging chains at the back corners.
+    ctx.fillStyle = 'rgba(40,42,45,0.8)';
+    [x+w*0.12, x+w*0.88].forEach(cx2=>{
+      ctx.beginPath(); ctx.arc(cx2,y+short*0.02,short*0.03,0,Math.PI*2); ctx.fill();
+    });
+  } else if(icon==='swing_hammock'){
+    // Two end stands, perpendicular to the long axis, near the top and
+    // bottom edges -- the posts a real hammock stand plants in the ground.
+    ctx.strokeStyle = 'rgba(60,64,68,0.75)';
+    ctx.lineWidth = Math.max(1.4, short*0.16);
+    ctx.lineCap = 'round';
+    [y+h*0.06, y+h*0.94].forEach(sy=>{
+      ctx.beginPath(); ctx.moveTo(x+w*0.08,sy); ctx.lineTo(x+w*0.92,sy); ctx.stroke();
+    });
+
+    const bodyTop = y+h*0.12, bodyH = h*0.76;
+    const bodyPath = ()=>{
+      ctx.beginPath();
+      ctx.moveTo(x+w*0.5, bodyTop);
+      ctx.bezierCurveTo(x+w*1.1, bodyTop+bodyH*0.15, x+w*1.1, bodyTop+bodyH*0.85, x+w*0.5, bodyTop+bodyH);
+      ctx.bezierCurveTo(x-w*0.1, bodyTop+bodyH*0.85, x-w*0.1, bodyTop+bodyH*0.15, x+w*0.5, bodyTop);
+      ctx.closePath();
+    };
+    ctx.save();
+    ctx.shadowColor = 'rgba(5,9,14,0.4)';
+    ctx.shadowBlur = short*0.5;
+    ctx.shadowOffsetX = w*0.03;
+    ctx.shadowOffsetY = h*0.02;
+    ctx.fillStyle = 'rgba(5,9,14,0.4)';
+    bodyPath(); ctx.fill();
+    ctx.restore();
+
+    // The stretched-fabric hammock body: narrow at both ends, bulging in the
+    // middle -- the classic top-down hammock silhouette, not a plain oval.
+    bodyPath();
+    const fabGrad = ctx.createLinearGradient(x,bodyTop,x+w,bodyTop);
+    fabGrad.addColorStop(0, shadeColor(baseColor,-0.16));
+    fabGrad.addColorStop(0.5, shadeColor(baseColor,0.22));
+    fabGrad.addColorStop(1, shadeColor(baseColor,-0.16));
+    ctx.fillStyle = fabGrad;
+    ctx.fill();
+    ctx.save();
+    bodyPath(); ctx.clip();
+    ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    ctx.lineWidth = Math.max(0.6, short*0.03);
+    for(let f=0.12; f<1; f+=0.12){
+      ctx.beginPath();
+      ctx.moveTo(x, bodyTop+bodyH*f);
+      ctx.lineTo(x+w, bodyTop+bodyH*f);
+      ctx.stroke();
+    }
+    ctx.restore();
+    bodyPath();
+    ctx.strokeStyle = shadeColor(baseColor,-0.45); ctx.lineWidth = Math.max(1, short*0.05);
+    ctx.stroke();
+  }
+}
 // Monochrome vehicles: the same per-body-type silhouette differentiation as
 // the colour version (frontR/rearR, cab/tray split, glass layout) drawn as
 // clean black linework instead -- a light body fill, a diagonally-hatched
@@ -5600,6 +5857,188 @@ function drawFirepitIconBW(ctx, icon, x, y, w, h, short){
     ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1, short*0.03);
     roundRectPath(ctx, x+inset, y+inset, bw2, bh2, Math.max(2,short*0.06)); ctx.stroke();
     drawLogsBW(cx,cy, bowlR*0.62);
+  }
+}
+// Monochrome swing furniture: the same weave/fabric-texture language as the
+// colour version (concentric rings for a woven basket, parallel fold lines
+// for a hammock) drawn as clean black linework on paper instead.
+function drawSwingIconBW(ctx, icon, x, y, w, h, short){
+  const weaveArcsBW = (cx,cy,rMax,count)=>{
+    ctx.save();
+    ctx.strokeStyle = BW_INK_SOFT;
+    ctx.lineWidth = Math.max(0.6, rMax*0.02);
+    for(let i=1;i<=count;i++){
+      const r = rMax*(i/(count+1));
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.stroke();
+    }
+    ctx.restore();
+  };
+
+  if(icon==='swing_egg'){
+    const cx=x+w/2, cy=y+h/2, r=Math.min(w,h)/2;
+    ctx.save();
+    ctx.shadowColor = 'rgba(20,20,20,0.3)';
+    ctx.shadowBlur = r*0.28;
+    ctx.shadowOffsetX = r*0.045;
+    ctx.shadowOffsetY = r*0.08;
+    ctx.fillStyle = 'rgba(20,20,20,0.4)';
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1.1, r*0.045); ctx.stroke();
+
+    const podR = r*0.86;
+    ctx.beginPath(); ctx.arc(cx,cy,podR,0,Math.PI*2);
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    weaveArcsBW(cx,cy,podR,4);
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,r*0.03);
+    ctx.beginPath(); ctx.arc(cx,cy,podR,0,Math.PI*2); ctx.stroke();
+
+    const cushR = r*0.52;
+    ctx.beginPath(); ctx.ellipse(cx,cy+r*0.06,cushR,cushR*0.86,0,0,Math.PI*2);
+    ctx.fillStyle = BW_PAPER_DIM; ctx.fill();
+    ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx-cushR*0.55,cy+r*0.06); ctx.lineTo(cx+cushR*0.55,cy+r*0.06); ctx.stroke();
+
+    ctx.beginPath(); ctx.arc(cx,cy-r*0.02,r*0.07,0,Math.PI*2);
+    ctx.fillStyle = BW_INK; ctx.fill();
+  } else if(icon==='swing_double'){
+    // Same rounded-rect ("stadium") basket as the colour version, for the
+    // same reason -- a true inscribed ellipse leaves a corner gap that the
+    // element's own generic footprint outline shows through as a stray
+    // rectangle, far more visible in high-contrast Black Drawing mode.
+    const cx=x+w/2, cy=y+h/2;
+    const basketPath = ()=> roundRectPath(ctx, x, y, w, h, short*0.42);
+    ctx.save();
+    ctx.shadowColor = 'rgba(20,20,20,0.28)';
+    ctx.shadowBlur = short*0.18;
+    ctx.shadowOffsetX = short*0.04;
+    ctx.shadowOffsetY = short*0.07;
+    ctx.fillStyle = 'rgba(20,20,20,0.35)';
+    basketPath(); ctx.fill();
+    ctx.restore();
+
+    basketPath();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1.1, short*0.04); ctx.stroke();
+
+    basketPath();
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    ctx.save();
+    basketPath(); ctx.clip();
+    weaveArcsBW(cx,cy,Math.max(w,h)*0.5,4);
+    ctx.restore();
+    basketPath();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.026);
+    ctx.stroke();
+
+    const cushRx = w*0.19, cushRy = h*0.32;
+    [-1,1].forEach(dir=>{
+      ctx.beginPath(); ctx.ellipse(cx+dir*w*0.19,cy,cushRx,cushRy,0,0,Math.PI*2);
+      ctx.fillStyle = BW_PAPER_DIM; ctx.fill();
+      ctx.strokeStyle=BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
+    });
+    ctx.fillStyle = BW_INK;
+    [-w*0.22, w*0.22].forEach(dx=>{
+      ctx.beginPath(); ctx.arc(cx+dx,y+h*0.06,short*0.032,0,Math.PI*2); ctx.fill();
+    });
+  } else if(icon==='swing_bench2' || icon==='swing_bench3'){
+    const is3 = icon==='swing_bench3';
+    const legOut = short*0.16;
+    const corners = [[x,y,-1,-0.6],[x+w,y,1,-0.6],[x,y+h,-1,0.6],[x+w,y+h,1,0.6]];
+    ctx.strokeStyle = BW_INK_SOFT;
+    ctx.lineWidth = Math.max(1, short*0.025);
+    ctx.lineCap = 'round';
+    corners.forEach(([lx,ly,sx,sy])=>{
+      ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(lx+sx*legOut,ly+sy*legOut); ctx.stroke();
+    });
+    ctx.fillStyle = 'rgba(20,20,20,0.3)';
+    corners.forEach(([lx,ly,sx,sy])=>{
+      ctx.beginPath(); ctx.ellipse(lx+sx*legOut,ly+sy*legOut, short*0.045, short*0.03,0,0,Math.PI*2); ctx.fill();
+    });
+
+    if(is3){
+      const canX = x-short*0.06, canY = y-short*0.05, canW = w+short*0.12, canH = h*0.55;
+      roundRectPath(ctx, canX, canY, canW, canH, short*0.1);
+      ctx.fillStyle = BW_PAPER; ctx.fill();
+      ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.022); ctx.stroke();
+      ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=Math.max(0.6,short*0.01);
+      for(let f=0.18; f<1; f+=0.2){
+        ctx.beginPath(); ctx.moveTo(canX+canW*f, canY); ctx.lineTo(canX+canW*f, canY+canH); ctx.stroke();
+      }
+    }
+
+    ctx.save();
+    ctx.shadowColor = 'rgba(20,20,20,0.3)';
+    ctx.shadowBlur = short*0.14;
+    ctx.shadowOffsetX = short*0.025;
+    ctx.shadowOffsetY = short*0.05;
+    ctx.fillStyle = 'rgba(20,20,20,0.35)';
+    roundRectPath(ctx,x,y,w,h,short*0.14); ctx.fill();
+    ctx.restore();
+
+    roundRectPath(ctx,x,y,w,h,short*0.14);
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1.1,short*0.022); ctx.stroke();
+    const backH = h*0.22;
+    ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,y+backH); ctx.lineTo(x+w,y+backH); ctx.stroke();
+    const armW = w*0.1;
+    ctx.beginPath();
+    ctx.moveTo(x+armW,y); ctx.lineTo(x+armW,y+h);
+    ctx.moveTo(x+w-armW,y); ctx.lineTo(x+w-armW,y+h);
+    ctx.stroke();
+    const seats = is3 ? 3 : 2;
+    for(let i=1;i<seats;i++){
+      const lx = x+armW+(w-armW*2)*(i/seats);
+      ctx.beginPath(); ctx.moveTo(lx,y+backH); ctx.lineTo(lx,y+h-short*0.03); ctx.stroke();
+    }
+    ctx.fillStyle = BW_INK;
+    [x+w*0.12, x+w*0.88].forEach(cx2=>{
+      ctx.beginPath(); ctx.arc(cx2,y+short*0.02,short*0.028,0,Math.PI*2); ctx.fill();
+    });
+  } else if(icon==='swing_hammock'){
+    ctx.strokeStyle = BW_INK;
+    ctx.lineWidth = Math.max(1.3, short*0.14);
+    ctx.lineCap = 'round';
+    [y+h*0.06, y+h*0.94].forEach(sy=>{
+      ctx.beginPath(); ctx.moveTo(x+w*0.08,sy); ctx.lineTo(x+w*0.92,sy); ctx.stroke();
+    });
+
+    const bodyTop = y+h*0.12, bodyH = h*0.76;
+    const bodyPath = ()=>{
+      ctx.beginPath();
+      ctx.moveTo(x+w*0.5, bodyTop);
+      ctx.bezierCurveTo(x+w*1.1, bodyTop+bodyH*0.15, x+w*1.1, bodyTop+bodyH*0.85, x+w*0.5, bodyTop+bodyH);
+      ctx.bezierCurveTo(x-w*0.1, bodyTop+bodyH*0.85, x-w*0.1, bodyTop+bodyH*0.15, x+w*0.5, bodyTop);
+      ctx.closePath();
+    };
+    ctx.save();
+    ctx.shadowColor = 'rgba(20,20,20,0.3)';
+    ctx.shadowBlur = short*0.45;
+    ctx.shadowOffsetX = w*0.025;
+    ctx.shadowOffsetY = h*0.018;
+    ctx.fillStyle = 'rgba(20,20,20,0.32)';
+    bodyPath(); ctx.fill();
+    ctx.restore();
+
+    bodyPath();
+    ctx.fillStyle = BW_PAPER_DIM;
+    ctx.fill();
+    ctx.save();
+    bodyPath(); ctx.clip();
+    ctx.strokeStyle = BW_INK_SOFT;
+    ctx.lineWidth = Math.max(0.6, short*0.025);
+    for(let f=0.12; f<1; f+=0.12){
+      ctx.beginPath();
+      ctx.moveTo(x, bodyTop+bodyH*f);
+      ctx.lineTo(x+w, bodyTop+bodyH*f);
+      ctx.stroke();
+    }
+    ctx.restore();
+    bodyPath();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1.1, short*0.045);
+    ctx.stroke();
   }
 }
 // A soft darkened rim + a faint top-left highlight, clipped to whatever path
@@ -7453,6 +7892,7 @@ const FURNITURE_HEIGHT_FT_3D = {
   dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, toilet:1.3,
   hatch:4.7, sedan:4.8, suv:5.7, ute:5.9, ute_single:5.9, van:6.7,
   firepit_round:1.0, firepit_square:1.0,
+  swing_egg:6.6, swing_double:6.7, swing_bench2:6.6, swing_bench3:7.1, swing_hammock:5.7,
 };
 const HEIGHT_OVERRIDES_FT_3D = { table_coffee:1.5, table_side:2.3 };
 function furnitureHeightFt3D(presetKey, icon){
