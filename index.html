@@ -1000,7 +1000,12 @@ const PRESETS = {
   roof_shingle: {label:'Roof — Asphalt shingle',   color:'#5B5854', texture:'shingle', quick:'rect'},
   clad_stone:   {label:'Cladding — Stone',         color:'#8F8878', texture:'stone',   quick:'rect'},
   indoor:    {label:'Indoor furniture (custom size)', color:'#8A7B6B', texture:'flat', quick:'rect'},
-  fence:     {label:'Fence / line',    color:'#D8DEE5', texture:null,       quick:'none'},
+  // A noticeably more visible default than the very pale grey this used to
+  // be -- easy to lose against a white/light-coloured plan background or
+  // any light surface texture underneath it. Existing saved fences keep
+  // whatever colour they already have; this only changes the starting
+  // colour for newly-added ones (still user-editable via the swatch either way).
+  fence:     {label:'Fence / line',    color:'#8A93A0', texture:null,       quick:'none'},
   dimension: {label:'Dimension (measure distance)', color:'#3E7CB1', texture:null, quick:'none'},
 };
 
@@ -3346,13 +3351,16 @@ function finishDrawing(){
   drawOverlay();
   if(el.isDimension){
     // A rough tap-to-tap measurement is often not the exact number you
-    // actually want -- surface the just-added row's editable distance field
-    // immediately instead of leaving the user to hunt for it further down
-    // the sidebar list.
+    // actually want -- immediately focus the just-added row's editable
+    // distance field so it's ready to type straight over. renderElementsList()
+    // above already scrolled the row into view (state.selectedId was set to
+    // el.id first, so its own focusSidebarRow call handles that) -- a second
+    // scrollIntoView here used to fire right on top of it with a different
+    // (smooth) animation, and the two could race and leave the row only
+    // partly visible.
     const newRow = elementsList.querySelector('.elrow[data-id="'+el.id+'"]');
     const lenInput = newRow && newRow.querySelector('.dims input[type=number]');
     if(lenInput){
-      newRow.scrollIntoView({block:'center', behavior:'smooth'});
       lenInput.focus();
       lenInput.select();
     }
@@ -6756,6 +6764,40 @@ function drawHedgeElement(ctx, el, selected){
     ctx.restore();
   }
 }
+// Real-world post-to-post spacing for a fence line -- about right for a
+// typical paling/picket fence. Posts are walked along the actual path
+// length at this interval (see fencePostPositions), not just dropped at
+// whatever corner points the user happened to click, so a long straight run
+// still reads clearly as a fence instead of one thin, easy-to-miss line
+// with a mark only at each end.
+const FENCE_POST_SPACING_FT = 6;
+function fencePostPositions(points, spacingPx){
+  const posts = [];
+  let totalDist = 0, nextMarkerAt = 0;
+  for(let i=0;i<points.length-1;i++){
+    const a = points[i], b = points[i+1];
+    const dx=b.x-a.x, dy=b.y-a.y, segLen=Math.hypot(dx,dy);
+    if(segLen<=0.001) continue;
+    const ux=dx/segLen, uy=dy/segLen;
+    while(nextMarkerAt <= totalDist+segLen+0.001){
+      const d = Math.min(Math.max(nextMarkerAt-totalDist,0), segLen);
+      posts.push({x:a.x+ux*d, y:a.y+uy*d, nx:-uy, ny:ux});
+      nextMarkerAt += spacingPx;
+    }
+    totalDist += segLen;
+  }
+  // The walk above can overshoot the very last vertex without ever landing
+  // exactly on it -- always add it explicitly so the fence's own endpoint
+  // gets a post too, not just points spaced back from wherever it started.
+  const lastPt = points[points.length-1];
+  const lastPost = posts[posts.length-1];
+  if(!lastPost || Math.hypot(lastPost.x-lastPt.x, lastPost.y-lastPt.y) > 1){
+    const prevPt = points[points.length-2] || lastPt;
+    const dx=lastPt.x-prevPt.x, dy=lastPt.y-prevPt.y, len=Math.hypot(dx,dy)||1;
+    posts.push({x:lastPt.x, y:lastPt.y, nx:-dy/len, ny:dx/len});
+  }
+  return posts;
+}
 function drawPathElement(ctx, el, selected){
   if(el.points.length<2) return;
   if(el.isDimension){ drawDimensionElement(ctx, el, selected); return; }
@@ -6768,27 +6810,37 @@ function drawPathElement(ctx, el, selected){
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   strokePolyline(ctx, el.points, false);
+  const spacingPx = Math.max(10, FENCE_POST_SPACING_FT*(state.scalePxPerFt||40));
+  const posts = fencePostPositions(el.points, spacingPx);
   if(bwFence){
-    // Fence-post ticks: a short perpendicular mark at each point -- the
+    // Fence-post ticks: a short perpendicular mark at each post -- the
     // standard architectural fence-line convention, instead of a plain dot.
     ctx.strokeStyle = BW_INK;
     ctx.lineWidth = 1.2;
-    el.points.forEach((p,i)=>{
-      const ref = el.points[i+1] || el.points[i-1];
-      if(!ref) return;
-      const dx = ref.x-p.x, dy = ref.y-p.y, len = Math.hypot(dx,dy)||1;
-      const perpX = -dy/len, perpY = dx/len, tick = 4.5;
+    const tick = 4.5;
+    posts.forEach(p=>{
       ctx.beginPath();
-      ctx.moveTo(p.x-perpX*tick, p.y-perpY*tick);
-      ctx.lineTo(p.x+perpX*tick, p.y+perpY*tick);
+      ctx.moveTo(p.x-p.nx*tick, p.y-p.ny*tick);
+      ctx.lineTo(p.x+p.nx*tick, p.y+p.ny*tick);
       ctx.stroke();
     });
   } else {
-    ctx.fillStyle = el.color;
-    el.points.forEach(p=>{
+    // Small post caps, not flat dots -- a soft ground shadow then a shaded,
+    // outlined circle reads as an actual post standing on the line, the
+    // same "paint a shadow, then the object" language every other icon in
+    // the app already uses, just scaled down to fit a thin fence line.
+    posts.forEach(p=>{
       ctx.beginPath();
-      ctx.arc(p.x,p.y,2,0,Math.PI*2);
+      ctx.arc(p.x+0.6, p.y+0.9, 3.2, 0, Math.PI*2);
+      ctx.fillStyle = 'rgba(5,9,14,0.28)';
       ctx.fill();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+      ctx.fillStyle = shadeColor(el.color, -0.1);
+      ctx.fill();
+      ctx.strokeStyle = shadeColor(el.color, -0.5);
+      ctx.lineWidth = 1;
+      ctx.stroke();
     });
   }
   ctx.restore();
