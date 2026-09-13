@@ -449,6 +449,7 @@
   .icnbtn:hover{border-color:var(--ink);color:var(--ink);}
   .icnbtn.del:hover{border-color:var(--danger);color:var(--danger);}
   .icnbtn.active{border-color:var(--accent);color:var(--accent);}
+  .icnbtn:disabled{opacity:0.35;cursor:not-allowed;}
   .empty-note{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;color:var(--ink-dim);font-size:12px;line-height:1.5;padding:18px 8px;}
   .empty-note svg{color:var(--ink-dim);opacity:0.5;}
   .totalline{
@@ -702,6 +703,21 @@
             <button class="icnbtn" id="nextPageBtn">›</button>
           </div>
         </div>
+        <div id="underlayControls" style="display:none;margin-top:10px;border-top:1px solid var(--line);padding-top:10px;">
+          <p class="helptext" style="margin-bottom:8px;">This plan is a reference underlay for tracing — it is never the model itself. Adjust it so the walls you trace stand out clearly.</p>
+          <div class="field">
+            <label>Underlay opacity — <span id="underlayOpacityLabel">100%</span></label>
+            <input type="range" id="underlayOpacityInput" min="10" max="100" value="100">
+          </div>
+          <div class="checkfield">
+            <input type="checkbox" id="underlayVisibleInput" checked>
+            <label for="underlayVisibleInput">Show underlay</label>
+          </div>
+          <div class="checkfield">
+            <input type="checkbox" id="underlayLockInput">
+            <label for="underlayLockInput">Lock underlay (block accidental replace while tracing)</label>
+          </div>
+        </div>
       </div>
 
       <div class="panel disabled" id="calibratePanel">
@@ -782,6 +798,16 @@
           <div class="checkfield">
             <input type="checkbox" id="snapToggleInput" checked>
             <label for="snapToggleInput">Snap to existing corners &amp; 45° angles while drawing</label>
+          </div>
+          <div id="wallFields" class="row2" style="display:none;">
+            <div class="field">
+              <label>Thickness (<span class="unit-label">m</span>)</label>
+              <input type="number" id="wallThicknessInput" step="0.01" min="0.01" placeholder="0.09">
+            </div>
+            <div class="field">
+              <label>Wall height (<span class="unit-label">m</span>)</label>
+              <input type="number" id="wallHeightInput" step="0.05" min="0.1" placeholder="2.44">
+            </div>
           </div>
           <div class="checkfield" id="cutoutFieldWrap" style="display:none;">
             <input type="checkbox" id="cutoutInput">
@@ -974,6 +1000,9 @@ const state = {
   showClearances:true,
   showRoomSpace:true,
   blackMode:false,
+  underlayOpacity:1,
+  underlayVisible:true,
+  underlayLocked:false,
   companyName:'',
   companyLogo:null,
   clientName:'',
@@ -1008,6 +1037,24 @@ const PRESETS = {
   fence:     {label:'Fence / line',    color:'#8A93A0', texture:null,       quick:'none'},
   dimension: {label:'Dimension (measure distance)', color:'#3E7CB1', texture:null, quick:'none'},
 };
+
+// Standard architectural default wall height (8ft / ~2.44m, a typical
+// ceiling height) -- the SAME constant the 3D preview already uses for
+// roof base height and cladding height, so a traced wall's default height
+// always agrees with what the rest of the app already assumes a wall is.
+const WALL_HEIGHT_FT_3D = 8;
+// Traced walls reuse the exact same freeform-path drawing pipeline as a
+// fence (quick:'none' -> click-click-click on the canvas, the same
+// endpoint/angle snapping and magnifier-precision aiming, the same
+// getSnapCandidates() pool since it already walks every element's own
+// .points array) -- isWall is the only thing that tells the rest of the
+// app "treat this one specially" (thickness band rendering, chain
+// decomposition into separate per-segment wall elements, 3D extrusion),
+// never a second scale or drawing system.
+const WALL_COLOR_INTERIOR = '#D9D4C8';
+const WALL_COLOR_EXTERIOR = '#8B8478';
+PRESETS.wall_interior = {label:'Wall — Interior', color:WALL_COLOR_INTERIOR, texture:null, quick:'none', isWall:true, wallType:'internal', thicknessM:0.09, wallHeightFt:WALL_HEIGHT_FT_3D};
+PRESETS.wall_exterior = {label:'Wall — Exterior', color:WALL_COLOR_EXTERIOR, texture:null, quick:'none', isWall:true, wallType:'external', thicknessM:0.19, wallHeightFt:WALL_HEIGHT_FT_3D};
 
 // Standard real-world furniture footprints (inches, width x depth as seen from
 // directly above -- these are TOP-VIEW/plan-view footprints, matching what a
@@ -1184,6 +1231,11 @@ const canvasWrap = document.getElementById('canvasWrap');
 const bgCanvas = document.getElementById('bgCanvas');
 const overlayCanvas = document.getElementById('overlayCanvas');
 const newPlanBtn = document.getElementById('newPlanBtn');
+const underlayControls = document.getElementById('underlayControls');
+const underlayOpacityInput = document.getElementById('underlayOpacityInput');
+const underlayOpacityLabel = document.getElementById('underlayOpacityLabel');
+const underlayVisibleInput = document.getElementById('underlayVisibleInput');
+const underlayLockInput = document.getElementById('underlayLockInput');
 const exportBtn = document.getElementById('exportBtn');
 const exportPdfBtn = document.getElementById('exportPdfBtn');
 const presentBtn = document.getElementById('presentBtn');
@@ -1253,6 +1305,9 @@ const cutoutInput = document.getElementById('cutoutInput');
 const cutoutParentWrap = document.getElementById('cutoutParentWrap');
 const cutoutParentSelect = document.getElementById('cutoutParentSelect');
 const snapToggleInput = document.getElementById('snapToggleInput');
+const wallFields = document.getElementById('wallFields');
+const wallThicknessInput = document.getElementById('wallThicknessInput');
+const wallHeightInput = document.getElementById('wallHeightInput');
 const startDrawBtn = document.getElementById('startDrawBtn');
 const drawBar = document.getElementById('drawBar');
 const drawStat = document.getElementById('drawStat');
@@ -1318,6 +1373,18 @@ labelsToggleBtn.addEventListener('click', ()=>{
   state.showLabels = !state.showLabels;
   labelsToggleBtn.classList.toggle('toggled-on', state.showLabels);
   drawOverlay();
+});
+underlayOpacityInput.addEventListener('input', ()=>{
+  state.underlayOpacity = parseInt(underlayOpacityInput.value,10)/100;
+  underlayOpacityLabel.textContent = underlayOpacityInput.value+'%';
+  bgCanvas.style.opacity = String(state.underlayOpacity);
+});
+underlayVisibleInput.addEventListener('change', ()=>{
+  state.underlayVisible = underlayVisibleInput.checked;
+  bgCanvas.style.visibility = state.underlayVisible ? 'visible' : 'hidden';
+});
+underlayLockInput.addEventListener('change', ()=>{
+  state.underlayLocked = underlayLockInput.checked;
 });
 const clearancesToggleBtn = document.getElementById('clearancesToggleBtn');
 clearancesToggleBtn.addEventListener('click', ()=>{
@@ -1651,6 +1718,9 @@ saveProjectBtn.addEventListener('click', async ()=>{
     scalePxPerFt: state.scalePxPerFt,
     unit: state.unit,
     blackMode: state.blackMode,
+    underlayOpacity: state.underlayOpacity,
+    underlayVisible: state.underlayVisible,
+    underlayLocked: state.underlayLocked,
     northRotationDeg: state.northRotationDeg,
     nextId: state.nextId,
     elements: JSON.parse(JSON.stringify(state.elements)),
@@ -1716,6 +1786,18 @@ async function applyLoadedProjectRecord(rec, name){
   // full-colour look, exactly as before.
   state.blackMode = !!rec.blackMode;
   document.querySelectorAll('#styleToggle button').forEach(b=>b.classList.toggle('active', (b.dataset.style==='blackdraw')===state.blackMode));
+  // Same backward-compatibility rule as blackMode: absent on any plan saved
+  // before this feature existed, so it just falls back to fully opaque,
+  // visible, unlocked -- exactly how the underlay always used to behave.
+  state.underlayOpacity = rec.underlayOpacity!=null ? rec.underlayOpacity : 1;
+  state.underlayVisible = rec.underlayVisible!=null ? !!rec.underlayVisible : true;
+  state.underlayLocked = !!rec.underlayLocked;
+  underlayOpacityInput.value = Math.round(state.underlayOpacity*100);
+  underlayOpacityLabel.textContent = Math.round(state.underlayOpacity*100)+'%';
+  underlayVisibleInput.checked = state.underlayVisible;
+  underlayLockInput.checked = state.underlayLocked;
+  bgCanvas.style.opacity = String(state.underlayOpacity);
+  bgCanvas.style.visibility = state.underlayVisible ? 'visible' : 'hidden';
   updateUnitLabels();
   updateAddFieldsForType();
   state.northRotationDeg = rec.northRotationDeg || 0;
@@ -1743,6 +1825,7 @@ async function applyLoadedProjectRecord(rec, name){
 
   await renderPage(rec.currentPage || 1);
   newPlanBtn.style.display='inline-block';
+  underlayControls.style.display='block';
   exportBtn.disabled = false;
   exportPdfBtn.disabled = false;
   exportProjectBtn.disabled = false;
@@ -1836,6 +1919,9 @@ exportProjectBtn.addEventListener('click', ()=>{
     scalePxPerFt: state.scalePxPerFt,
     unit: state.unit,
     blackMode: state.blackMode,
+    underlayOpacity: state.underlayOpacity,
+    underlayVisible: state.underlayVisible,
+    underlayLocked: state.underlayLocked,
     northRotationDeg: state.northRotationDeg,
     nextId: state.nextId,
     elements: JSON.parse(JSON.stringify(state.elements)),
@@ -1998,6 +2084,19 @@ function distToSegment(px,py,p1,p2){
   t = Math.max(0,Math.min(1,t));
   const cx = p1.x+t*dx, cy=p1.y+t*dy;
   return Math.hypot(px-cx,py-cy);
+}
+// Closest point strictly along the interior of a segment (not counting a
+// margin near either end, which the ordinary endpoint-point snap already
+// covers on its own) -- used for T-junction snapping, so dragging a wall
+// endpoint onto the middle of another wall lands exactly on that wall's own
+// line instead of a fraction of a pixel to one side of it.
+function nearestPointOnSegmentInterior(px,py,p1,p2){
+  const dx=p2.x-p1.x, dy=p2.y-p1.y;
+  const lenSq = dx*dx+dy*dy;
+  if(lenSq<1e-6) return null;
+  let t = ((px-p1.x)*dx+(py-p1.y)*dy)/lenSq;
+  if(t<0.03 || t>0.97) return null;
+  return {x:p1.x+t*dx, y:p1.y+t*dy};
 }
 function pointInPolygon(px,py,points){
   let inside=false;
@@ -2686,6 +2785,7 @@ function updateUnitLabels(){
 
 /* ============================ Type select population ============================ */
 const TYPE_GROUPS = [
+  {label:'Walls (trace mode)', keys:['wall_interior','wall_exterior']},
   {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','tree','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
@@ -2830,13 +2930,23 @@ function updateAddFieldsForType(){
   freeformDivider.style.display = isFence ? 'none' : 'block';
   cutoutFieldWrap.style.display = isFence ? 'none' : 'flex';
   if(isFence){ cutoutInput.checked = false; cutoutParentWrap.style.display = 'none'; }
+  wallFields.style.display = preset.isWall ? 'flex' : 'none';
+  if(preset.isWall){
+    // Same toFt(_,'m') conversion every other metric-default preset already
+    // uses -- these are just starting points, fully editable per wall
+    // afterwards (and per already-placed wall in its own sidebar row).
+    wallThicknessInput.value = formatNum(fromFt(toFt(preset.thicknessM,'m'), state.unit));
+    wallHeightInput.value = formatNum(fromFt(preset.wallHeightFt, state.unit));
+  }
   costFieldWrap.style.display = isDimension ? 'none' : 'block';
-  startDrawBtn.textContent = isDimension ? 'Start measuring on plan' : (isFence ? 'Start drawing on plan' : 'Trace freeform outline');
+  startDrawBtn.textContent = isDimension ? 'Start measuring on plan' : (preset.isWall ? 'Start tracing walls' : (isFence ? 'Start drawing on plan' : 'Trace freeform outline'));
   pathHint.textContent = isDimension
     ? 'Tap one point, then a second point, to measure the straight-line distance between them (e.g. between two buildings, or a setback from the boundary). Doesn\'t count toward area or cost totals.'
-    : (isFence
-      ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
-      : 'For an irregular '+preset.label.toLowerCase()+' — not just a rectangle — tap "Trace freeform outline", then tap each corner (it closes automatically, needs at least 3 points). Renders with a realistic, to-scale '+preset.label.toLowerCase()+' texture either way.');
+    : preset.isWall
+      ? 'Tap each corner of the wall run in order (start with the outer envelope, then internal walls) — each tap snaps to existing corners, wall ends and 45° angles. Every tap after the first instantly becomes its own wall segment at this thickness/height, so joins between them line up exactly. Tap Finish (or double-tap the last point) when done.'
+      : (isFence
+        ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
+        : 'For an irregular '+preset.label.toLowerCase()+' — not just a rectangle — tap "Trace freeform outline", then tap each corner (it closes automatically, needs at least 3 points). Renders with a realistic, to-scale '+preset.label.toLowerCase()+' texture either way.');
   costUnitLabel.textContent = isFence ? '$ / '+state.unit : '$ / sq '+state.unit;
   // Jobs like a pool or a roof are usually quoted as one flat number, not
   // $/area -- default the toggle accordingly, but it's still just a toggle,
@@ -2921,11 +3031,25 @@ placeholder.addEventListener('drop',(e)=>{
   if(file) loadFile(file);
 });
 newPlanBtn.addEventListener('click', ()=>{
+  if(state.underlayLocked){
+    alert('The underlay is locked. Untick "Lock underlay" in the Plan panel first if you really want to replace it.');
+    return;
+  }
   if(state.elements.length && !confirm('Start a new plan? This clears the current plan, calibration, and everything you\'ve drawn on it (save the project first if you want to keep it).')) return;
   placeholder.classList.remove('hidden');
   canvasScroll.classList.remove('visible');
   zoomBar.classList.remove('visible');
   newPlanBtn.style.display='none';
+  underlayControls.style.display='none';
+  state.underlayOpacity = 1;
+  state.underlayVisible = true;
+  state.underlayLocked = false;
+  underlayOpacityInput.value = 100;
+  underlayOpacityLabel.textContent = '100%';
+  underlayVisibleInput.checked = true;
+  underlayLockInput.checked = false;
+  bgCanvas.style.opacity = '1';
+  bgCanvas.style.visibility = 'visible';
   exportBtn.disabled = true;
   exportPdfBtn.disabled = true;
   exportProjectBtn.disabled = true;
@@ -3026,6 +3150,7 @@ async function loadPdfBytesFresh(buf, fingerprint){
   canvasScroll.classList.add('visible');
   await renderPage(1);
   newPlanBtn.style.display='inline-block';
+  underlayControls.style.display='block';
   exportBtn.disabled = false;
   exportPdfBtn.disabled = false;
   exportProjectBtn.disabled = false;
@@ -3294,6 +3419,14 @@ startDrawBtn.addEventListener('click', ()=>{
     priceMode: (!isDimension && fixedPriceInput.checked) ? 'fixed' : 'rate',
     fixedCost: isDimension ? 0 : (parseFloat(fixedCostInput.value) || 0),
     points: [],
+    isWall: !!preset.isWall,
+    wallType: preset.wallType,
+    thicknessFt: preset.isWall
+      ? (parseFloat(wallThicknessInput.value)>0 ? toFt(parseFloat(wallThicknessInput.value), state.unit) : toFt(preset.thicknessM,'m'))
+      : undefined,
+    wallHeightFt: preset.isWall
+      ? (parseFloat(wallHeightInput.value)>0 ? toFt(parseFloat(wallHeightInput.value), state.unit) : preset.wallHeightFt)
+      : undefined,
   };
   state.selectedId = null;
   drawBar.classList.add('visible');
@@ -3320,24 +3453,60 @@ function finishDrawing(){
   if(!state.drawing) return;
   const minPts = state.drawing.shape==='path' ? 2 : 3;
   if(state.drawing.points.length < minPts) return;
-  const el = {
-    id: state.nextId++,
-    page: state.currentPage,
-    shape: state.drawing.shape,
-    presetKey: state.drawing.presetKey,
-    isDimension: !!state.drawing.isDimension,
-    label: state.drawing.label,
-    color: state.drawing.color,
-    isCutout: !!state.drawing.isCutout,
-    parentId: state.drawing.parentId || null,
-    unitCost: state.drawing.unitCost || 0,
-    priceMode: state.drawing.priceMode || 'rate',
-    fixedCost: state.drawing.fixedCost || 0,
-    points: state.drawing.points.map(p=>({x:p.x,y:p.y})),
-    _bornAt: performance.now(),
-  };
+  const pts = state.drawing.points.map(p=>({x:p.x,y:p.y}));
   pushUndo();
-  state.elements.push(el);
+  let el;
+  if(state.drawing.isWall){
+    // A wall trace is one continuous chain of taps, but each segment
+    // between two consecutive taps becomes its OWN wall element rather than
+    // one long multi-point path -- every wall needs its own thickness and
+    // (later) its own openings, and this way a join is automatically clean:
+    // there's no separate "corner" object, just two wall elements that
+    // happen to share the exact same endpoint coordinate. Pushed one at a
+    // time (not built as an array first) so uniqueLabel sees each previous
+    // segment already in state.elements and numbers the chain correctly.
+    for(let i=0;i<pts.length-1;i++){
+      el = {
+        id: state.nextId++,
+        page: state.currentPage,
+        shape: 'path',
+        presetKey: state.drawing.presetKey,
+        isDimension: false,
+        label: uniqueLabel(state.drawing.label),
+        color: state.drawing.color,
+        isCutout: false,
+        parentId: null,
+        unitCost: state.drawing.unitCost || 0,
+        priceMode: state.drawing.priceMode || 'rate',
+        fixedCost: state.drawing.fixedCost || 0,
+        points: [pts[i], pts[i+1]],
+        isWall: true,
+        wallType: state.drawing.wallType,
+        thicknessFt: state.drawing.thicknessFt,
+        wallHeightFt: state.drawing.wallHeightFt,
+        _bornAt: performance.now(),
+      };
+      state.elements.push(el);
+    }
+  } else {
+    el = {
+      id: state.nextId++,
+      page: state.currentPage,
+      shape: state.drawing.shape,
+      presetKey: state.drawing.presetKey,
+      isDimension: !!state.drawing.isDimension,
+      label: state.drawing.label,
+      color: state.drawing.color,
+      isCutout: !!state.drawing.isCutout,
+      parentId: state.drawing.parentId || null,
+      unitCost: state.drawing.unitCost || 0,
+      priceMode: state.drawing.priceMode || 'rate',
+      fixedCost: state.drawing.fixedCost || 0,
+      points: pts,
+      _bornAt: performance.now(),
+    };
+    state.elements.push(el);
+  }
   state.selectedId = el.id;
   state.drawing = null;
   drawBar.classList.remove('visible');
@@ -3646,6 +3815,30 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
     drawOverlay();
     return;
   }
+  // Dragging a selected wall's own endpoint handle reshapes/extends/trims
+  // just that wall -- and every OTHER wall that currently shares this exact
+  // point moves its matching endpoint right along with it, so a traced
+  // corner stays a clean, connected join through edits instead of pulling
+  // itself apart the moment one wall of the pair is reshaped. The "which
+  // other walls are linked" list is captured once, right now, from the
+  // point's position BEFORE the drag -- not re-detected every frame, which
+  // could misfire once the point has already moved away from its start.
+  if(selectedEl && selectedEl.isWall){
+    const epIdx = hitTestWallEndpoint(selectedEl, x, y);
+    if(epIdx!=null){
+      const originalPt = selectedEl.points[epIdx];
+      const linked = [{id:selectedEl.id, idx:epIdx}];
+      wallsSharingPoint(originalPt, selectedEl.id).forEach(o=>{
+        o.points.forEach((p,i)=>{
+          if(Math.hypot(p.x-originalPt.x,p.y-originalPt.y)<0.5) linked.push({id:o.id, idx:i});
+        });
+      });
+      state.dragging = {id:selectedEl.id, mode:'wallendpoint', linked};
+      overlayCanvas.setPointerCapture(e.pointerId);
+      drawOverlay();
+      return;
+    }
+  }
   const hit = findElementAt(x,y);
   if(hit){
     state.selectedId = hit.id;
@@ -3703,6 +3896,32 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
   if(state.dragging.mode==='points'){
     const dx = x-state.dragging.anchorX, dy = y-state.dragging.anchorY;
     el.points = state.dragging.startPoints.map(p=>({x:p.x+dx,y:p.y+dy}));
+  } else if(state.dragging.mode==='wallendpoint'){
+    // Snap to every other element's own points first (the exact same
+    // candidate pool tracing/calibrating already uses); failing that, snap
+    // to the nearest point along the INTERIOR of any other wall's segment,
+    // so dragging onto the middle of a wall lands a clean T-junction
+    // exactly on that wall's line rather than a hair off it.
+    let snapX = x, snapY = y;
+    const threshPx = 10/state.zoom;
+    let bestDist = threshPx, found = false;
+    getSnapCandidates(null).forEach(c=>{
+      const d = Math.hypot(c.x-x, c.y-y);
+      if(d<bestDist){ bestDist=d; snapX=c.x; snapY=c.y; found=true; }
+    });
+    if(!found){
+      currentPageElements().forEach(o=>{
+        if(!o.isWall || o.id===el.id) return;
+        const proj = nearestPointOnSegmentInterior(x,y,o.points[0],o.points[1]);
+        if(!proj) return;
+        const d = Math.hypot(proj.x-x, proj.y-y);
+        if(d<bestDist){ bestDist=d; snapX=proj.x; snapY=proj.y; }
+      });
+    }
+    state.dragging.linked.forEach(({id,idx})=>{
+      const w = getElementById(id);
+      if(w) w.points[idx] = {x:snapX, y:snapY};
+    });
   } else if(state.dragging.mode==='rotate'){
     const curAngle = Math.atan2(y-state.dragging.centerY, x-state.dragging.centerX);
     // Incremental angle change since the last frame, wrapped to (-180,180] so a
@@ -3847,8 +4066,11 @@ function hitTest(el,px,py){
     // this file (rotation handle, label handle, alignment snap) -- without
     // the /zoom it stayed a fixed 10 canvas px regardless of how zoomed out
     // the view is, so at a typical "fit the whole plan" zoom a thin fence or
-    // measurement line became very hard to actually land a click on.
-    const thresh = 10/Math.max(state.zoom, 0.01);
+    // measurement line became very hard to actually land a click on. A wall
+    // is drawn as an actual thickness band, not a thin line, so its own
+    // click target should match that real visual width -- anywhere inside
+    // the band should select it -- rather than the thin-line default.
+    const thresh = (el.isWall ? Math.max(10, (el.thicknessFt||0.1)*(state.scalePxPerFt||40)/2) : 10) / Math.max(state.zoom, 0.01);
     for(let i=1;i<el.points.length;i++){
       if(distToSegment(px,py,el.points[i-1],el.points[i])<=thresh) return true;
     }
@@ -6561,6 +6783,16 @@ function hitTestLabelHandle(ctx, el, px, py){
   const thresh = 9/Math.max(state.zoom, 0.01);
   return Math.hypot(px-hp.x, py-hp.y) <= thresh;
 }
+// Which endpoint (0 or 1) of a selected wall the click landed on, if any --
+// the drag target for reshaping/extending/trimming that one wall.
+function hitTestWallEndpoint(el, px, py){
+  if(!el.isWall) return null;
+  const thresh = 9/Math.max(state.zoom, 0.01);
+  for(let i=0;i<el.points.length;i++){
+    if(Math.hypot(el.points[i].x-px, el.points[i].y-py) <= thresh) return i;
+  }
+  return null;
+}
 // Draws an element's label chip at its (possibly manually-dragged) position,
 // with a thin dashed connector back to the shape whenever it's been moved
 // away from the default spot -- otherwise a relocated label with nothing
@@ -6813,9 +7045,162 @@ function fencePostPositions(points, spacingPx){
   }
   return posts;
 }
+// Every OTHER wall element (on this page) that shares this exact endpoint
+// coordinate -- chain-traced segments share it by construction, and a
+// snapped endpoint-drag lands on it exactly too. This is how a join is
+// detected at all: there's no separate "corner"/"junction" object, just two
+// wall elements whose points happen to coincide.
+function wallsSharingPoint(pt, excludeId){
+  const eps = 0.5;
+  return currentPageElements().filter(o=>o.isWall && o.id!==excludeId &&
+    o.points.some(p=>Math.hypot(p.x-pt.x,p.y-pt.y)<eps));
+}
+// How far past its own true endpoint to extend a wall's RENDERED thickness
+// band (never its real points/length -- purely a paint-time adjustment) so
+// it meets flush with any other wall sharing that point. Using the wider of
+// the two walls' half-thickness keeps an L/T/X corner fully covered even
+// when a thick external wall meets a thinner internal one, instead of
+// leaving a sliver gap or notch at the join.
+function wallJoinExtension(el, atStart, scalePxPerFt){
+  const pt = atStart ? el.points[0] : el.points[el.points.length-1];
+  const others = wallsSharingPoint(pt, el.id);
+  if(!others.length) return 0;
+  const myHalf = (el.thicknessFt||0.1)*scalePxPerFt/2;
+  const otherHalf = Math.max(...others.map(o=>(o.thicknessFt||0.1)*scalePxPerFt/2));
+  return Math.max(myHalf, otherHalf);
+}
+// Splits one wall into two at its own midpoint -- e.g. to attach a doorway
+// partway along a run, or just to break a long trace into more manageable
+// pieces. The two halves share the new midpoint exactly, so the join stays
+// clean the same way any other two connected walls do.
+function splitWallAtMidpoint(el){
+  const [p1,p2] = el.points;
+  const mid = {x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2};
+  const secondHalf = Object.assign({}, el, {
+    id: state.nextId++,
+    label: uniqueLabel(el.label),
+    points: [{x:mid.x,y:mid.y}, {x:p2.x,y:p2.y}],
+    _bornAt: performance.now(),
+  });
+  el.points = [{x:p1.x,y:p1.y}, mid];
+  state.elements.push(secondHalf);
+  return secondHalf;
+}
+// Finds another wall connected to el at one of el's own endpoints whose far
+// end continues in very nearly the same straight line through that shared
+// point -- i.e. the two are really one straight run that happens to be
+// traced (or previously split) as two segments -- so "Merge" only ever
+// offers to join walls where that's actually a sensible, lossless thing to
+// do, not any two unrelated walls that happen to touch at an angle.
+function mergeableNeighbor(el){
+  for(const sharedIdx of [0,1]){
+    const sharedPt = el.points[sharedIdx];
+    const farPt = el.points[1-sharedIdx];
+    const others = wallsSharingPoint(sharedPt, el.id);
+    for(const o of others){
+      const oOtherIdx = o.points.findIndex(p=>Math.hypot(p.x-sharedPt.x,p.y-sharedPt.y)>=0.5);
+      if(oOtherIdx<0) continue;
+      const oFar = o.points[oOtherIdx];
+      const v1x=sharedPt.x-farPt.x, v1y=sharedPt.y-farPt.y;
+      const v2x=oFar.x-sharedPt.x, v2y=oFar.y-sharedPt.y;
+      const len1=Math.hypot(v1x,v1y), len2=Math.hypot(v2x,v2y);
+      if(len1<0.01 || len2<0.01) continue;
+      const cosAngle = (v1x*v2x+v1y*v2y)/(len1*len2);
+      if(cosAngle>0.996) return {other:o, farPt:{x:farPt.x,y:farPt.y}, oFar:{x:oFar.x,y:oFar.y}};
+    }
+  }
+  return null;
+}
+function mergeWallWithNeighbor(el){
+  const m = mergeableNeighbor(el);
+  if(!m) return false;
+  pushUndo();
+  el.points = [m.farPt, m.oFar];
+  state.elements = state.elements.filter(x=>x.id!==m.other.id);
+  return true;
+}
+// Traced walls: a real thickness band along the centerline (not a stroked
+// line) with automatic join extension at shared endpoints, and the
+// standard architectural "poche" convention in Black Drawing mode --
+// external/structural walls read as a solid black fill, internal
+// partitions as a hollow outline only, immediately legible as which is
+// which the way a real construction drawing distinguishes them.
+function drawWallElement(ctx, el, selected){
+  const [p1,p2] = el.points;
+  const dx=p2.x-p1.x, dy=p2.y-p1.y, len=Math.hypot(dx,dy)||1;
+  const ux=dx/len, uy=dy/len, nx=-uy, ny=ux;
+  const scalePxPerFt = state.scalePxPerFt||40;
+  const thicknessPx = Math.max(2, (el.thicknessFt||0.1)*scalePxPerFt);
+  const half = thicknessPx/2;
+  const extStart = wallJoinExtension(el, true, scalePxPerFt);
+  const extEnd = wallJoinExtension(el, false, scalePxPerFt);
+  const s = {x:p1.x-ux*extStart, y:p1.y-uy*extStart};
+  const e = {x:p2.x+ux*extEnd, y:p2.y+uy*extEnd};
+  const corners = [
+    {x:s.x+nx*half, y:s.y+ny*half},
+    {x:e.x+nx*half, y:e.y+ny*half},
+    {x:e.x-nx*half, y:e.y-ny*half},
+    {x:s.x-nx*half, y:s.y-ny*half},
+  ];
+  ctx.save();
+  ctx.globalAlpha *= getPopState(el).alpha;
+  const pathBand = ()=>{
+    ctx.beginPath();
+    ctx.moveTo(corners[0].x, corners[0].y);
+    for(let i=1;i<4;i++) ctx.lineTo(corners[i].x, corners[i].y);
+    ctx.closePath();
+  };
+  const isExternal = el.wallType==='external';
+  pathBand();
+  if(state.blackMode){
+    ctx.fillStyle = isExternal ? BW_INK : BW_PAPER;
+    ctx.fill();
+    ctx.strokeStyle = BW_INK;
+    ctx.lineWidth = selected ? 2.4 : 1.3;
+    pathBand(); ctx.stroke();
+  } else {
+    // A soft cross-thickness gradient (light edge, true colour centre,
+    // darker edge) reads as a real painted/plastered surface catching light
+    // across its depth, not a flat tinted rectangle.
+    const grad = ctx.createLinearGradient(s.x+nx*half, s.y+ny*half, s.x-nx*half, s.y-ny*half);
+    grad.addColorStop(0, shadeColor(el.color, 0.14));
+    grad.addColorStop(0.5, el.color);
+    grad.addColorStop(1, shadeColor(el.color, -0.18));
+    ctx.fillStyle = grad;
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(el.color, -0.42);
+    ctx.lineWidth = selected ? 2.4 : 1.3;
+    pathBand(); ctx.stroke();
+  }
+  ctx.restore();
+  drawElementLabel(ctx, el, state.blackMode ? BW_INK : '#E7ECF2', selected);
+  if(selected){
+    ctx.save();
+    ctx.shadowColor = 'rgba(181,147,76,0.55)';
+    ctx.shadowBlur = 10/Math.max(state.zoom, 0.01);
+    ctx.setLineDash([6,4]);
+    ctx.strokeStyle = '#B5934C';
+    ctx.lineWidth = 1.5;
+    pathBand(); ctx.stroke();
+    ctx.restore();
+    // Small square grip handles at the wall's own TRUE endpoints (not the
+    // extended render corners) -- the drag target for reshaping/extending/
+    // trimming this wall (see the pointerdown 'wallendpoint' hit-test).
+    const s2 = 1/Math.max(state.zoom, 0.01);
+    [p1,p2].forEach(p=>{
+      const hs = 6*s2;
+      ctx.fillStyle = '#0A1A2E';
+      ctx.fillRect(p.x-hs, p.y-hs, hs*2, hs*2);
+      ctx.strokeStyle = '#B5934C';
+      ctx.lineWidth = 1.5*s2;
+      ctx.strokeRect(p.x-hs, p.y-hs, hs*2, hs*2);
+    });
+  }
+}
 function drawPathElement(ctx, el, selected){
   if(el.points.length<2) return;
   if(el.isDimension){ drawDimensionElement(ctx, el, selected); return; }
+  if(el.isWall){ drawWallElement(ctx, el, selected); return; }
   if(el.presetKey==='hedge'){ drawHedgeElement(ctx, el, selected); return; }
   ctx.save();
   ctx.globalAlpha *= getPopState(el).alpha;
@@ -7439,6 +7824,54 @@ function renderElementsList(){
         });
         dims.appendChild(lenIn);
         dims.appendChild(document.createTextNode(unitAbbrev()));
+      } else if(el.isWall){
+        const lenIn2 = document.createElement('input'); lenIn2.type='number'; lenIn2.step='0.01'; lenIn2.min='0.01';
+        lenIn2.title = 'Correct this wall\'s length -- the far end slides along the same line to match';
+        lenIn2.value = formatNum(pathLengthDisplay(el.points));
+        lenIn2.addEventListener('click', e=>e.stopPropagation());
+        lenIn2.addEventListener('change', ()=>{
+          const v = parseFloat(lenIn2.value);
+          const [p1,p2] = el.points;
+          const curPx = Math.hypot(p2.x-p1.x, p2.y-p1.y);
+          if(v>0 && curPx>0 && state.scalePxPerFt){
+            pushUndo();
+            const targetPx = toFt(v, state.unit)*state.scalePxPerFt;
+            const scale = targetPx/curPx;
+            el.points[1] = { x: p1.x+(p2.x-p1.x)*scale, y: p1.y+(p2.y-p1.y)*scale };
+            drawOverlay(); renderElementsList();
+          } else {
+            lenIn2.value = formatNum(pathLengthDisplay(el.points));
+          }
+        });
+        dims.appendChild(document.createTextNode('L')); dims.appendChild(lenIn2);
+
+        const thickIn = document.createElement('input'); thickIn.type='number'; thickIn.step='0.01'; thickIn.min='0.01';
+        thickIn.title = 'Wall thickness';
+        thickIn.value = formatNum(fromFt(el.thicknessFt||0.1, state.unit));
+        thickIn.addEventListener('click', e=>e.stopPropagation());
+        thickIn.addEventListener('change', ()=>{
+          const v = parseFloat(thickIn.value);
+          if(v>0){ pushUndo(); el.thicknessFt = toFt(v, state.unit); drawOverlay(); renderElementsList(); }
+          else thickIn.value = formatNum(fromFt(el.thicknessFt||0.1, state.unit));
+        });
+        dims.appendChild(document.createTextNode('T')); dims.appendChild(thickIn);
+
+        const wallHIn = document.createElement('input'); wallHIn.type='number'; wallHIn.step='0.05'; wallHIn.min='0.1';
+        wallHIn.title = 'Wall height (used by the 3D preview)';
+        wallHIn.value = formatNum(fromFt(el.wallHeightFt||WALL_HEIGHT_FT_3D, state.unit));
+        wallHIn.addEventListener('click', e=>e.stopPropagation());
+        wallHIn.addEventListener('change', ()=>{
+          const v = parseFloat(wallHIn.value);
+          if(v>0){ pushUndo(); el.wallHeightFt = toFt(v, state.unit); drawOverlay(); renderElementsList(); }
+          else wallHIn.value = formatNum(fromFt(el.wallHeightFt||WALL_HEIGHT_FT_3D, state.unit));
+        });
+        dims.appendChild(document.createTextNode('H')); dims.appendChild(wallHIn);
+        dims.appendChild(document.createTextNode(unitAbbrev()));
+
+        const typeBadge = document.createElement('span');
+        typeBadge.style.marginLeft='4px'; typeBadge.style.color='var(--ink-dim)'; typeBadge.style.fontSize='11px';
+        typeBadge.textContent = el.wallType==='external' ? 'external' : 'internal';
+        dims.appendChild(typeBadge);
       } else {
         const info = document.createElement('span');
         info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
@@ -7540,6 +7973,31 @@ function renderElementsList(){
         renderElementsList(); drawOverlay();
       });
       actionsRow.appendChild(moveSel);
+    }
+
+    if(el.isWall){
+      const splitBtn = document.createElement('button');
+      splitBtn.className='icnbtn'; splitBtn.title='Split this wall into two, at its midpoint';
+      splitBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18"/><path d="M18 3v18"/><path d="M2 12h6"/><path d="M16 12h6"/></svg>';
+      splitBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        pushUndo();
+        const secondHalf = splitWallAtMidpoint(el);
+        state.selectedId = secondHalf.id;
+        renderElementsList(); drawOverlay();
+      });
+      actionsRow.appendChild(splitBtn);
+
+      const neighbor = mergeableNeighbor(el);
+      const mergeBtn = document.createElement('button');
+      mergeBtn.className='icnbtn'; mergeBtn.disabled = !neighbor;
+      mergeBtn.title = neighbor ? 'Merge with the connected, straight-through wall it meets' : 'Merge (only enabled when a connected wall continues in the same straight line)';
+      mergeBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h16"/><path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/></svg>';
+      mergeBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        if(mergeWallWithNeighbor(el)){ renderElementsList(); drawOverlay(); }
+      });
+      actionsRow.appendChild(mergeBtn);
     }
 
     const frontBtn = document.createElement('button');
@@ -8035,7 +8493,6 @@ const preview3dCanvas = document.getElementById('preview3dCanvas');
 const preview3dLoading = document.getElementById('preview3dLoading');
 const close3dPreviewBtn = document.getElementById('close3dPreviewBtn');
 
-const WALL_HEIGHT_FT_3D = 8;
 const AREA_HEIGHT_FT_3D = {
   deck:0.3, patio:0.2, concrete:0.2, gravel:0.15, lawn:0.1, turf:0.15,
   gardenbed:0.25, pool:0.15, custom:0.2,
@@ -8170,11 +8627,23 @@ function build3DPathMesh(el, groundWFt, groundHFt){
   const pts = el.points;
   if(!pts || pts.length<2) return null;
   const isHedge = el.presetKey==='hedge';
-  const heightFt = isHedge ? 3.5 : 3.0;
-  const widthFt = isHedge ? HEDGE_WIDTH_FT : 0.15;
-  const color = isHedge ? '#4A7A3E' : (el.color || '#D8DEE5');
+  const isWall = !!el.isWall;
+  // A traced wall's own thickness/height (real feet, exactly what the 2D
+  // plan and the properties panel already use) drives the 3D box directly
+  // -- never a separate 3D-only size. Fence/hedge keep their existing
+  // fixed look, untouched.
+  const heightFt = isWall ? (el.wallHeightFt||WALL_HEIGHT_FT_3D) : (isHedge ? 3.5 : 3.0);
+  const widthFt = isWall ? (el.thicknessFt||0.1) : (isHedge ? HEDGE_WIDTH_FT : 0.15);
+  const color = isWall ? (el.color || WALL_COLOR_INTERIOR) : (isHedge ? '#4A7A3E' : (el.color || '#D8DEE5'));
   const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(color), roughness: isHedge?1:0.6});
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(color), roughness: isHedge?1:0.85});
+  // Same join-extension idea as the 2D thickness-band rendering (see
+  // wallJoinExtension) -- without it, two walls meeting at a corner would
+  // extrude as two separate boxes that don't quite cover the join, leaving
+  // a visible gap or notch in the dollhouse/walkthrough view exactly where
+  // a real corner should read as solid.
+  const extStartFt = isWall ? wallJoinExtension(el, true, state.scalePxPerFt)/state.scalePxPerFt : 0;
+  const extEndFt = isWall ? wallJoinExtension(el, false, state.scalePxPerFt)/state.scalePxPerFt : 0;
   for(let i=0;i<pts.length-1;i++){
     const a = pts[i], b = pts[i+1];
     const ax = a.x/state.scalePxPerFt - groundWFt/2, az = a.y/state.scalePxPerFt - groundHFt/2;
@@ -8182,8 +8651,11 @@ function build3DPathMesh(el, groundWFt, groundHFt){
     const dx = bx-ax, dz = bz-az;
     const segLen = Math.hypot(dx,dz);
     if(segLen<0.01) continue;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(segLen, heightFt, widthFt), mat);
-    mesh.position.set((ax+bx)/2, heightFt/2, (az+bz)/2);
+    const ux = dx/segLen, uz = dz/segLen;
+    const sExt = (i===0) ? extStartFt : 0;
+    const eExt = (i===pts.length-2) ? extEndFt : 0;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(segLen+sExt+eExt, heightFt, widthFt), mat);
+    mesh.position.set((ax+bx)/2 + (eExt-sExt)/2*ux, heightFt/2, (az+bz)/2 + (eExt-sExt)/2*uz);
     mesh.rotation.y = -Math.atan2(dz, dx);
     group.add(mesh);
   }
