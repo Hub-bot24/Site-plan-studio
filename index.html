@@ -3843,9 +3843,24 @@ overlayCanvas.addEventListener('touchcancel', ()=>{ twoFingerPan=null; });
 
 function hitTest(el,px,py){
   if(el.shape==='path'){
-    const thresh = 10;
+    // In canvas-pixel units, same as every other click-tolerance constant in
+    // this file (rotation handle, label handle, alignment snap) -- without
+    // the /zoom it stayed a fixed 10 canvas px regardless of how zoomed out
+    // the view is, so at a typical "fit the whole plan" zoom a thin fence or
+    // measurement line became very hard to actually land a click on.
+    const thresh = 10/Math.max(state.zoom, 0.01);
     for(let i=1;i<el.points.length;i++){
       if(distToSegment(px,py,el.points[i-1],el.points[i])<=thresh) return true;
+    }
+    // The label chip (a measurement's own distance value, e.g. "3.25 m", or
+    // a fence's length label) is deliberately drawn clear of the line itself
+    // -- see elementLabelPos -- so it doesn't sit on top of the line or its
+    // arrowheads. That makes it the single most obvious thing to click, but
+    // until now clicking it didn't select anything: only the thin line
+    // itself was hit-tested. Clicking the label now selects its element too.
+    if(state.showLabels && !el.hideLabel){
+      const b = labelChipBounds(ctxOverlay, el);
+      if(px>=b.x-b.w/2 && px<=b.x+b.w/2 && py>=b.y-b.h/2 && py<=b.y+b.h/2) return true;
     }
     return false;
   }
