@@ -418,12 +418,19 @@
   .status-line.ok{color:#7FC98A;}
 
   .elrow{
-    display:flex;align-items:center;gap:8px;
+    display:flex;flex-direction:column;gap:6px;
     transition:border-color 0.15s ease, background 0.15s ease;
     padding:8px;border:1px solid var(--line);border-radius:6px;margin-bottom:8px;
     cursor:pointer;
   }
   .elrow.selected{border-color:var(--accent);background:rgba(181,147,76,0.08);}
+  /* Name/dims and the action-button cluster are two separate flex rows (not
+     one long row) so a long name never has to fight a full button set for
+     space -- the name always gets the row's full width, and the buttons can
+     wrap onto a further line of their own on a narrow sidebar without ever
+     overlapping the name or each other. */
+  .elrow-main{display:flex;align-items:center;gap:8px;min-width:0;}
+  .elrow-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-left:22px;}
   .swatch{width:14px;height:14px;border-radius:3px;flex-shrink:0;}
   input[type=color].swatch{padding:0;border:1px solid var(--line);cursor:pointer;background:none;}
   input[type=color].swatch::-webkit-color-swatch-wrapper{padding:0;}
@@ -434,7 +441,7 @@
   .elrow .details{flex:1;min-width:0;}
   .elrow .details input{width:100%;background:transparent;border:none;color:var(--ink);font-size:13px;font-family:'Inter',sans-serif;padding:0;}
   .elrow .label-row{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
-  .elrow .label-row input{margin-bottom:0;}
+  .elrow .label-row input{margin-bottom:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .elrow .dims{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--ink-dim);flex-wrap:wrap;}
   .elrow .dims input{width:46px;background:var(--navy-mid);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px;}
   .elrow select{background:var(--navy-mid);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:2px 4px;font-size:11px;font-family:'Inter',sans-serif;}
@@ -3616,9 +3623,15 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
   // Dragging an already-selected item's own label chip moves just the text
   // (off whatever it's covering) instead of the shape underneath it.
   if(selectedEl && hitTestLabelHandle(ctxOverlay, selectedEl, x, y)){
+    // Read the label's CURRENT effective offset (elementLabelPos minus the
+    // anchor), not the raw labelDx/labelDy fields -- a never-moved dimension
+    // is already sitting at an automatic default offset (see
+    // elementLabelPos), and starting the drag from the raw 0/0 fields would
+    // make it jump back to dead-center on the line the instant you grab it.
+    const curPos = elementLabelPos(selectedEl), curAnchor = elementLabelAnchor(selectedEl);
     state.dragging = {
       id: selectedEl.id, mode:'label',
-      startDx: selectedEl.labelDx||0, startDy: selectedEl.labelDy||0,
+      startDx: curPos.x-curAnchor.x, startDy: curPos.y-curAnchor.y,
       anchorX: x, anchorY: y,
     };
     overlayCanvas.setPointerCapture(e.pointerId);
@@ -6475,6 +6488,24 @@ function elementLabelText(el){
 }
 function elementLabelPos(el){
   const a = elementLabelAnchor(el);
+  if(el.isDimension && !(el.labelDx || el.labelDy)){
+    // Until the user manually drags it, a measurement's label defaults to
+    // sitting just off the line rather than stacked exactly on top of it --
+    // centred-on-the-line was landing right over the line stroke and, for a
+    // short measurement, spilling past both arrowheads/endpoint handles
+    // (the chip is very often wider than a short line). Offset perpendicular
+    // to the line instead, with a bigger offset for short lines so the chip
+    // clears the endpoints too. A manual drag (labelDx/labelDy set) always
+    // wins over this default.
+    const [p1,p2] = el.points;
+    const dx = p2.x-p1.x, dy = p2.y-p1.y;
+    const len = Math.hypot(dx,dy) || 1;
+    const nx = -dy/len, ny = dx/len;
+    const s = 1/Math.max(state.zoom, 0.01);
+    const screenLen = len*state.zoom;
+    const off = (screenLen < 70 ? 22 : 14) * s;
+    return {x: a.x + nx*off, y: a.y + ny*off};
+  }
   return {x: a.x + (el.labelDx||0), y: a.y + (el.labelDy||0)};
 }
 // Same box math drawLabelChip uses to paint the chip, so hit-testing lines up
@@ -6554,9 +6585,15 @@ function drawLabelChip(ctx, x, y, text, textColor, sizeMult){
   ctx.font = '500 ' + Math.round(11*s) + 'px Inter, sans-serif';
   const tw = ctx.measureText(text).width;
   const w = tw+10*s, h=17*s;
-  ctx.fillStyle = 'rgba(10,26,46,0.72)';
-  ctx.strokeStyle = 'rgba(223,231,240,0.16)';
-  ctx.lineWidth = 1*s;
+  // Black Drawing mode swaps the dark navy chip for a light paper tag with
+  // dark ink text -- the same "light background, dark readable text" tag any
+  // label (a measurement value included) needs to stay legible over paving,
+  // grass, pool graphics or any other texture, while still reading as part
+  // of a monochrome architectural drawing rather than a leftover colour chip.
+  const bw = state.blackMode;
+  ctx.fillStyle = bw ? 'rgba(246,244,238,0.95)' : 'rgba(10,26,46,0.72)';
+  ctx.strokeStyle = bw ? BW_INK : 'rgba(223,231,240,0.16)';
+  ctx.lineWidth = (bw ? 1.1 : 1)*s;
   const rx = x-w/2, ry = y-h/2, rr = 3*s;
   ctx.beginPath();
   ctx.moveTo(rx+rr, ry);
@@ -6567,7 +6604,7 @@ function drawLabelChip(ctx, x, y, text, textColor, sizeMult){
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = textColor;
+  ctx.fillStyle = bw ? BW_INK : textColor;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, x, y);
@@ -7122,6 +7159,21 @@ addElBtn.addEventListener('click', ()=>{
   drawOverlay();
 });
 
+// Scrolls the selected item's row into view WITHIN the sidebar only (its
+// nearest scrolling ancestor is #sidebar itself -- see the CSS) -- never the
+// main canvas/page. A no-op when the row is already comfortably visible, so
+// it's safe to call after every render rather than threading it through
+// every individual call site that sets state.selectedId.
+function focusSidebarRow(id){
+  if(id==null) return;
+  const row = elementsList.querySelector('.elrow[data-id="'+id+'"]');
+  // 'auto' (instant), not 'smooth': this can fire in rapid succession (e.g.
+  // placing several elements back to back, each auto-selected in turn), and
+  // overlapping smooth-scroll animations can fight each other and leave the
+  // sidebar stopped short of actually revealing the row. An instant jump has
+  // no animation state to race, so it's reliable every time.
+  if(row) row.scrollIntoView({block:'nearest', inline:'nearest', behavior:'auto'});
+}
 function renderElementsList(){
   elementsList.innerHTML='';
   const pageEls = currentPageElements();
@@ -7133,6 +7185,19 @@ function renderElementsList(){
     const row = document.createElement('div');
     row.className = 'elrow'+(el.id===state.selectedId?' selected':'');
     row.dataset.id = el.id;
+    // Split into two stacked flex rows -- name/dims on one line, the action
+    // buttons (page-move, layer, duplicate, cut, delete) on their own line
+    // below -- rather than one long single-line flex row. A single row runs
+    // out of space the moment a long name meets a full button set (worst
+    // case: a multi-page project, where the extra page-move dropdown alone
+    // used to leave almost no room for the name at all); stacking guarantees
+    // the name field always gets the full row width, and the button cluster
+    // can itself wrap onto a further line on a very narrow sidebar without
+    // ever overlapping anything.
+    const mainRow = document.createElement('div');
+    mainRow.className = 'elrow-main';
+    const actionsRow = document.createElement('div');
+    actionsRow.className = 'elrow-actions';
 
     const swatch = document.createElement('input');
     swatch.type = 'color';
@@ -7146,19 +7211,19 @@ function renderElementsList(){
       el.color = swatch.value;
       drawOverlay();
     });
-    row.appendChild(swatch);
+    mainRow.appendChild(swatch);
 
     if(el.isCutout){
       const badge = document.createElement('span');
       badge.className='cutout-badge';
       badge.textContent='CUTOUT';
-      row.appendChild(badge);
+      mainRow.appendChild(badge);
     }
     if(el.isDimension){
       const badge = document.createElement('span');
       badge.className='dimension-badge';
       badge.textContent='DIMENSION';
-      row.appendChild(badge);
+      mainRow.appendChild(badge);
     }
 
     const details = document.createElement('div');
@@ -7169,8 +7234,27 @@ function renderElementsList(){
     const labelEl = document.createElement('input');
     labelEl.type='text';
     labelEl.value = el.label;
+    labelEl.title = el.label;
     labelEl.addEventListener('click', e=>e.stopPropagation());
-    labelEl.addEventListener('change', ()=>{ pushUndo(); el.label = labelEl.value.trim()||el.label; drawOverlay(); });
+    // Enter commits (blurring triggers the same save as clicking away);
+    // Escape discards whatever was typed and restores the current name --
+    // stopPropagation so neither key leaks to any global canvas shortcut
+    // (delete/cut/nudge) while renaming.
+    labelEl.addEventListener('keydown', (e)=>{
+      e.stopPropagation();
+      if(e.key==='Enter'){ e.preventDefault(); labelEl.blur(); }
+      else if(e.key==='Escape'){ e.preventDefault(); labelEl.value = el.label; labelEl.blur(); }
+    });
+    labelEl.addEventListener('change', ()=>{
+      const trimmed = labelEl.value.trim();
+      // Blank stays blank-proof: an empty/whitespace-only name just restores
+      // whatever the name currently is (its custom name, or its auto-assigned
+      // default) rather than ever leaving the item unnamed.
+      if(trimmed && trimmed!==el.label){ pushUndo(); el.label = trimmed; }
+      labelEl.value = el.label;
+      labelEl.title = el.label;
+      drawOverlay();
+    });
     labelRow.appendChild(labelEl);
     if(!el.isDimension){
       const hideBtn = document.createElement('button');
@@ -7364,7 +7448,7 @@ function renderElementsList(){
       dims.appendChild(costTotalSpan);
     }
     details.appendChild(dims);
-    row.appendChild(details);
+    mainRow.appendChild(details);
 
     if(state.numPages>1){
       const moveSel = document.createElement('select');
@@ -7388,7 +7472,7 @@ function renderElementsList(){
         if(state.selectedId===el.id) state.selectedId=null;
         renderElementsList(); drawOverlay();
       });
-      row.appendChild(moveSel);
+      actionsRow.appendChild(moveSel);
     }
 
     const frontBtn = document.createElement('button');
@@ -7401,7 +7485,7 @@ function renderElementsList(){
       state.elements.push(el);
       drawOverlay(); renderElementsList();
     });
-    row.appendChild(frontBtn);
+    actionsRow.appendChild(frontBtn);
 
     const backBtn = document.createElement('button');
     backBtn.className='icnbtn'; backBtn.title='Send to back (show this below everything else on the plan)';
@@ -7413,7 +7497,7 @@ function renderElementsList(){
       state.elements.unshift(el);
       drawOverlay(); renderElementsList();
     });
-    row.appendChild(backBtn);
+    actionsRow.appendChild(backBtn);
 
     const dupBtn = document.createElement('button');
     dupBtn.className='icnbtn'; dupBtn.title='Duplicate';
@@ -7432,7 +7516,7 @@ function renderElementsList(){
       state.selectedId = copy.id;
       renderElementsList(); drawOverlay();
     });
-    row.appendChild(dupBtn);
+    actionsRow.appendChild(dupBtn);
 
     const cutBtn = document.createElement('button');
     cutBtn.className='icnbtn'; cutBtn.title='Cut (remove it here, then hit Paste in the top bar to drop it in elsewhere — works across pages too)';
@@ -7441,7 +7525,7 @@ function renderElementsList(){
       e.stopPropagation();
       cutElementById(el.id);
     });
-    row.appendChild(cutBtn);
+    actionsRow.appendChild(cutBtn);
 
     const delBtn = document.createElement('button');
     delBtn.className='icnbtn del'; delBtn.title='Delete'; delBtn.textContent='×';
@@ -7452,7 +7536,10 @@ function renderElementsList(){
       if(state.selectedId===el.id) state.selectedId=null;
       renderElementsList(); drawOverlay();
     });
-    row.appendChild(delBtn);
+    actionsRow.appendChild(delBtn);
+
+    row.appendChild(mainRow);
+    row.appendChild(actionsRow);
 
     row.addEventListener('click', ()=>{
       state.selectedId = el.id;
@@ -7523,6 +7610,7 @@ function renderElementsList(){
   autoArrangeBtn.title = roomReady
     ? 'Arrange the furniture on this page around the selected rectangle\'s walls'
     : 'Select a rectangle on the plan to use as the room outline first';
+  focusSidebarRow(state.selectedId);
 }
 
 autoArrangeBtn.addEventListener('click', ()=>{
