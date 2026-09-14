@@ -9620,6 +9620,11 @@ const WALK_SPEED_FT_PER_SEC = 9.5;
 const WALK_YAW_SENS = 0.0024;
 const WALK_PITCH_SENS = 0.0018;
 const WALK_MAX_PITCH_RAD = Math.PI/3;
+// How quickly walking speed eases toward whatever the current input wants,
+// each frame: velocity closes (dt*this) of the remaining gap to its target,
+// so it's a real ease-in/ease-out, not an instant snap, while still framerate-
+// independent. Higher = snappier/more responsive, lower = more glide.
+const WALK_ACCEL_RESPONSIVENESS = 16;
 // Orbit views the whole model from well outside it, where a normal
 // "photographic" FOV reads correctly. Standing inside a real room at eye
 // height, that same narrow FOV loses the wide-angle field of view a real eye
@@ -9634,10 +9639,11 @@ const state3d = {
   renderer:null, scene:null, camera:null, animId:null,
   target:{x:0,y:0,z:0}, radius:40, theta:Math.PI/4, phi:Math.PI/3.2,
   mode:'orbit', // 'orbit' | 'walk'
-  walk:{x:0, z:0, yaw:0, pitch:0},
+  walk:{x:0, z:0, yaw:0, pitch:0, vx:0, vz:0},
   walkKeys:new Set(),
   collisionRects:[],
   lastFrameTime:0,
+  clickStartPos:null, // where the user last clicked (not dragged) on the ORBIT view's ground -- Walkthrough starts there instead of always the same default room
   _teardown:null,
 };
 
@@ -9772,19 +9778,36 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
 // branch) already draws it as a genuine L -- two arms meeting at a corner,
 // each armDepth = short*0.36 deep, not a solid square -- so the 3D
 // extrusion builds that SAME L instead of a single full-bounding-box slab.
-// A plain box over a 92x92in footprint reads as a huge, wrong solid wedge
-// up close, nothing like the couch actually drawn on the plan.
+// Each arm ALSO gets the same seat/backrest split a plain sofa does (see
+// build3DSofaMesh) -- a correctly-L-shaped pair of flat blocks still reads
+// as "two crates", not a couch, until there's an actual lower seat and a
+// raised back to sit against. Colour-shaded rather than texture-mapped
+// (lighter seat, darker back, matching the icon's own shadeColor(...,0.05)
+// / shadeColor(...,-0.2) relationship) since a single baked top-down icon
+// texture can't correctly UV-wrap across two separate L-arm pieces.
 function build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos){
   const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
+  const seatMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.05)), roughness:0.85});
+  const backMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.2)), roughness:0.85});
   const armFt = Math.min(el.wFt, el.hFt)*0.36; // matches drawFurnitureIcon's own armDepth ratio exactly
-  const addArm = (wFt, dFt, cx, cz)=>{
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(wFt, heightFt, dFt), mat);
-    mesh.position.set(cx, baseY+heightFt/2, cz);
+  const backDepthFt = armFt*0.3; // matches drawFurnitureIcon's own backT = armDepth*0.3 ratio
+  const seatHFt = heightFt*0.55, backHFt = heightFt;
+  const addSeat = (wFt, dFt, cx, cz)=>{
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(wFt, seatHFt, dFt), seatMat);
+    mesh.position.set(cx, baseY+seatHFt/2, cz);
     group.add(mesh);
   };
-  addArm(el.wFt, armFt, 0, -el.hFt/2+armFt/2); // arm along the top edge, full width
-  addArm(armFt, el.hFt, -el.wFt/2+armFt/2, 0); // arm along the left edge, full height
+  const addBack = (wFt, dFt, cx, cz)=>{
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(wFt, backHFt-seatHFt, dFt), backMat);
+    mesh.position.set(cx, baseY+seatHFt+(backHFt-seatHFt)/2, cz);
+    group.add(mesh);
+  };
+  // Top-edge arm: full width, armFt deep, backrest along the outer (north) edge.
+  addSeat(el.wFt, armFt, 0, -el.hFt/2+armFt/2);
+  addBack(el.wFt, backDepthFt, 0, -el.hFt/2+backDepthFt/2);
+  // Left-edge arm: armFt wide, full height, backrest along the outer (west) edge.
+  addSeat(armFt, el.hFt, -el.wFt/2+armFt/2, 0);
+  addBack(backDepthFt, el.hFt, -el.wFt/2+backDepthFt/2, 0);
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
@@ -9840,6 +9863,7 @@ function build3DTableMesh(el, preset, heightFt, pos){
   [[-legX,-legZ],[legX,-legZ],[legX,legZ],[-legX,legZ]].forEach(([lx,lz])=>{
     const leg = new THREE.Mesh(new THREE.BoxGeometry(legSizeFt, legHFt, legSizeFt), mat);
     leg.position.set(lx, legHFt/2, lz);
+    leg.castShadow = false; // a thin stick's own shadow is imperceptible at this scale, but four of them per table is still four full extra shadow-pass draw calls; the tabletop above already grounds the whole piece with a real shadow
     group.add(leg);
   });
   if(preset.icon==='table_dining') addDiningChairs3D(group, el);
@@ -9870,6 +9894,7 @@ function addDiningChairs3D(tableGroup, el){
     chair.add(seat);
     const back = new THREE.Mesh(new THREE.BoxGeometry(seatSizeFt, backHFt-seatHFt, seatSizeFt*0.15), mat);
     back.position.set(0, seatHFt+(backHFt-seatHFt)/2, -seatSizeFt/2);
+    back.castShadow = false; // a thin backrest panel; the seat block below already casts the chair's real contact shadow, and a big dining table can ring up a dozen of these -- a dozen shadows nobody would ever notice missing
     chair.add(back);
     chair.position.set(cx, 0, cz);
     chair.rotation.y = rot;
@@ -10021,8 +10046,16 @@ function computeWallCollisionRects(groundWFt, groundHFt){
         const halfW=(o.wFt||0)/2;
         const oStart=o.offsetFt-halfW, oEnd=o.offsetFt+halfW;
         addRect(cursor, oStart);
-        const sill = o.openingKind==='window' ? (o.sillHeightFt||0) : 0;
-        if(sill>0.02) addRect(oStart, oEnd);
+        // A window is glass, not open air -- it's always a real barrier to
+        // walk into, whether or not a solid sill wall is drawn beneath it
+        // (a floor-to-ceiling window with sillHeightFt=0 has no gap to walk
+        // through, it just has no solid wall rendered there -- see
+        // build3DPathMesh's own, separate and correct use of sill height for
+        // what to actually draw). Before this, a window with no sill set
+        // got zero collision coverage here -- identical to a door -- so the
+        // player could walk straight through it. Doors are the only opening
+        // kind that should ever be gap-free to collision.
+        if(o.openingKind==='window') addRect(oStart, oEnd);
         cursor = Math.max(cursor, oEnd);
       });
       addRect(cursor, segLen+eExt);
@@ -10108,6 +10141,61 @@ function build3DElementMesh(el, groundWFt, groundHFt){
   if(el.shape==='path') return build3DPathMesh(el, groundWFt, groundHFt);
   return build3DAreaMesh(el, preset, groundWFt, groundHFt);
 }
+// Every door already has a real, distinct 2D symbol (drawOpeningSymbol: a
+// hinged leaf + swing arc, or overlapping sliding/stacker panels) -- the 3D
+// extrusion only ever cut a gap for it, with nothing standing in the
+// opening at all. Reuses the exact same swingDir/swingFlip hinge math
+// drawOpeningSymbol already uses, carried into 3D: a hinged door leaf shown
+// open (swung into the room, same hinge jamb, same flip), a sliding/stacker
+// door shown with a panel slid to one side. Both leave most or all of the
+// opening clear, matching what the collision system already treats as
+// walkable -- a closed-looking door you can walk straight through would be
+// worse than no door at all.
+function build3DDoorLeafMesh(o, groundWFt, groundHFt){
+  if(o.openingKind!=='door') return null;
+  const wall = getElementById(o.hostWallId);
+  if(!wall || !wall.isWall) return null;
+  const [p1,p2] = wall.points;
+  const ax = p1.x/state.scalePxPerFt - groundWFt/2, az = p1.y/state.scalePxPerFt - groundHFt/2;
+  const bx = p2.x/state.scalePxPerFt - groundWFt/2, bz = p2.y/state.scalePxPerFt - groundHFt/2;
+  const dx = bx-ax, dz = bz-az, segLen = Math.hypot(dx,dz);
+  if(segLen<0.01) return null;
+  const ux = dx/segLen, uz = dz/segLen;
+  const nx = -uz, nz = ux; // same 90-degree rotation drawOpeningSymbol uses (its own nx=-uy,ny=ux, in the same x->x,y->z space every 3D builder in this file already shares)
+  const heightFt = o.openingHeightFt || (wall.wallHeightFt||WALL_HEIGHT_FT_3D);
+  const widthFt = o.wFt||0;
+  if(widthFt<0.05) return null;
+  const leafThickFt = 0.06;
+
+  if(o.doorType==='hinged'){
+    const hingeAtA = o.swingDir!=='right'; // exact same rule as drawOpeningSymbol
+    const hingeOffsetFt = hingeAtA ? o.offsetFt-widthFt/2 : o.offsetFt+widthFt/2;
+    const hingeX = ax+ux*hingeOffsetFt, hingeZ = az+uz*hingeOffsetFt;
+    const flip = o.swingFlip ? -1 : 1;
+    const roomX = nx*flip, roomZ = nz*flip; // unit vector: the direction the open leaf actually points
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(leafThickFt, heightFt, widthFt),
+      new THREE.MeshStandardMaterial({color:new THREE.Color(OPENING_COLOR_DOOR), roughness:0.7})
+    );
+    mesh.position.set(hingeX+roomX*widthFt/2, heightFt/2, hingeZ+roomZ*widthFt/2);
+    mesh.rotation.y = Math.atan2(roomX, roomZ);
+    return mesh;
+  }
+
+  // Sliding/stacker: a panel slid to one side, sitting IN the wall's own
+  // plane like the wall itself (not swung into the room) -- a stacker's
+  // narrower fraction reads as more panels folded out of the way.
+  const panelFrac = o.doorType==='stacker' ? 0.25 : 0.42;
+  const panelLenFt = widthFt*panelFrac;
+  const midFt = (o.offsetFt-widthFt/2) + panelLenFt/2;
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(panelLenFt, heightFt, leafThickFt),
+    new THREE.MeshStandardMaterial({color:new THREE.Color('#BFD8E8'), roughness:0.15, transparent:true, opacity:0.45})
+  );
+  mesh.position.set(ax+ux*midFt, heightFt/2, az+uz*midFt);
+  mesh.rotation.y = -Math.atan2(dz, dx);
+  return mesh;
+}
 
 function updateCamera3D(){
   const {radius, theta, phi, target} = state3d;
@@ -10144,6 +10232,40 @@ function resolveWalkMove(curX, curZ, wantX, wantZ){
   if(walkPositionClear(curX, wantZ)) return {x:curX, z:wantZ};
   return {x:curX, z:curZ};
 }
+// A single frame can want to move a lot further than usual right after a
+// stall (dt is clamped to 0.1s, so at WALK_SPEED_FT_PER_SEC that's still
+// nearly a foot in one go) -- resolving that whole distance against
+// collision in one shot means the FIRST wall/window edge anywhere along the
+// way decides the entire frame's result, snapping the player back from
+// "about to reach it" to "stopped short of it" in one visible jump. Chopping
+// the same move into short, collision-checked sub-steps resolves each edge
+// as it's actually reached instead, so movement still slides along a wall
+// or window smoothly no matter how large or uneven a single frame's dt is.
+const WALK_MAX_SUBSTEP_FT = 0.25;
+function resolveWalkMoveStepped(curX, curZ, wantX, wantZ){
+  const totalDx = wantX-curX, totalDz = wantZ-curZ;
+  const dist = Math.hypot(totalDx, totalDz);
+  if(dist<=WALK_MAX_SUBSTEP_FT) return resolveWalkMove(curX, curZ, wantX, wantZ);
+  const steps = Math.ceil(dist/WALK_MAX_SUBSTEP_FT);
+  // Each hop is measured from wherever the player actually IS after the
+  // previous hop, not as a fixed fraction of the original full distance --
+  // once a hop gets stuck against something, every fraction-of-the-original
+  // target from then on is still further past it, and a wall/window thinner
+  // than the gap between "stuck here" and "that later target" would
+  // otherwise get skipped over entirely (resolveWalkMove only ever checks
+  // its two endpoints, not the path between them). Stepping from the real
+  // current position instead means no single hop can ever exceed
+  // WALK_MAX_SUBSTEP_FT, so nothing thinner than that can ever be tunnelled
+  // through, and a genuinely stuck player keeps re-trying the same
+  // (harmless, idempotent) blocked hop instead of leaping past it.
+  const stepX = totalDx/steps, stepZ = totalDz/steps;
+  let x = curX, z = curZ;
+  for(let i=0;i<steps;i++){
+    const resolved = resolveWalkMove(x, z, x+stepX, z+stepZ);
+    x = resolved.x; z = resolved.z;
+  }
+  return {x, z};
+}
 // Drops the walkthrough starting point inside the first real room on the
 // page (its centroid) rather than at some arbitrary world origin that could
 // easily land inside a wall or out in open space -- falls back to the
@@ -10173,7 +10295,11 @@ function updateWalkCamera3D(){
 // current look direction (yaw only, so looking up/down never changes
 // horizontal speed), scaled by real elapsed time so it feels the same on
 // any framerate, then run through the same collision resolver every other
-// candidate move goes through.
+// candidate move goes through. Velocity eases toward whatever the current
+// input wants rather than snapping straight to full speed/a dead stop --
+// starting and stopping instantly is what reads as robotic/jerky; a real
+// person (and every polished first-person camera) has a beat of ease-in and
+// ease-out, even a subtle one.
 function updateWalkMovement(dtSec){
   const keys = state3d.walkKeys;
   let fwd = 0, strafe = 0;
@@ -10181,16 +10307,25 @@ function updateWalkMovement(dtSec){
   if(keys.has('s')||keys.has('arrowdown')) fwd -= 1;
   if(keys.has('d')||keys.has('arrowright')) strafe += 1;
   if(keys.has('a')||keys.has('arrowleft')) strafe -= 1;
-  if(fwd===0 && strafe===0) return;
-  const len = Math.hypot(fwd, strafe) || 1;
-  fwd/=len; strafe/=len;
-  const yaw = state3d.walk.yaw;
-  const fwdX = -Math.sin(yaw), fwdZ = -Math.cos(yaw);
-  const rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
-  const step = WALK_SPEED_FT_PER_SEC*dtSec;
-  const wantX = state3d.walk.x + (fwdX*fwd + rightX*strafe)*step;
-  const wantZ = state3d.walk.z + (fwdZ*fwd + rightZ*strafe)*step;
-  const resolved = resolveWalkMove(state3d.walk.x, state3d.walk.z, wantX, wantZ);
+  let targetVX = 0, targetVZ = 0;
+  if(fwd!==0 || strafe!==0){
+    const len = Math.hypot(fwd, strafe) || 1;
+    fwd/=len; strafe/=len;
+    const yaw = state3d.walk.yaw;
+    const fwdX = -Math.sin(yaw), fwdZ = -Math.cos(yaw);
+    const rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
+    targetVX = (fwdX*fwd + rightX*strafe)*WALK_SPEED_FT_PER_SEC;
+    targetVZ = (fwdZ*fwd + rightZ*strafe)*WALK_SPEED_FT_PER_SEC;
+  }
+  const ease = Math.min(1, dtSec*WALK_ACCEL_RESPONSIVENESS);
+  state3d.walk.vx += (targetVX-state3d.walk.vx)*ease;
+  state3d.walk.vz += (targetVZ-state3d.walk.vz)*ease;
+  if(Math.abs(state3d.walk.vx)<0.001) state3d.walk.vx = 0;
+  if(Math.abs(state3d.walk.vz)<0.001) state3d.walk.vz = 0;
+  if(state3d.walk.vx===0 && state3d.walk.vz===0) return;
+  const wantX = state3d.walk.x + state3d.walk.vx*dtSec;
+  const wantZ = state3d.walk.z + state3d.walk.vz*dtSec;
+  const resolved = resolveWalkMoveStepped(state3d.walk.x, state3d.walk.z, wantX, wantZ);
   state3d.walk.x = resolved.x;
   state3d.walk.z = resolved.z;
 }
@@ -10201,6 +10336,24 @@ function resize3DCanvas(){
   state3d.renderer.setSize(w, h, false);
   state3d.camera.aspect = w/h;
   state3d.camera.updateProjectionMatrix();
+}
+// Where a click on the ORBIT view's canvas actually lands on the ground
+// (y=0) plane -- a real camera ray through the click point (THREE's own
+// standard NDC + Raycaster unprojection, not an approximation), intersected
+// with the flat ground the same way every room/wall already sits on.
+// Returns null for a click that doesn't hit the ground at all (looking up
+// past the horizon while panned, e.g.).
+function computeGroundClickPos(clientX, clientY){
+  const rect = preview3dCanvas.getBoundingClientRect();
+  const ndcX = ((clientX-rect.left)/rect.width)*2-1;
+  const ndcY = -((clientY-rect.top)/rect.height)*2+1;
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), state3d.camera);
+  const origin = raycaster.ray.origin, dir = raycaster.ray.direction;
+  if(Math.abs(dir.y)<1e-6) return null; // looking dead level, never reaches y=0
+  const t = -origin.y/dir.y;
+  if(t<=0) return null; // ground is behind the camera along this ray
+  return { x: origin.x+dir.x*t, z: origin.z+dir.z*t };
 }
 function setup3DInteraction(){
   const canvas = preview3dCanvas;
@@ -10216,11 +10369,16 @@ function setup3DInteraction(){
       if(document.pointerLockElement!==canvas) canvas.requestPointerLock();
       return;
     }
-    dragging = { x:e.clientX, y:e.clientY, pan: e.button===2 || e.shiftKey };
+    // startX/startY track the gesture's true origin (moveDist compares
+    // against these, not against x/y which onPointerMove keeps overwriting
+    // with the latest position) so a real drag still reads as a drag however
+    // slowly the mouse crept there one small step at a time.
+    dragging = { x:e.clientX, y:e.clientY, startX:e.clientX, startY:e.clientY, moveDist:0, pan: e.button===2 || e.shiftKey };
     canvas.setPointerCapture(e.pointerId);
   };
   const onPointerMove = (e)=>{
     if(!dragging) return;
+    dragging.moveDist = Math.hypot(e.clientX-dragging.startX, e.clientY-dragging.startY);
     const dx = e.clientX-dragging.x, dy = e.clientY-dragging.y;
     dragging.x = e.clientX; dragging.y = e.clientY;
     if(dragging.pan){
@@ -10238,7 +10396,17 @@ function setup3DInteraction(){
     }
     updateCamera3D();
   };
-  const onPointerUp = (e)=>{ dragging=null; try{canvas.releasePointerCapture(e.pointerId);}catch(_){} };
+  const onPointerUp = (e)=>{
+    // A genuine click (not a rotate/pan drag) in Orbit sets where Walkthrough
+    // will start -- the room you were actually looking at, not always
+    // whichever room happened to be detected first.
+    if(dragging && !dragging.pan && dragging.moveDist<6 && state3d.mode==='orbit'){
+      const ground = computeGroundClickPos(e.clientX, e.clientY);
+      if(ground && walkPositionClear(ground.x, ground.z)) state3d.clickStartPos = ground;
+    }
+    dragging=null;
+    try{canvas.releasePointerCapture(e.pointerId);}catch(_){}
+  };
   // Pointer lock reports movement via movementX/Y on plain mousemove events,
   // decoupled entirely from where the (now hidden) cursor would visually be
   // -- listened on document, the standard target for these once locked.
@@ -10300,6 +10468,18 @@ function setup3DInteraction(){
 function teardown3DInteraction(){
   if(state3d._teardown){ state3d._teardown(); state3d._teardown=null; }
 }
+// Every mesh still RECEIVES a shadow unconditionally (so nothing floats),
+// but a mesh built with castShadow already set to false (a table leg, a
+// chair backrest -- see build3DTableMesh/addDiningChairs3D: thin, numerous
+// trim whose own shadow is imperceptible at this scale but still costs a
+// full extra shadow-pass draw call each) stays opted out here instead of
+// being forced back on; every other mesh keeps the previous default of
+// casting one, exactly as before this existed.
+function applyDefaultShadowPolicy(obj){
+  if(!obj.isMesh) return;
+  if(obj.castShadow!==false) obj.castShadow = true;
+  obj.receiveShadow = true;
+}
 function init3DScene(){
   if(state3d.renderer) teardown3DScene(); // never build a second scene/loop on top of a still-running one
   const canvas = preview3dCanvas;
@@ -10314,7 +10494,14 @@ function init3DScene(){
   // and piece of furniture with a real contact shadow instead of everything
   // looking like it's floating, in both Orbit and Walkthrough.
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // PCFShadowMap, not PCFSoftShadowMap: still a real filtered (non-blocky)
+  // shadow edge, just without the extra multi-tap blur PCFSoft adds on top --
+  // that blur is the single most expensive per-pixel cost in this whole
+  // render, and with a wide walkthrough FOV filling the screen with shadowed
+  // walls/floor, it's paid on nearly every fragment, every frame. Motion
+  // masks the difference in edge softness far more than a static screenshot
+  // would, so this is a real, unfaked shadow, just a cheaper correct filter.
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0B1D34);
@@ -10347,7 +10534,12 @@ function init3DScene(){
 
   const group = new THREE.Group();
   currentPageElements().forEach(el=>{
-    if(el.isDimension || el.shape==='image' || el.isOpening) return;
+    if(el.isDimension || el.shape==='image') return;
+    if(el.isOpening){
+      const leaf = build3DDoorLeafMesh(el, groundWFt, groundHFt);
+      if(leaf) group.add(leaf);
+      return;
+    }
     const mesh = build3DElementMesh(el, groundWFt, groundHFt);
     if(mesh) group.add(mesh);
     if(el.isRoom){
@@ -10355,7 +10547,7 @@ function init3DScene(){
       if(ceiling) group.add(ceiling);
     }
   });
-  group.traverse(obj=>{ if(obj.isMesh){ obj.castShadow = true; obj.receiveShadow = true; } });
+  group.traverse(applyDefaultShadowPolicy);
   scene.add(group);
 
   state3d.renderer = renderer;
@@ -10397,9 +10589,12 @@ function set3DMode(mode){
   state3d.camera.fov = mode==='walk' ? WALK_FOV_DEG : ORBIT_FOV_DEG;
   state3d.camera.updateProjectionMatrix();
   if(mode==='walk'){
-    const start = computeWalkStartPos(state3d.groundWFt, state3d.groundHFt);
+    // A click on the Orbit view (not a rotate/pan drag) sets exactly where
+    // Walkthrough drops you -- the room you were actually looking at --
+    // instead of always the same default room every single time.
+    const start = state3d.clickStartPos || computeWalkStartPos(state3d.groundWFt, state3d.groundHFt);
     state3d.walk.x = start.x; state3d.walk.z = start.z;
-    state3d.walk.yaw = 0; state3d.walk.pitch = 0;
+    state3d.walk.yaw = 0; state3d.walk.pitch = 0; state3d.walk.vx = 0; state3d.walk.vz = 0;
     updateWalkCamera3D();
     preview3dHint.textContent = 'Click to look around · WASD or arrow keys to move';
   } else {
