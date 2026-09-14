@@ -1170,6 +1170,7 @@ const FURNITURE_ITEMS = {
   kitchen_island:{name:'Kitchen island',         label:'Kitchen island (60×36 in)',            wIn:60, hIn:36},
   bath_vanity:   {name:'Bathroom vanity',        label:'Bathroom vanity (36×22 in)',           wIn:36, hIn:22},
   toilet:        {name:'Toilet',                 label:'Toilet (20×28 in)',                    wIn:20, hIn:28},
+  open_shelf:    {name:'Open shelving',          label:'Open shelving (36×14 in)',             wIn:36, hIn:14},
   power_point:   {name:'Power point',            label:'Power point / GPO (4×4 in)',           wIn:4,  hIn:4},
 };
 // Which top-down icon each furniture item renders as (see drawFurnitureIcon) --
@@ -1182,12 +1183,14 @@ const FURNITURE_ICONS = {
   dresser:'dresser', wardrobe:'wardrobe',
   fridge:'fridge', kitchen_island:'island',
   bath_vanity:'vanity', toilet:'toilet',
+  open_shelf:'open_shelf',
   power_point:'power',
 };
 const FURNITURE_COLORS = {
   bed:'#DCD3C4', tv:'#20242A', table:'#9C7A54', table_dining:'#9C7A54', desk:'#9C7A54',
   sofa:'#6E7B8C', sofa_corner:'#6E7B8C', armchair:'#6E7B8C', dresser:'#8A7360', wardrobe:'#8A7360',
   fridge:'#C7CDD1', island:'#B9B2A6', vanity:'#C9C2B4', toilet:'#E8ECED',
+  open_shelf:'#8A7360',
   power:'#EDE8DC',
 };
 Object.keys(FURNITURE_ITEMS).forEach(key=>{
@@ -1265,7 +1268,7 @@ PRESETS.swing_custom = {label:'Custom swing seat — enter dimensions', color:SW
 // points) are simply left out.
 const CLEARANCE_IN = {
   bed:24, table:18, table_dining:36, desk:36, sofa:18, sofa_corner:18, armchair:18,
-  dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24,
+  dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24, open_shelf:18,
 };
 // Recommended TV viewing distance, per screen diagonal -- the widely used
 // 1.5x-2.5x rule of thumb (too close and you can't take in the whole
@@ -4454,6 +4457,7 @@ function hitTest(el,px,py){
 function findElementAt(x,y){
   const list = zOrderedElements();
   for(let i=list.length-1;i>=0;i--){
+    if(list[i].hidden) continue; // invisible on the plan -- nothing there to click; still reachable via its sidebar row
     if(hitTest(list[i],x,y)) return list[i];
   }
   return null;
@@ -4538,7 +4542,7 @@ function drawOverlay(){
   drawRoomSpaceBorders(ctxOverlay);
   drawClearanceZones(ctxOverlay);
   drawTvViewingZones(ctxOverlay);
-  zOrderedElements().forEach(el=>drawElement(ctxOverlay, el, el.id===state.selectedId));
+  zOrderedElements().forEach(el=>{ if(!el.hidden) drawElement(ctxOverlay, el, el.id===state.selectedId); });
   // Smart alignment guides -- full-span magenta lines showing exactly what
   // the dragged element just snapped to (another item's edge or center),
   // the same visual language Figma/Canva use for this.
@@ -5217,6 +5221,30 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     });
     ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1.4;
     roundRectPath(ctx,x,y,w,h,short*0.06); ctx.stroke();
+  } else if(icon==='open_shelf'){
+    // An open frame with visible horizontal shelf boards and daylight
+    // between them -- unlike wardrobe/dresser, there's no solid door or
+    // drawer face to shade, since the whole point is that it's open, not
+    // enclosed. Lighter fill than wardrobe/dresser's, on purpose, so it
+    // reads as less "solid" at a glance.
+    roundRectPath(ctx,x,y,w,h,short*0.05);
+    ctx.fillStyle = shadeColor(baseColor,0.12);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1.4;
+    roundRectPath(ctx,x,y,w,h,short*0.05); ctx.stroke();
+    const tiers = 4;
+    const boardT = Math.max(1.5, short*0.05);
+    for(let i=1;i<tiers;i++){
+      const sy = y+(h/tiers)*i;
+      ctx.fillStyle = shadeColor(baseColor,-0.25);
+      ctx.fillRect(x+short*0.04, sy-boardT/2, w-short*0.08, boardT);
+    }
+    // Side uprights -- a real shelving unit is framed, not a borderless void.
+    ctx.strokeStyle = shadeColor(baseColor,-0.3);
+    ctx.lineWidth = Math.max(1.2, short*0.04);
+    [x+short*0.05, x+w-short*0.05].forEach(sx=>{
+      ctx.beginPath(); ctx.moveTo(sx,y+short*0.03); ctx.lineTo(sx,y+h-short*0.03); ctx.stroke();
+    });
   } else if(icon==='fridge'){
     // A brushed-steel-look gradient and TWO door handles (one per door),
     // not a flat panel with a single divider line and one stray handle mark.
@@ -5460,6 +5488,16 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
       [midX-w*0.045, midX+w*0.045].forEach(hx=>{
         ctx.beginPath(); ctx.moveTo(hx,y+h*0.42); ctx.lineTo(hx,y+h*0.58); ctx.stroke();
       });
+    }
+  } else if(icon==='open_shelf'){
+    roundRectPath(ctx,x,y,w,h,short*0.05);
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    const tiers = 4;
+    ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
+    for(let i=1;i<tiers;i++){
+      const sy = y+(h/tiers)*i;
+      ctx.beginPath(); ctx.moveTo(x+short*0.04,sy); ctx.lineTo(x+w-short*0.04,sy); ctx.stroke();
     }
   } else if(icon==='fridge'){
     roundRectPath(ctx,x,y,w,h,short*0.08);
@@ -8561,6 +8599,28 @@ function renderElementsList(){
         drawOverlay();
       });
       labelRow.appendChild(hideBtn);
+    } else {
+      // Dimensions don't get the "hide just the label" toggle above -- a
+      // bare dimension line with no value showing is little more than a
+      // stray tick mark, not a useful in-between state the way it is for a
+      // room or a piece of furniture. This hides the WHOLE measurement
+      // (line, ticks, and label together) instead, and also makes it
+      // un-clickable on the plan (see findElementAt) -- still reachable to
+      // toggle back on from this same sidebar row at any time.
+      const hideBtn = document.createElement('button');
+      hideBtn.className = 'icnbtn'+(el.hidden ? ' active' : '');
+      hideBtn.title = el.hidden ? 'Measurement hidden on the plan — click to show it again' : 'Hide this measurement on the plan';
+      hideBtn.innerHTML = el.hidden
+        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>'
+        : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+      hideBtn.addEventListener('click', (e)=>{
+        e.stopPropagation();
+        pushUndo();
+        el.hidden = !el.hidden;
+        renderElementsList();
+        drawOverlay();
+      });
+      labelRow.appendChild(hideBtn);
     }
     details.appendChild(labelRow);
 
@@ -9604,7 +9664,7 @@ const ROOF_PRESETS_3D = new Set(['roof_tile','roof_metal','roof_shingle']);
 const FURNITURE_HEIGHT_FT_3D = {
   bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
   sofa:2.6, sofa_corner:2.6, armchair:2.7,
-  dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, toilet:1.3,
+  dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, toilet:1.3, open_shelf:6.2,
   hatch:4.7, sedan:4.8, suv:5.7, ute:5.9, ute_single:5.9, van:6.7,
   firepit_round:1.0, firepit_square:1.0,
   swing_egg:6.6, swing_double:6.7, swing_bench2:6.6, swing_bench3:7.1, swing_hammock:5.7,
@@ -9784,6 +9844,7 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(preset.icon==='wardrobe') return build3DWardrobeMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='dresser') return build3DDresserMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='fridge') return build3DFridgeMesh(el, preset, baseColor, heightFt, pos);
+  if(preset.icon==='open_shelf') return build3DOpenShelfMesh(el, baseColor, heightFt, pos);
   const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
   const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
   const topTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, el.hFt*40);
@@ -10082,6 +10143,43 @@ function build3DFridgeMesh(el, preset, baseColor, heightFt, pos){
     addHandle(-el.wFt*0.06, heightFt*0.5);
     addHandle(el.wFt*0.06, heightFt*0.5);
   }
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// An open shelving unit's defining feature is the OPPOSITE of every other
+// case-good item's realism fix so far -- it's supposed to read as open,
+// not enclosed, so a solid carcass (even a correctly-shaped one) would
+// still be wrong. Real side panels and horizontal shelf boards with
+// genuine daylight between them instead, matching the 2D icon's own
+// 4-tier layout exactly.
+function build3DOpenShelfMesh(el, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.05)), roughness:0.75});
+  const sideThickFt = 0.06, boardThickFt = 0.08;
+  [-1, 1].forEach(side=>{
+    const sidePanel = new THREE.Mesh(new THREE.BoxGeometry(sideThickFt, heightFt, el.hFt), mat);
+    sidePanel.position.set(side*(el.wFt/2-sideThickFt/2), heightFt/2, 0);
+    group.add(sidePanel);
+  });
+  const tiers = 4;
+  for(let i=0;i<=tiers;i++){
+    const boardY = Math.min(heightFt-boardThickFt/2, Math.max(boardThickFt/2, (heightFt/tiers)*i));
+    const board = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, boardThickFt, el.hFt), mat);
+    board.position.set(0, boardY, 0);
+    group.add(board);
+  }
+  // A thin back panel sitting flush against the wall it's mounted to has
+  // nowhere for its own shadow to actually fall (there's essentially zero
+  // standoff between it and the surface that would receive that shadow),
+  // so it's a real, low-value shadow-pass draw call -- unlike the shelf
+  // boards above, which stand well clear of the wall and genuinely ground
+  // themselves.
+  const backMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.15)), roughness:0.8});
+  const back = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, heightFt, 0.05), backMat);
+  back.position.set(0, heightFt/2, -el.hFt/2+0.025);
+  back.castShadow = false;
+  group.add(back);
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
