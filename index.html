@@ -9666,6 +9666,20 @@ function open3DPreview(){
 function close3DPreview(){
   if(!preview3dOverlay.classList.contains('visible')) return;
   preview3dOverlay.classList.remove('visible');
+  teardown3DScene();
+}
+// Stops the render loop, removes every interaction listener, and disposes
+// the renderer/scene -- the full cleanup close3DPreview() always did, now
+// also called defensively from init3DScene() itself. Without that second
+// call site, opening the preview a second time before properly closing it
+// first (a double-click on the button is enough) built a SECOND renderer
+// and render loop on top of the first, whose animId immediately got
+// overwritten -- orphaning the original loop with no way left to cancel it.
+// An unstoppable 60fps WebGL render loop, plus a duplicate set of
+// document-level mousemove/keydown listeners left running forever, is
+// exactly the kind of thing that bogs down the whole page, sidebar included,
+// not just the 3D view.
+function teardown3DScene(){
   if(state3d.animId){ cancelAnimationFrame(state3d.animId); state3d.animId=null; }
   teardown3DInteraction();
   window.removeEventListener('resize', resize3DCanvas);
@@ -9743,6 +9757,7 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   // and camera instead of inside it.
   const pos = ftPos3D(el, groundWFt, groundHFt);
   if(preset.icon==='sofa_corner') return build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos);
+  if(preset.icon==='sofa' || preset.icon==='armchair') return build3DSofaMesh(el, preset, baseColor, heightFt, pos);
   if(preset.icon==='table' || preset.icon==='desk' || preset.icon==='table_dining') return build3DTableMesh(el, preset, heightFt, pos);
   const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
   const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
@@ -9774,6 +9789,37 @@ function build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos){
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
 }
+// A flat box with a cushion pattern painted on its TOP face only looks right
+// from directly above (orbit) -- at eye height in the walkthrough you see
+// its SIDE, which is still just a plain box silhouette no matter what's
+// texture-mapped on top. Build the same seat/backrest/armrests shape
+// drawFurnitureIcon already draws for sofa/armchair (backH = h*0.24,
+// armW = w*(armchair?0.22:0.12)) as real raised geometry: a lower seat
+// cushion across the whole footprint, a full-height backrest along one
+// edge, and two armrests along the sides -- an actual sofa silhouette.
+function build3DSofaMesh(el, preset, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
+  const topTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, el.hFt*40);
+  const topMat = new THREE.MeshStandardMaterial({map:topTex, roughness:0.8});
+  const seatHFt = heightFt*0.55, backHFt = heightFt, armHFt = heightFt*0.8;
+  const backDepthFt = el.hFt*0.24; // matches drawFurnitureIcon's own backH ratio
+  const armWFt = el.wFt*(preset.icon==='armchair' ? 0.22 : 0.12); // matches drawFurnitureIcon's own armW ratio
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, seatHFt, el.hFt), [sideMat,sideMat,topMat,sideMat,sideMat,sideMat]);
+  seat.position.set(0, seatHFt/2, 0);
+  group.add(seat);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, backHFt-seatHFt, backDepthFt), sideMat);
+  back.position.set(0, seatHFt+(backHFt-seatHFt)/2, -el.hFt/2+backDepthFt/2);
+  group.add(back);
+  [-1, 1].forEach(side=>{
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(armWFt, armHFt-seatHFt, el.hFt), sideMat);
+    arm.position.set(side*(el.wFt/2-armWFt/2), seatHFt+(armHFt-seatHFt)/2, 0);
+    group.add(arm);
+  });
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
 // A table/desk with no visible legs reads as a solid crate from any angle,
 // no matter what's painted on top -- unlike a bed or sofa, its underside is
 // genuinely open space in real life. Thin tabletop slab + four inset legs,
@@ -9796,9 +9842,52 @@ function build3DTableMesh(el, preset, heightFt, pos){
     leg.position.set(lx, legHFt/2, lz);
     group.add(leg);
   });
+  if(preset.icon==='table_dining') addDiningChairs3D(group, el);
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
+}
+// A dining table's own 2D icon already draws chairs around it
+// (drawFurnitureIcon's table_dining branch: seatSize = short*0.22, one row
+// of seatsPerLong along each long edge on a wide table, one at each end on
+// a narrow one, offset seatSize*0.55 clear of the tabletop) -- the 3D
+// extrusion only ever built the table itself, so a dining table appeared
+// with nowhere to sit. Same placement formula, real chair geometry (a seat
+// block plus a raised backrest facing away from the table) instead of the
+// icon's plain squares.
+function addDiningChairs3D(tableGroup, el){
+  const seatSizeFt = Math.min(el.wFt, el.hFt)*0.22;
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color('#5A4A3C'), roughness:0.8});
+  const seatHFt = 1.5, backHFt = 3.0;
+  // rot is this chair's own facing angle (0 = backrest away from a table
+  // edge to its north, i.e. more-negative Z) using this file's standard
+  // mesh.rotation.y convention (world = Ry(rot) applied to local XZ, matching
+  // updateWalkMovement's own fwd/right derivation elsewhere in this file).
+  const addChair = (cx, cz, rot)=>{
+    const chair = new THREE.Group();
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(seatSizeFt, seatHFt, seatSizeFt), mat);
+    seat.position.set(0, seatHFt/2, 0);
+    chair.add(seat);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(seatSizeFt, backHFt-seatHFt, seatSizeFt*0.15), mat);
+    back.position.set(0, seatHFt+(backHFt-seatHFt)/2, -seatSizeFt/2);
+    chair.add(back);
+    chair.position.set(cx, 0, cz);
+    chair.rotation.y = rot;
+    tableGroup.add(chair);
+  };
+  if(el.wFt>=el.hFt){
+    const seatsPerLong = Math.max(2, Math.round(el.wFt/(seatSizeFt*1.8)));
+    for(let i=0;i<seatsPerLong;i++){
+      const sx = -el.wFt/2 + (i+0.5)*(el.wFt/seatsPerLong);
+      addChair(sx, -el.hFt/2-seatSizeFt*0.55, 0);
+      addChair(sx, el.hFt/2+seatSizeFt*0.55, Math.PI);
+    }
+    addChair(-el.wFt/2-seatSizeFt*0.55, 0, Math.PI/2);
+    addChair(el.wFt/2+seatSizeFt*0.55, 0, -Math.PI/2);
+  } else {
+    addChair(0, -el.hFt/2-seatSizeFt*0.55, 0);
+    addChair(0, el.hFt/2+seatSizeFt*0.55, Math.PI);
+  }
 }
 function build3DTreeMesh(el, groundWFt, groundHFt){
   const pos = ftPos3D(el, groundWFt, groundHFt);
@@ -10212,6 +10301,7 @@ function teardown3DInteraction(){
   if(state3d._teardown){ state3d._teardown(); state3d._teardown=null; }
 }
 function init3DScene(){
+  if(state3d.renderer) teardown3DScene(); // never build a second scene/loop on top of a still-running one
   const canvas = preview3dCanvas;
   const bodyEl = document.getElementById('preview3dBody');
   const w = Math.max(1,bodyEl.clientWidth), h = Math.max(1,bodyEl.clientHeight);
