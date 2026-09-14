@@ -9690,18 +9690,40 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(el.shape!=='rect' || preset.icon==='power') return null;
   const baseColor = el.color || preset.color || '#B5934C';
   const heightFt = furnitureHeightFt3D(el.presetKey, preset.icon);
-  const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
-  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
-  const mesh = new THREE.Mesh(geo, mat);
   const baseY = preset.icon==='tv' ? 2.6 : 0; // TVs read as wall-mounted, floating at a sensible height
   // Every other 3D mesh builder places itself via ftPos3D, which centres
   // coordinates on the ground plane (xPx/scale - groundWFt/2); this one used
   // to skip that offset entirely, so furniture rendered miles from the house
   // and camera instead of inside it.
   const pos = ftPos3D(el, groundWFt, groundHFt);
+  if(preset.icon==='sofa_corner') return build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos);
+  const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
+  const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(pos.x, baseY+heightFt/2, pos.z);
   mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return mesh;
+}
+// A corner/L-shaped sofa's own 2D icon (drawFurnitureIcon's sofa_corner
+// branch) already draws it as a genuine L -- two arms meeting at a corner,
+// each armDepth = short*0.36 deep, not a solid square -- so the 3D
+// extrusion builds that SAME L instead of a single full-bounding-box slab.
+// A plain box over a 92x92in footprint reads as a huge, wrong solid wedge
+// up close, nothing like the couch actually drawn on the plan.
+function build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos){
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
+  const armFt = Math.min(el.wFt, el.hFt)*0.36; // matches drawFurnitureIcon's own armDepth ratio exactly
+  const addArm = (wFt, dFt, cx, cz)=>{
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(wFt, heightFt, dFt), mat);
+    mesh.position.set(cx, baseY+heightFt/2, cz);
+    group.add(mesh);
+  };
+  addArm(el.wFt, armFt, 0, -el.hFt/2+armFt/2); // arm along the top edge, full width
+  addArm(armFt, el.hFt, -el.wFt/2+armFt/2, 0); // arm along the left edge, full height
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
 }
 function build3DTreeMesh(el, groundWFt, groundHFt){
   const pos = ftPos3D(el, groundWFt, groundHFt);
@@ -9889,6 +9911,29 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   const pos = ftPos3D(el, groundWFt, groundHFt);
   mesh.position.set(pos.x, baseY+heightFt/2, pos.z);
   if(el.shape==='rect') mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return mesh;
+}
+const CEILING_COLOR_3D = '#EDEAE0';
+// Every traced room already has its own true interior polygon (the same one
+// its floor slab is extruded from, straight from Phase 3's room detection) --
+// capping that SAME polygon at wall height gives the room a real ceiling
+// instead of open sky above the wall line, with no separate/approximated
+// geometry. Height is WALL_HEIGHT_FT_3D, the same default every wall itself
+// falls back to when it has no explicit wallHeightFt of its own.
+function build3DRoomCeilingMesh(el, groundWFt, groundHFt){
+  if(!el.points || el.points.length<3) return null;
+  const cx = el.points.reduce((s,p)=>s+p.x,0)/el.points.length;
+  const cy = el.points.reduce((s,p)=>s+p.y,0)/el.points.length;
+  const shape = new THREE.Shape(el.points.map(p=>new THREE.Vector2(
+    (p.x-cx)/state.scalePxPerFt, -(p.y-cy)/state.scalePxPerFt
+  )));
+  const thickness = 0.2;
+  const geo = new THREE.ExtrudeGeometry(shape, {depth:thickness, bevelEnabled:false});
+  geo.rotateX(-Math.PI/2);
+  geo.translate(0, thickness, 0);
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(CEILING_COLOR_3D), roughness:0.95});
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, WALL_HEIGHT_FT_3D-thickness, cy/state.scalePxPerFt - groundHFt/2);
   return mesh;
 }
 function build3DElementMesh(el, groundWFt, groundHFt){
@@ -10120,6 +10165,10 @@ function init3DScene(){
     if(el.isDimension || el.shape==='image' || el.isOpening) return;
     const mesh = build3DElementMesh(el, groundWFt, groundHFt);
     if(mesh) group.add(mesh);
+    if(el.isRoom){
+      const ceiling = build3DRoomCeilingMesh(el, groundWFt, groundHFt);
+      if(ceiling) group.add(ceiling);
+    }
   });
   group.traverse(obj=>{ if(obj.isMesh){ obj.castShadow = true; obj.receiveShadow = true; } });
   scene.add(group);
