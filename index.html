@@ -1171,6 +1171,8 @@ const FURNITURE_ITEMS = {
   bath_vanity:   {name:'Bathroom vanity',        label:'Bathroom vanity (36×22 in)',           wIn:36, hIn:22},
   toilet:        {name:'Toilet',                 label:'Toilet (20×28 in)',                    wIn:20, hIn:28},
   open_shelf:    {name:'Open shelving',          label:'Open shelving (36×14 in)',             wIn:36, hIn:14},
+  shower:        {name:'Shower',                 label:'Shower (36×36 in)',                    wIn:36, hIn:36},
+  bath_freestand:{name:'Freestanding bath',       label:'Freestanding bath (66×30 in)',         wIn:66, hIn:30},
   power_point:   {name:'Power point',            label:'Power point / GPO (4×4 in)',           wIn:4,  hIn:4},
 };
 // Which top-down icon each furniture item renders as (see drawFurnitureIcon) --
@@ -1184,12 +1186,14 @@ const FURNITURE_ICONS = {
   fridge:'fridge', kitchen_island:'island',
   bath_vanity:'vanity', toilet:'toilet',
   open_shelf:'open_shelf',
+  shower:'shower', bath_freestand:'bath_freestand',
   power_point:'power',
 };
 const FURNITURE_COLORS = {
   bed:'#DCD3C4', tv:'#20242A', table:'#9C7A54', table_dining:'#9C7A54', desk:'#9C7A54',
   sofa:'#6E7B8C', sofa_corner:'#6E7B8C', armchair:'#6E7B8C', dresser:'#8A7360', wardrobe:'#8A7360',
   fridge:'#C7CDD1', island:'#B9B2A6', vanity:'#C9C2B4', toilet:'#E8ECED',
+  shower:'#BFD8E8', bath_freestand:'#F2F5F6',
   open_shelf:'#8A7360',
   power:'#EDE8DC',
 };
@@ -1268,7 +1272,7 @@ PRESETS.swing_custom = {label:'Custom swing seat — enter dimensions', color:SW
 // points) are simply left out.
 const CLEARANCE_IN = {
   bed:24, table:18, table_dining:36, desk:36, sofa:18, sofa_corner:18, armchair:18,
-  dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24, open_shelf:18,
+  dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24, open_shelf:18, shower:24, bath_freestand:24,
 };
 // Recommended TV viewing distance, per screen diagonal -- the widely used
 // 1.5x-2.5x rule of thumb (too close and you can't take in the whole
@@ -5245,6 +5249,44 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     [x+short*0.05, x+w-short*0.05].forEach(sx=>{
       ctx.beginPath(); ctx.moveTo(sx,y+short*0.03); ctx.lineTo(sx,y+h-short*0.03); ctx.stroke();
     });
+  } else if(icon==='shower'){
+    // A glass enclosure -- translucent tinted panels, a floor drain dead
+    // centre, and a shower head + control mounted on one corner's walls --
+    // the same "read as the real fixture" standard as every other
+    // bathroom symbol, not just a tinted square. globalAlpha (not a baked
+    // rgba string) keeps the tint genuinely derived from baseColor -- a
+    // hardcoded rgba() here would be the exact same "colour picker does
+    // nothing" bug already found and fixed twice elsewhere this session.
+    roundRectPath(ctx,x,y,w,h,short*0.04);
+    ctx.save();
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = shadeColor(baseColor,0.1);
+    ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = shadeColor(baseColor,-0.35); ctx.lineWidth=1.4;
+    roundRectPath(ctx,x,y,w,h,short*0.04); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x+w/2, y+h/2, short*0.06, 0, Math.PI*2);
+    ctx.strokeStyle = shadeColor(baseColor,-0.45); ctx.lineWidth=1.2; ctx.stroke();
+    ctx.fillStyle = shadeColor(baseColor,-0.4);
+    ctx.beginPath(); ctx.arc(x+short*0.16, y+short*0.16, short*0.08, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+short*0.16, y+h-short*0.16, short*0.045, 0, Math.PI*2); ctx.fill();
+  } else if(icon==='bath_freestand'){
+    // An oval tub shell with an inset basin -- an oval, not a rounded
+    // rectangle, since that's what actually distinguishes a tub's plan
+    // silhouette from every rectangular case-good item in this catalog.
+    const cx=x+w/2, cy=y+h/2, rx=w/2, ry=h/2;
+    ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+    ctx.fillStyle = shadeColor(baseColor,-0.05);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.35); ctx.lineWidth=1.6; ctx.stroke();
+    const inset = short*0.14;
+    ctx.beginPath(); ctx.ellipse(cx,cy,Math.max(1,rx-inset),Math.max(1,ry-inset),0,0,Math.PI*2);
+    ctx.fillStyle = '#DCE7EC';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle = shadeColor(baseColor,-0.4);
+    ctx.beginPath(); ctx.arc(cx-rx*0.18, cy-ry*0.7, short*0.045, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+rx*0.18, cy-ry*0.7, short*0.045, 0, Math.PI*2); ctx.fill();
   } else if(icon==='fridge'){
     // A brushed-steel-look gradient and TWO door handles (one per door),
     // not a flat panel with a single divider line and one stray handle mark.
@@ -5499,6 +5541,23 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
       const sy = y+(h/tiers)*i;
       ctx.beginPath(); ctx.moveTo(x+short*0.04,sy); ctx.lineTo(x+w-short*0.04,sy); ctx.stroke();
     }
+  } else if(icon==='shower'){
+    roundRectPath(ctx,x,y,w,h,short*0.04);
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x+w/2, y+h/2, short*0.06, 0, Math.PI*2);
+    ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle = BW_INK;
+    ctx.beginPath(); ctx.arc(x+short*0.16, y+short*0.16, short*0.08, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+short*0.16, y+h-short*0.16, short*0.045, 0, Math.PI*2); ctx.fill();
+  } else if(icon==='bath_freestand'){
+    const cx=x+w/2, cy=y+h/2, rx=w/2, ry=h/2;
+    ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.025); ctx.stroke();
+    const inset = short*0.14;
+    ctx.beginPath(); ctx.ellipse(cx,cy,Math.max(1,rx-inset),Math.max(1,ry-inset),0,0,Math.PI*2);
+    ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
   } else if(icon==='fridge'){
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = BW_PAPER; ctx.fill();
@@ -9665,6 +9724,7 @@ const FURNITURE_HEIGHT_FT_3D = {
   bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
   sofa:2.6, sofa_corner:2.6, armchair:2.7,
   dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, toilet:1.3, open_shelf:6.2,
+  shower:6.8, bath_freestand:1.75,
   hatch:4.7, sedan:4.8, suv:5.7, ute:5.9, ute_single:5.9, van:6.7,
   firepit_round:1.0, firepit_square:1.0,
   swing_egg:6.6, swing_double:6.7, swing_bench2:6.6, swing_bench3:7.1, swing_hammock:5.7,
@@ -9845,6 +9905,8 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(preset.icon==='dresser') return build3DDresserMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='fridge') return build3DFridgeMesh(el, preset, baseColor, heightFt, pos);
   if(preset.icon==='open_shelf') return build3DOpenShelfMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='shower') return build3DShowerMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='bath_freestand') return build3DBathMesh(el, baseColor, heightFt, pos);
   const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
   const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
   const topTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, el.hFt*40);
@@ -10180,6 +10242,84 @@ function build3DOpenShelfMesh(el, baseColor, heightFt, pos){
   back.position.set(0, heightFt/2, -el.hFt/2+0.025);
   back.castShadow = false;
   group.add(back);
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A shower's defining feature is that you see THROUGH it -- real glass
+// panels (transparent, reusing the same technique as a sliding door's
+// glass), a floor pan, and a shower head + control mounted on one corner's
+// walls, instead of a solid tinted box.
+function build3DShowerMesh(el, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const glassMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.1, transparent:true, opacity:0.35});
+  const panelThickFt = 0.04;
+  const addPanel = (wFt, dFt, cx, cz)=>{
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(wFt, heightFt, dFt), glassMat);
+    panel.position.set(cx, heightFt/2, cz);
+    // Real-time shadow maps don't account for a material's own opacity --
+    // an opted-in glass panel would cast a solid, opaque-looking shadow,
+    // which is more wrong (breaks the "you can see through this" read)
+    // than simply not grounding it at all.
+    panel.castShadow = false;
+    group.add(panel);
+  };
+  addPanel(el.wFt, panelThickFt, 0, -el.hFt/2+panelThickFt/2);
+  addPanel(el.wFt, panelThickFt, 0, el.hFt/2-panelThickFt/2);
+  addPanel(panelThickFt, el.hFt, -el.wFt/2+panelThickFt/2, 0);
+  addPanel(panelThickFt, el.hFt, el.wFt/2-panelThickFt/2, 0);
+  const panFt = 0.15;
+  const panMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#C7CDD1'), roughness:0.6});
+  const pan = new THREE.Mesh(new THREE.BoxGeometry(el.wFt-panelThickFt*2, panFt, el.hFt-panelThickFt*2), panMat);
+  pan.position.set(0, panFt/2, 0);
+  group.add(pan);
+  const hwMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#8FA6AE'), roughness:0.3, metalness:0.6});
+  const cornerX = -el.wFt/2+0.3, cornerZ = -el.hFt/2+0.3;
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,0.5,8), hwMat);
+  arm.rotation.z = Math.PI/2;
+  arm.position.set(cornerX+0.25, heightFt*0.85, cornerZ);
+  arm.castShadow = false;
+  group.add(arm);
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.04,12), hwMat);
+  head.rotation.x = Math.PI/2.5;
+  head.position.set(cornerX+0.5, heightFt*0.85-0.08, cornerZ);
+  head.castShadow = false;
+  group.add(head);
+  const knob = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.05,10), hwMat);
+  knob.rotation.z = Math.PI/2;
+  knob.position.set(cornerX+0.05, heightFt*0.42, cornerZ);
+  knob.castShadow = false;
+  group.add(knob);
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A freestanding bath is an OVAL shell with a hollowed-out basin, nothing
+// like the flat rectangular footprint every other generic item uses.
+// Shell/basin footprint reuse the same ellipse-via-scaled-cylinder
+// technique already used for the toilet bowl and vanity basin.
+function build3DBathMesh(el, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const shellMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.25});
+  const shell = new THREE.Mesh(new THREE.CylinderGeometry(1,1,heightFt,20), shellMat);
+  shell.scale.set(el.wFt/2, 1, el.hFt/2);
+  shell.position.set(0, heightFt/2, 0);
+  group.add(shell);
+  const rimFt = 0.15;
+  const basinHFt = heightFt-rimFt;
+  const basinMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#DCE7EC'), roughness:0.2});
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(1,1,basinHFt,20), basinMat);
+  basin.scale.set(Math.max(0.1,el.wFt/2-rimFt), 1, Math.max(0.1,el.hFt/2-rimFt));
+  basin.position.set(0, basinHFt/2+rimFt*0.3, 0);
+  basin.castShadow = false; // recessed inside the shell -- its own shadow would fall on the shell right next to it, essentially invisible
+  group.add(basin);
+  const tapMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#8FA6AE'), roughness:0.3, metalness:0.6});
+  [-1, 1].forEach(side=>{
+    const tap = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,0.35,8), tapMat);
+    tap.position.set(side*el.wFt*0.09, heightFt+0.05, -el.hFt/2+0.35);
+    tap.castShadow = false;
+    group.add(tap);
+  });
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
