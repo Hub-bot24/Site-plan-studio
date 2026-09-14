@@ -2487,9 +2487,15 @@ function zOrderedElements(){
   // Rooms are floor fill -- they belong underneath every wall, opening,
   // piece of furniture and cutout on the plan, regardless of when they were
   // detected relative to everything else, the same way a real floor sits
-  // physically below whatever's placed on it.
+  // physically below whatever's placed on it. Openings are always placed
+  // above their own host wall (and everything else in the middle bucket)
+  // explicitly, rather than relying on a door/window happening to have been
+  // added to state.elements after its wall -- a door or window is a smaller
+  // feature mounted IN a wall, so a click where both overlap should always
+  // reach the opening, never fall through to the wall behind it.
   return onPage.filter(e=>e.isRoom)
-    .concat(onPage.filter(e=>!e.isRoom && !e.isCutout))
+    .concat(onPage.filter(e=>!e.isRoom && !e.isCutout && !e.isOpening))
+    .concat(onPage.filter(e=>!e.isRoom && !e.isCutout && e.isOpening))
     .concat(onPage.filter(e=>!e.isRoom && e.isCutout));
 }
 
@@ -4131,7 +4137,12 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
   // could misfire once the point has already moved away from its start.
   if(selectedEl && selectedEl.isWall){
     const epIdx = hitTestWallEndpoint(selectedEl, x, y);
-    if(epIdx!=null){
+    // A door/window placed near a wall's corner sits inside this same 9px
+    // catch radius -- without checking for it first, clicking that opening
+    // while its host wall happened to still be selected would grab the
+    // wall's endpoint instead of the opening right on top of it.
+    const openingHere = findElementAt(x,y);
+    if(epIdx!=null && !(openingHere && openingHere.isOpening)){
       const originalPt = selectedEl.points[epIdx];
       const linked = [{id:selectedEl.id, idx:epIdx}];
       wallsSharingPoint(originalPt, selectedEl.id).forEach(o=>{
@@ -4425,7 +4436,15 @@ function hitTest(el,px,py){
   const lx = dx*Math.cos(rad) - dy*Math.sin(rad);
   const ly = dx*Math.sin(rad) + dy*Math.cos(rad);
   if(el.shape==='rect' || el.shape==='image'){
-    const wPx = el.wFt*state.scalePxPerFt, hPx = el.hFt*state.scalePxPerFt;
+    const wPx = el.wFt*state.scalePxPerFt;
+    let hPx = el.hFt*state.scalePxPerFt;
+    // A door/window's own depth (hFt) is set to its host wall's real
+    // thickness in syncOpeningTransform -- often just a few inches, far
+    // thinner than the wall's own click corridor just behind/around it (see
+    // the isWall branch above). Without a floor here, a click anywhere but
+    // dead-centre on the opening's paper-thin hit band fell through to the
+    // wall underneath, making an inserted door or window very hard to grab.
+    if(el.isOpening) hPx = Math.max(hPx, 20/Math.max(state.zoom, 0.01));
     return Math.abs(lx)<=wPx/2 && Math.abs(ly)<=hPx/2;
   } else {
     const rPx = (el.dFt*state.scalePxPerFt)/2;
@@ -9592,7 +9611,15 @@ function furnitureHeightFt3D(presetKey, icon){
 
 const WALK_EYE_HEIGHT_FT = 5.5;
 const WALK_PLAYER_RADIUS_FT = 0.85;
-const WALK_SPEED_FT_PER_SEC = 6.5;
+const WALK_SPEED_FT_PER_SEC = 9.5;
+// Mouse-look tuning: pitch deliberately less sensitive than yaw (looking up
+// and down needs a much smaller range than turning around a room) and capped
+// well short of straight up/down -- there's rarely a reason to crane your
+// neck that far indoors, and a tighter range makes the look feel controlled
+// rather than swinging wildly from a small hand movement.
+const WALK_YAW_SENS = 0.0024;
+const WALK_PITCH_SENS = 0.0018;
+const WALK_MAX_PITCH_RAD = Math.PI/3;
 // Orbit views the whole model from well outside it, where a normal
 // "photographic" FOV reads correctly. Standing inside a real room at eye
 // height, that same narrow FOV loses the wide-angle field of view a real eye
@@ -9686,6 +9713,25 @@ function materialTextureFor3D(presetKey, color, pxW, pxH){
   tex.needsUpdate = true;
   return tex;
 }
+// Same trick as materialTextureFor3D, but for furniture: bakes the item's
+// OWN top-down icon (drawFurnitureIcon -- the same bed pillows/headboard,
+// sofa cushion seams and arms, TV screen gradient, table wood grain, dresser
+// drawer lines... every icon already drawn on the 2D plan) onto its box's
+// top face, instead of a flat single colour. A plain-colour box reads as an
+// abstract placeholder; this reads as the actual piece of furniture from the
+// plan, using nothing but the icon-drawing code that already exists.
+function furnitureTextureFor3D(icon, color, pxW, pxH){
+  const canvas = document.createElement('canvas');
+  const res = 128;
+  const aspect = pxW>0 && pxH>0 ? pxW/pxH : 1;
+  canvas.width = aspect>=1 ? res : Math.max(16, Math.round(res*aspect));
+  canvas.height = aspect>=1 ? Math.max(16, Math.round(res/aspect)) : res;
+  const ctx = canvas.getContext('2d');
+  drawFurnitureIcon(ctx, icon, {minX:0, maxX:canvas.width, minY:0, maxY:canvas.height}, color);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.needsUpdate = true;
+  return tex;
+}
 function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(el.shape!=='rect' || preset.icon==='power') return null;
   const baseColor = el.color || preset.color || '#B5934C';
@@ -9697,9 +9743,12 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   // and camera instead of inside it.
   const pos = ftPos3D(el, groundWFt, groundHFt);
   if(preset.icon==='sofa_corner') return build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos);
+  if(preset.icon==='table' || preset.icon==='desk' || preset.icon==='table_dining') return build3DTableMesh(el, preset, heightFt, pos);
   const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
-  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
-  const mesh = new THREE.Mesh(geo, mat);
+  const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
+  const topTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, el.hFt*40);
+  const topMat = new THREE.MeshStandardMaterial({map:topTex, roughness:0.8});
+  const mesh = new THREE.Mesh(geo, [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]);
   mesh.position.set(pos.x, baseY+heightFt/2, pos.z);
   mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return mesh;
@@ -9721,6 +9770,32 @@ function build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos){
   };
   addArm(el.wFt, armFt, 0, -el.hFt/2+armFt/2); // arm along the top edge, full width
   addArm(armFt, el.hFt, -el.wFt/2+armFt/2, 0); // arm along the left edge, full height
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A table/desk with no visible legs reads as a solid crate from any angle,
+// no matter what's painted on top -- unlike a bed or sofa, its underside is
+// genuinely open space in real life. Thin tabletop slab + four inset legs,
+// same textured top face as any other furniture item.
+function build3DTableMesh(el, preset, heightFt, pos){
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(el.color || preset.color || '#9C7A54'), roughness:0.7});
+  const topThickFt = Math.min(0.15, heightFt*0.15);
+  const topTex = furnitureTextureFor3D(preset.icon, el.color || preset.color, el.wFt*40, el.hFt*40);
+  const topMat = new THREE.MeshStandardMaterial({map:topTex, roughness:0.6});
+  const topMesh = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, topThickFt, el.hFt), [mat, mat, topMat, mat, mat, mat]);
+  topMesh.position.set(0, heightFt-topThickFt/2, 0);
+  group.add(topMesh);
+  const legSizeFt = 0.12, legInsetFt = 0.15;
+  const legHFt = heightFt-topThickFt;
+  const legX = Math.max(0.05, el.wFt/2-legInsetFt-legSizeFt/2);
+  const legZ = Math.max(0.05, el.hFt/2-legInsetFt-legSizeFt/2);
+  [[-legX,-legZ],[legX,-legZ],[legX,legZ],[-legX,legZ]].forEach(([lx,lz])=>{
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(legSizeFt, legHFt, legSizeFt), mat);
+    leg.position.set(lx, legHFt/2, lz);
+    group.add(leg);
+  });
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
@@ -10042,6 +10117,16 @@ function setup3DInteraction(){
   const canvas = preview3dCanvas;
   let dragging = null;
   const onPointerDown = (e)=>{
+    if(state3d.mode==='walk'){
+      // Real mouselook (Pointer Lock) instead of drag-to-look: drag-to-look
+      // ran out of screen room on every stroke, forcing a release-and-regrab
+      // that's exactly the kind of thing that reads as jumpy/inconsistent --
+      // occasionally even backwards, if a regrab's very first delta landed
+      // wrong. Pointer lock reports pure relative movement with no anchor to
+      // reset, for as long as you keep moving, so there's nothing to glitch.
+      if(document.pointerLockElement!==canvas) canvas.requestPointerLock();
+      return;
+    }
     dragging = { x:e.clientX, y:e.clientY, pan: e.button===2 || e.shiftKey };
     canvas.setPointerCapture(e.pointerId);
   };
@@ -10049,16 +10134,6 @@ function setup3DInteraction(){
     if(!dragging) return;
     const dx = e.clientX-dragging.x, dy = e.clientY-dragging.y;
     dragging.x = e.clientX; dragging.y = e.clientY;
-    if(state3d.mode==='walk'){
-      // Drag-to-look, same gesture as orbit's own rotate -- no pointer-lock
-      // (keeps the cursor free to click the mode toggle or close button
-      // without a separate "press Esc to release the mouse" step).
-      state3d.walk.yaw -= dx*0.006;
-      const maxPitch = Math.PI/2-0.05;
-      state3d.walk.pitch = Math.min(Math.max(state3d.walk.pitch - dy*0.006, -maxPitch), maxPitch);
-      updateWalkCamera3D();
-      return;
-    }
     if(dragging.pan){
       const panSpeed = state3d.radius*0.0016;
       const camDir = new THREE.Vector3();
@@ -10075,6 +10150,21 @@ function setup3DInteraction(){
     updateCamera3D();
   };
   const onPointerUp = (e)=>{ dragging=null; try{canvas.releasePointerCapture(e.pointerId);}catch(_){} };
+  // Pointer lock reports movement via movementX/Y on plain mousemove events,
+  // decoupled entirely from where the (now hidden) cursor would visually be
+  // -- listened on document, the standard target for these once locked.
+  const onLookMouseMove = (e)=>{
+    if(state3d.mode!=='walk' || document.pointerLockElement!==canvas) return;
+    state3d.walk.yaw -= e.movementX*WALK_YAW_SENS;
+    state3d.walk.pitch = Math.min(Math.max(state3d.walk.pitch - e.movementY*WALK_PITCH_SENS, -WALK_MAX_PITCH_RAD), WALK_MAX_PITCH_RAD);
+    updateWalkCamera3D();
+  };
+  const onPointerLockChange = ()=>{
+    if(state3d.mode!=='walk') return;
+    preview3dHint.textContent = document.pointerLockElement===canvas
+      ? 'Esc to release the cursor · WASD or arrow keys to move'
+      : 'Click to look around · WASD or arrow keys to move';
+  };
   const onWheel = (e)=>{
     if(state3d.mode==='walk') return; // no zoom in walkthrough -- eye height/FOV stay real-world fixed
     e.preventDefault();
@@ -10097,6 +10187,8 @@ function setup3DInteraction(){
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerUp);
+  document.addEventListener('mousemove', onLookMouseMove);
+  document.addEventListener('pointerlockchange', onPointerLockChange);
   canvas.addEventListener('wheel', onWheel, {passive:false});
   canvas.addEventListener('contextmenu', onContextMenu);
   window.addEventListener('keydown', onKeyDown);
@@ -10106,11 +10198,14 @@ function setup3DInteraction(){
     canvas.removeEventListener('pointermove', onPointerMove);
     canvas.removeEventListener('pointerup', onPointerUp);
     canvas.removeEventListener('pointercancel', onPointerUp);
+    document.removeEventListener('mousemove', onLookMouseMove);
+    document.removeEventListener('pointerlockchange', onPointerLockChange);
     canvas.removeEventListener('wheel', onWheel);
     canvas.removeEventListener('contextmenu', onContextMenu);
     window.removeEventListener('keydown', onKeyDown);
     window.removeEventListener('keyup', onKeyUp);
     state3d.walkKeys.clear();
+    if(document.pointerLockElement===canvas) document.exitPointerLock();
   };
 }
 function teardown3DInteraction(){
@@ -10216,8 +10311,11 @@ function set3DMode(mode){
     state3d.walk.x = start.x; state3d.walk.z = start.z;
     state3d.walk.yaw = 0; state3d.walk.pitch = 0;
     updateWalkCamera3D();
-    preview3dHint.textContent = 'WASD or arrow keys to walk · drag to look · blocked by real walls, passes through real doorways';
+    preview3dHint.textContent = 'Click to look around · WASD or arrow keys to move';
   } else {
+    // Leaving walkthrough with the cursor still locked would strand it
+    // hidden over a camera mode that no longer uses mouselook at all.
+    if(document.pointerLockElement===preview3dCanvas) document.exitPointerLock();
     updateCamera3D();
     preview3dHint.textContent = 'Drag to rotate · scroll or pinch to zoom · right-drag to pan';
   }
