@@ -1136,6 +1136,17 @@ const ROOM_TYPES = [
   {key:'garage', label:'Garage'},
   {key:'alfresco', label:'Alfresco'},
 ];
+// Which floor material each room type gets in the 2D plan (and, as a
+// representative flat colour, the 3D floor slab -- see FLOOR_TEXTURE_3D_LOOK
+// near build3DAreaMesh) -- ordinary project-home convention: wet/utility
+// areas tiled, bedrooms/living areas carpeted, a garage left bare concrete,
+// alfresco paved. 'other'/unmapped stays the original flat ROOM_FILL_COLOR
+// wash -- no assumption made for an unspecified room.
+const ROOM_TYPE_FLOOR_TEXTURE = {
+  kitchen:'floortile', ensuite:'floortile', laundry:'floortile', pantry:'floortile',
+  living:'carpet', family:'carpet', bedroom:'carpet', wir:'carpet',
+  garage:'concrete', alfresco:'paver',
+};
 
 // Standard real-world furniture footprints (inches, width x depth as seen from
 // directly above -- these are TOP-VIEW/plan-view footprints, matching what a
@@ -5006,6 +5017,62 @@ function getTilePattern(ctx, texture, scalePxPerFt){
       }
       size = cell;
     }
+  } else if(texture==='floortile'){
+    if(bw){
+      // Plain grout-line grid -- the same square module every other floor
+      // pattern in this function uses for its BW variant, kept crisp and
+      // simple rather than the per-tile shading the colour version gets.
+      const cell = Math.max(14, Math.round(scalePxPerFt*1.0));
+      tile.width=cell; tile.height=cell;
+      tctx.fillStyle = BW_PAPER; tctx.fillRect(0,0,cell,cell);
+      tctx.strokeStyle = BW_INK_SOFT; tctx.lineWidth = 1;
+      tctx.strokeRect(0.5,0.5,cell-1,cell-1);
+      size = cell;
+    } else {
+      // Ceramic/porcelain floor tile: large, mostly-uniform square tiles
+      // with a crisp grout line and a faint sheen -- distinct from 'tile'
+      // (terracotta ROOF barrel tiles, used for roofing) and from 'paver'
+      // (rough, individually-shaded natural stone), since a domestic floor
+      // tile is neither of those.
+      const cell = Math.max(18, Math.round(scalePxPerFt*1.0));
+      tile.width=cell; tile.height=cell;
+      tctx.fillStyle = '#E7E3D8'; tctx.fillRect(0,0,cell,cell);
+      const sheen = tctx.createLinearGradient(0,0,cell,cell);
+      sheen.addColorStop(0,'rgba(255,255,255,0.22)');
+      sheen.addColorStop(0.5,'rgba(255,255,255,0)');
+      sheen.addColorStop(1,'rgba(0,0,0,0.04)');
+      tctx.fillStyle = sheen; tctx.fillRect(0,0,cell,cell);
+      tctx.strokeStyle = 'rgba(120,114,98,0.4)'; tctx.lineWidth = Math.max(1,cell*0.045);
+      tctx.strokeRect(0.5,0.5,cell-1,cell-1);
+      size = cell;
+    }
+  } else if(texture==='carpet'){
+    if(bw){
+      // A few soft, sparse dots -- distinct from concrete's dense fine
+      // speckle and gravel's harder-edged stipple, reading as pile texture
+      // rather than aggregate.
+      size = 14;
+      tile.width=size; tile.height=size;
+      tctx.fillStyle = BW_PAPER; tctx.fillRect(0,0,size,size);
+      for(let i=0;i<5;i++){
+        const r1=seededRand(i*3+1), r2=seededRand(i*7+2);
+        tctx.fillStyle = 'rgba(27,27,27,0.16)';
+        tctx.beginPath(); tctx.arc(r1*size, r2*size, 0.6, 0, Math.PI*2); tctx.fill();
+      }
+    } else {
+      // Carpet pile: a warm, matte, continuous surface with a fine fleck
+      // texture -- no grid or joint lines at all, unlike every hard-surface
+      // texture above, since carpet has no visible module to repeat.
+      size = Math.max(10, Math.round(scalePxPerFt*0.4));
+      tile.width=size; tile.height=size;
+      tctx.fillStyle = '#AFA084'; tctx.fillRect(0,0,size,size);
+      const flecks = Math.round(size*size/6);
+      for(let i=0;i<flecks;i++){
+        const r1=seededRand(i*4.1+1), r2=seededRand(i*6.7+2), r3=seededRand(i*2.3+3);
+        tctx.fillStyle = r3<0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+        tctx.fillRect(r1*size, r2*size, 1, 1);
+      }
+    }
   } else {
     return null;
   }
@@ -6856,7 +6923,7 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor){
     drawFurnitureIcon(ctx, preset.icon, bounds, baseColor);
     return;
   }
-  if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='gravel' || texture==='tile' || texture==='metal' || texture==='shingle' || texture==='stone'){
+  if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='gravel' || texture==='tile' || texture==='metal' || texture==='shingle' || texture==='stone' || texture==='floortile' || texture==='carpet'){
     const pat = getTilePattern(ctx, texture, scalePxPerFt);
     ctx.fillStyle = pat || fallbackColor;
     ctx.fill();
@@ -8189,7 +8256,9 @@ function drawRoomElement(ctx, el, selected){
     ctx.moveTo(el.points[0].x, el.points[0].y);
     for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
     ctx.closePath();
-    ctx.fillStyle = el.color || ROOM_FILL_COLOR;
+    const floorTexture = ROOM_TYPE_FLOOR_TEXTURE[el.roomType];
+    const pat = floorTexture ? getTilePattern(ctx, floorTexture, state.scalePxPerFt||40) : null;
+    ctx.fillStyle = pat || (el.color || ROOM_FILL_COLOR);
     ctx.fill();
     ctx.restore();
   }
@@ -9789,6 +9858,22 @@ const AREA_HEIGHT_FT_3D = {
   gardenbed:0.25, pool:0.15, custom:0.2,
 };
 const ROOF_PRESETS_3D = new Set(['roof_tile','roof_metal','roof_shingle']);
+// Flat-colour/roughness stand-in for a room's floor texture in the 3D view.
+// build3DAreaMesh's polygon extrusion (shared by every traced-area AND room
+// shape, not just rooms) has always used one flat MeshStandardMaterial with
+// no UV-mapped texture at all -- giving an arbitrary traced polygon a
+// correctly-scaled repeating texture there would need real per-vertex UV
+// work on an ExtrudeGeometry this project has no way to test (THREE is
+// fully stubbed in every test here). Picking a representative colour and
+// finish per material instead -- glossy for tile, matte for carpet -- is
+// verifiable (it's just numbers on a material) and still reads correctly
+// under real lighting, instead of shipping unverifiable UV logic.
+const FLOOR_TEXTURE_3D_LOOK = {
+  floortile: {color:'#E7E3D8', roughness:0.25},
+  carpet:    {color:'#AFA084', roughness:0.95},
+  concrete:  {color:'#A8ACAE', roughness:0.85},
+  paver:     {color:'#9AA0A6', roughness:0.8},
+};
 const FURNITURE_HEIGHT_FT_3D = {
   bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
   table_dining_round4:2.4, table_dining_round6:2.4, table_dining_round8:2.4,
@@ -10721,7 +10806,12 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
     const geo = new THREE.ExtrudeGeometry(shape, {depth:heightFt, bevelEnabled:false});
     geo.rotateX(-Math.PI/2);
     geo.translate(0, heightFt, 0);
-    const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.9});
+    // A room's own floor material (tile/carpet/concrete/paver, by roomType
+    // -- see FLOOR_TEXTURE_3D_LOOK) takes priority over its plain baseColor,
+    // same idea as the 2D fill; every other polygon-shaped preset (a
+    // hand-traced deck/lawn/pool/...) keeps the flat baseColor it always had.
+    const floorLook = el.isRoom ? FLOOR_TEXTURE_3D_LOOK[ROOM_TYPE_FLOOR_TEXTURE[el.roomType]] : null;
+    const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(floorLook ? floorLook.color : baseColor), roughness: floorLook ? floorLook.roughness : 0.9});
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, baseY, cy/state.scalePxPerFt - groundHFt/2);
     return mesh;
