@@ -1159,6 +1159,9 @@ const FURNITURE_ITEMS = {
   table_coffee:  {name:'Coffee table',           label:'Coffee table (48×24 in)',             wIn:48, hIn:24},
   table_dining4: {name:'Dining table (4-seat)',  label:'Dining table — 4 seat (36×36 in)',   wIn:36, hIn:36},
   table_dining6: {name:'Dining table (6-seat)',  label:'Dining table — 6 seat (72×40 in)',   wIn:72, hIn:40},
+  table_dining_round4: {name:'Round dining table (4-seat)', label:'Dining table — round, 4 seat (Ø42 in)', dIn:42},
+  table_dining_round6: {name:'Round dining table (6-seat)', label:'Dining table — round, 6 seat (Ø54 in)', dIn:54},
+  table_dining_round8: {name:'Round dining table (8-seat)', label:'Dining table — round, 8 seat (Ø72 in)', dIn:72},
   desk:          {name:'Desk',                   label:'Desk (48×24 in)',                     wIn:48, hIn:24},
   sofa_2seat:    {name:'2-seat sofa',             label:'Sofa — 2 seat (60×35 in)',            wIn:60, hIn:35},
   sofa_3seat:    {name:'3-seat sofa',             label:'Sofa — 3 seat (84×35 in)',            wIn:84, hIn:35},
@@ -1181,6 +1184,7 @@ const FURNITURE_ICONS = {
   bed_twin:'bed', bed_full:'bed', bed_queen:'bed', bed_king:'bed', bed_calking:'bed',
   tv_32:'tv', tv_43:'tv', tv_55:'tv', tv_65:'tv', tv_75:'tv', tv_85:'tv',
   table_side:'table', table_coffee:'table', table_dining4:'table_dining', table_dining6:'table_dining', desk:'desk',
+  table_dining_round4:'table_dining_round4', table_dining_round6:'table_dining_round6', table_dining_round8:'table_dining_round8',
   sofa_2seat:'sofa', sofa_3seat:'sofa', sofa_corner:'sofa_corner', armchair:'armchair',
   dresser:'dresser', wardrobe:'wardrobe',
   fridge:'fridge', kitchen_island:'island',
@@ -1191,6 +1195,7 @@ const FURNITURE_ICONS = {
 };
 const FURNITURE_COLORS = {
   bed:'#DCD3C4', tv:'#20242A', table:'#9C7A54', table_dining:'#9C7A54', desk:'#9C7A54',
+  table_dining_round4:'#9C7A54', table_dining_round6:'#9C7A54', table_dining_round8:'#9C7A54',
   sofa:'#6E7B8C', sofa_corner:'#6E7B8C', armchair:'#6E7B8C', dresser:'#8A7360', wardrobe:'#8A7360',
   fridge:'#C7CDD1', island:'#B9B2A6', vanity:'#C9C2B4', toilet:'#E8ECED',
   shower:'#BFD8E8', bath_freestand:'#F2F5F6',
@@ -1204,7 +1209,14 @@ Object.keys(FURNITURE_ITEMS).forEach(key=>{
   // below (clearance zones, auto-arrange, room-fullness) -- narrower than
   // "has an icon", which cars/fire pits also do, so those outdoor items
   // never get pulled into a bedroom layout algorithm.
-  PRESETS[key] = {label:item.label, color:FURNITURE_COLORS[icon]||'#8A7B6B', texture:'flat', quick:'rect', name:item.name, wIn:item.wIn, hIn:item.hIn, icon, isIndoorFurniture:true};
+  const common = {label:item.label, color:FURNITURE_COLORS[icon]||'#8A7B6B', texture:'flat', name:item.name, icon, isIndoorFurniture:true};
+  // Round dining tables carry a diameter (dIn) instead of a width/depth pair
+  // -- same "circle" quick-add shape trees/fire pits already use, reused
+  // here instead of approximating a round table as its rectangular
+  // bounding box.
+  PRESETS[key] = item.dIn!=null
+    ? {...common, quick:'circle', dIn:item.dIn}
+    : {...common, quick:'rect', wIn:item.wIn, hIn:item.hIn};
 });
 
 // Real-world vehicle footprints (metres, length x width as measured directly
@@ -1273,6 +1285,7 @@ PRESETS.swing_custom = {label:'Custom swing seat — enter dimensions', color:SW
 const CLEARANCE_IN = {
   bed:24, table:18, table_dining:36, desk:36, sofa:18, sofa_corner:18, armchair:18,
   dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24, open_shelf:18, shower:24, bath_freestand:24,
+  table_dining_round4:36, table_dining_round6:36, table_dining_round8:36,
 };
 // Recommended TV viewing distance, per screen diagonal -- the widely used
 // 1.5x-2.5x rule of thumb (too close and you can't take in the whole
@@ -1289,6 +1302,7 @@ const SIZE_FAMILIES = [
   ['bed_twin','bed_full','bed_queen','bed_king','bed_calking'],
   ['sofa_2seat','sofa_3seat'],
   ['table_dining4','table_dining6'],
+  ['table_dining_round4','table_dining_round6','table_dining_round8'],
   ['tv_32','tv_43','tv_55','tv_65','tv_75','tv_85'],
 ];
 function smallerSizeKey(presetKey){
@@ -2520,9 +2534,21 @@ function getClearanceFt(el){
   return inches ? inches/12 : 0;
 }
 // Same rotated-rect corner math as elementToPolygonPoints, just inflated
-// outward by the clearance distance on every side.
+// outward by the clearance distance on every side. A round table (the one
+// circle-shape item that can carry a clearance zone) inflates its own
+// elementToPolygonPoints circle radius instead -- a rotated "rect" zone
+// would be meaningless (and wFt/hFt don't even exist) for something round.
 function elementClearancePolygonPx(el, clearanceFt){
   const padPx = clearanceFt*state.scalePxPerFt;
+  if(el.shape==='circle'){
+    const rPx = (el.dFt*state.scalePxPerFt)/2 + padPx;
+    const segments = 32, pts = [];
+    for(let i=0;i<segments;i++){
+      const a = (i/segments)*Math.PI*2;
+      pts.push({x: el.xPx + rPx*Math.cos(a), y: el.yPx + rPx*Math.sin(a)});
+    }
+    return pts;
+  }
   const wPx = el.wFt*state.scalePxPerFt + padPx*2;
   const hPx = el.hFt*state.scalePxPerFt + padPx*2;
   const rad = el.rotationDeg*Math.PI/180;
@@ -2543,7 +2569,7 @@ function elementClearancePolygonPx(el, clearanceFt){
 // drawing code so the underlying conflict logic can be checked directly.
 function getClearanceZones(){
   if(!state.scalePxPerFt) return [];
-  const onPage = currentPageElements().filter(e=>e.shape==='rect' && !e.isCutout);
+  const onPage = currentPageElements().filter(e=>(e.shape==='rect' || e.shape==='circle') && !e.isCutout);
   const furniture = onPage.filter(e=>PRESETS[e.presetKey] && PRESETS[e.presetKey].isIndoorFurniture);
   const withClearance = furniture.map(el=>({el, clearanceFt:getClearanceFt(el)})).filter(x=>x.clearanceFt>0);
   const minOverlapPx2 = 0.15 * state.scalePxPerFt * state.scalePxPerFt; // ~0.15 sq ft of real overlap, to ignore touching-edge float noise
@@ -3035,7 +3061,7 @@ function getRoomSpaceBorders(){
     const roomAreaFt = outline.wFt*outline.hFt;
     const roomPoly = elementToPolygonPoints(room);
     const occupiedFt = furniture.reduce((sum,el)=>
-      pointInPolygon(el.xPx, el.yPx, roomPoly) ? sum + el.wFt*el.hFt : sum
+      pointInPolygon(el.xPx, el.yPx, roomPoly) ? sum + (el.shape==='circle' ? Math.PI*(el.dFt/2)*(el.dFt/2) : el.wFt*el.hFt) : sum
     , 0);
     const fullness = roomAreaFt>0 ? occupiedFt/roomAreaFt : 0;
     const level = fullness < 0.35 ? 'good' : (fullness < 0.6 ? 'ok' : 'tight');
@@ -3215,6 +3241,9 @@ function updateAddFieldsForType(){
   }
   if(preset.dM!=null){
     diameterInput.value = formatNum(fromFt(toFt(preset.dM,'m'), state.unit));
+  } else if(preset.dIn!=null){
+    diameterInput.value = formatNum(fromFt(preset.dIn/12, state.unit));
+    if(!labelInput.value.trim()) labelInput.value = preset.name;
   }
   colorInput.value = preset.color;
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
@@ -5104,6 +5133,29 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
         placeSeat(x+w/2, y+h+seatSize*0.55, Math.PI);
       }
     }
+  } else if(icon==='table_dining_round4' || icon==='table_dining_round6' || icon==='table_dining_round8'){
+    const cx=x+w/2, cy=y+h/2, r=short/2;
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.fillStyle = shadeColor(baseColor,0.1);
+    ctx.fill();
+    ctx.save(); ctx.clip();
+    const bw = Math.max(1.5, short*0.05);
+    ctx.beginPath(); ctx.arc(cx,cy,r-bw/2,0,Math.PI*2);
+    ctx.strokeStyle='rgba(0,0,0,0.22)'; ctx.lineWidth=bw;
+    ctx.stroke();
+    ctx.restore();
+    const seatCount = icon==='table_dining_round4' ? 4 : (icon==='table_dining_round6' ? 6 : 8);
+    const seatSize = short*0.2;
+    ctx.fillStyle = shadeColor(baseColor,-0.15);
+    for(let i=0;i<seatCount;i++){
+      const angle = (i/seatCount)*Math.PI*2;
+      const sx = cx+Math.sin(angle)*(r+seatSize*0.55);
+      const sy = cy-Math.cos(angle)*(r+seatSize*0.55);
+      ctx.save(); ctx.translate(sx,sy); ctx.rotate(angle);
+      roundRectPath(ctx,-seatSize/2,-seatSize/2,seatSize,seatSize,seatSize*0.3);
+      ctx.fill();
+      ctx.restore();
+    }
   } else if(icon==='sofa' || icon==='armchair'){
     roundRectPath(ctx,x,y,w,h,short*0.16);
     const seatGrad = ctx.createLinearGradient(x,y,x,y+h);
@@ -5467,6 +5519,23 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
         placeSeat(x+w/2, y-seatSize*0.55, 0);
         placeSeat(x+w/2, y+h+seatSize*0.55, Math.PI);
       }
+    }
+  } else if(icon==='table_dining_round4' || icon==='table_dining_round6' || icon==='table_dining_round8'){
+    const cx=x+w/2, cy=y+h/2, r=short/2;
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.025); ctx.stroke();
+    const seatCount = icon==='table_dining_round4' ? 4 : (icon==='table_dining_round6' ? 6 : 8);
+    const seatSize = short*0.2;
+    for(let i=0;i<seatCount;i++){
+      const angle = (i/seatCount)*Math.PI*2;
+      const sx = cx+Math.sin(angle)*(r+seatSize*0.55);
+      const sy = cy-Math.cos(angle)*(r+seatSize*0.55);
+      ctx.save(); ctx.translate(sx,sy); ctx.rotate(angle);
+      roundRectPath(ctx,-seatSize/2,-seatSize/2,seatSize,seatSize,seatSize*0.3);
+      ctx.fillStyle = BW_PAPER; ctx.fill();
+      ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
+      ctx.restore();
     }
   } else if(icon==='sofa' || icon==='armchair'){
     roundRectPath(ctx,x,y,w,h,short*0.16);
@@ -9722,6 +9791,7 @@ const AREA_HEIGHT_FT_3D = {
 const ROOF_PRESETS_3D = new Set(['roof_tile','roof_metal','roof_shingle']);
 const FURNITURE_HEIGHT_FT_3D = {
   bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
+  table_dining_round4:2.4, table_dining_round6:2.4, table_dining_round8:2.4,
   sofa:2.6, sofa_corner:2.6, armchair:2.7,
   dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, toilet:1.3, open_shelf:6.2,
   shower:6.8, bath_freestand:1.75,
@@ -9879,7 +9949,13 @@ function furnitureTextureFor3D(icon, color, pxW, pxH){
   return tex;
 }
 function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
-  if(el.shape!=='rect' || preset.icon==='power') return null;
+  // Used to gate on el.shape!=='rect' alone -- which silently dropped EVERY
+  // circle-shape item with an icon (a round dining table, but also the
+  // already-existing round fire pit and hanging egg swing) out of the 3D
+  // view entirely, despite each already having its own FURNITURE_HEIGHT_FT_3D
+  // entry ready to use. build3DElementMesh routes anything with preset.icon
+  // here regardless of shape, so this needs to actually handle both.
+  if((el.shape!=='rect' && el.shape!=='circle') || preset.icon==='power') return null;
   const baseColor = el.color || preset.color || '#B5934C';
   // Every TV preset used to share one flat FURNITURE_HEIGHT_FT_3D.tv height
   // regardless of screen size -- a 32in and an 85in TV rendered identically
@@ -9897,6 +9973,9 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(preset.icon==='sofa_corner') return build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos);
   if(preset.icon==='sofa' || preset.icon==='armchair') return build3DSofaMesh(el, preset, baseColor, heightFt, pos);
   if(preset.icon==='table' || preset.icon==='desk' || preset.icon==='table_dining') return build3DTableMesh(el, preset, heightFt, pos);
+  if(preset.icon==='table_dining_round4') return build3DRoundTableMesh(el, preset, heightFt, pos, 4);
+  if(preset.icon==='table_dining_round6') return build3DRoundTableMesh(el, preset, heightFt, pos, 6);
+  if(preset.icon==='table_dining_round8') return build3DRoundTableMesh(el, preset, heightFt, pos, 8);
   if(preset.icon==='tv') return build3DTVMesh(el, preset, baseColor, heightFt, {x:pos.x, y:baseY, z:pos.z});
   if(preset.icon==='toilet') return build3DToiletMesh(el, baseColor, pos);
   if(preset.icon==='bed') return build3DBedMesh(el, baseColor, heightFt, pos);
@@ -9907,11 +9986,22 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(preset.icon==='open_shelf') return build3DOpenShelfMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='shower') return build3DShowerMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='bath_freestand') return build3DBathMesh(el, baseColor, heightFt, pos);
-  const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
+  // Generic fallback for anything else with an icon but no dedicated 3D
+  // builder (e.g. a round fire pit, the hanging egg swing) -- same
+  // rect-vs-circle branch build3DAreaMesh already uses, so a circle-shape
+  // item gets a real cylinder instead of a box built from undefined wFt/hFt.
   const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
-  const topTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, el.hFt*40);
-  const topMat = new THREE.MeshStandardMaterial({map:topTex, roughness:0.8});
-  const mesh = new THREE.Mesh(geo, [sideMat, sideMat, topMat, sideMat, sideMat, sideMat]);
+  let geo, faceMats, topTex;
+  if(el.shape==='circle'){
+    geo = new THREE.CylinderGeometry(el.dFt/2, el.dFt/2, heightFt, 28);
+    topTex = furnitureTextureFor3D(preset.icon, baseColor, el.dFt*40, el.dFt*40);
+    faceMats = [sideMat, new THREE.MeshStandardMaterial({map:topTex, roughness:0.8}), sideMat];
+  } else {
+    geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
+    topTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, el.hFt*40);
+    faceMats = [sideMat, sideMat, new THREE.MeshStandardMaterial({map:topTex, roughness:0.8}), sideMat, sideMat, sideMat];
+  }
+  const mesh = new THREE.Mesh(geo, faceMats);
   mesh.position.set(pos.x, baseY+heightFt/2, pos.z);
   mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return mesh;
@@ -10393,6 +10483,74 @@ function addDiningChairs3D(tableGroup, el){
   } else {
     addChair(0, -el.hFt/2-seatSizeFt*0.55, 0);
     addChair(0, el.hFt/2+seatSizeFt*0.55, Math.PI);
+  }
+}
+// A round table (circle shape -- el.dFt, not el.wFt/el.hFt) needs its own
+// builder rather than reusing build3DTableMesh: a rectangular top built
+// from a BoxGeometry would need el.wFt/el.hFt, which don't exist here, and
+// four corner legs sized for a rectangular top would either stick out past
+// a circular edge or crowd right where a seated diner's knees go. Real
+// round dining tables are built on a single centre pedestal instead.
+function build3DRoundTableMesh(el, preset, heightFt, pos, seatCount){
+  const group = new THREE.Group();
+  const baseColor = el.color || preset.color || '#9C7A54';
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.7});
+  const topThickFt = Math.min(0.15, heightFt*0.15);
+  const rFt = el.dFt/2;
+  // Same "bake the top-down icon onto the top face only" trick build3DTableMesh
+  // uses -- the seats drawn in the icon fall outside this square dFt x dFt
+  // canvas (see drawFurnitureIcon's table_dining_round4/6/8 branch), so they're
+  // naturally cropped away, leaving just the tabletop's own wood-shaded look.
+  const topTex = furnitureTextureFor3D(preset.icon, baseColor, el.dFt*40, el.dFt*40);
+  const topMat = new THREE.MeshStandardMaterial({map:topTex, roughness:0.6});
+  const topMesh = new THREE.Mesh(new THREE.CylinderGeometry(rFt, rFt, topThickFt, 28), [mat, topMat, mat]);
+  topMesh.position.set(0, heightFt-topThickFt/2, 0);
+  group.add(topMesh);
+  const legHFt = heightFt-topThickFt;
+  const pedestalRFt = Math.min(0.14, rFt*0.2);
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(pedestalRFt, pedestalRFt, legHFt, 16), mat);
+  pedestal.position.set(0, legHFt/2, 0);
+  group.add(pedestal);
+  const footRFt = Math.min(0.6, rFt*0.55);
+  const foot = new THREE.Mesh(new THREE.CylinderGeometry(footRFt, footRFt*1.15, 0.08, 20), mat);
+  foot.position.set(0, 0.04, 0);
+  group.add(foot);
+  addRoundDiningChairs3D(group, el, seatCount);
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// Same idea as addDiningChairs3D just above (a dining table's 2D icon
+// already shows its seats, so the 3D extrusion needs the same seats to
+// actually exist) but placed radially since the table itself is round.
+// Each round preset's diameter (42/54/72in for 4/6/8 seats) was chosen
+// specifically so exactly this many chairs fit comfortably evenly spaced
+// around its edge.
+function addRoundDiningChairs3D(tableGroup, el, seatCount){
+  const rFt = el.dFt/2;
+  const seatSizeFt = el.dFt*0.16;
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color('#5A4A3C'), roughness:0.8});
+  const seatHFt = 1.5, backHFt = 3.0;
+  const chairDist = rFt + seatSizeFt*0.55;
+  for(let i=0;i<seatCount;i++){
+    const angle = (i/seatCount)*Math.PI*2;
+    const chair = new THREE.Group();
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(seatSizeFt, seatHFt, seatSizeFt), mat);
+    seat.position.set(0, seatHFt/2, 0);
+    chair.add(seat);
+    const back = new THREE.Mesh(new THREE.BoxGeometry(seatSizeFt, backHFt-seatHFt, seatSizeFt*0.15), mat);
+    back.position.set(0, seatHFt+(backHFt-seatHFt)/2, -seatSizeFt/2);
+    back.castShadow = false; // thin backrest panel; the seat block already grounds the chair with a real shadow, and a big round table rings up to 8 of these
+    chair.add(back);
+    // angle=0 places the chair at (0,-chairDist) -- "north" of the table,
+    // matching addDiningChairs3D's own rot=0 convention -- then walks
+    // clockwise around the table. A chair's own local forward (unrotated,
+    // rot=0) faces +z; rotation.y=-angle re-aims that forward vector at the
+    // table centre from wherever the chair sits, so every chair's seat
+    // faces inward and its backrest faces out, all the way around.
+    chair.position.set(Math.sin(angle)*chairDist, 0, -Math.cos(angle)*chairDist);
+    chair.rotation.y = -angle;
+    tableGroup.add(chair);
   }
 }
 function build3DTreeMesh(el, groundWFt, groundHFt){
