@@ -9593,6 +9593,16 @@ function furnitureHeightFt3D(presetKey, icon){
 const WALK_EYE_HEIGHT_FT = 5.5;
 const WALK_PLAYER_RADIUS_FT = 0.85;
 const WALK_SPEED_FT_PER_SEC = 6.5;
+// Orbit views the whole model from well outside it, where a normal
+// "photographic" FOV reads correctly. Standing inside a real room at eye
+// height, that same narrow FOV loses the wide-angle field of view a real eye
+// has -- nearby walls and furniture don't fill your view the way they
+// actually would, so a real, correctly-sized room reads as a cramped
+// dollhouse instead of a place you could stand in. A first-person-game-style
+// wider vertical FOV fixes the perceived scale without touching a single
+// real-world dimension.
+const ORBIT_FOV_DEG = 50;
+const WALK_FOV_DEG = 75;
 const state3d = {
   renderer:null, scene:null, camera:null, animId:null,
   target:{x:0,y:0,z:0}, radius:40, theta:Math.PI/4, phi:Math.PI/3.2,
@@ -9676,7 +9686,7 @@ function materialTextureFor3D(presetKey, color, pxW, pxH){
   tex.needsUpdate = true;
   return tex;
 }
-function build3DFurnitureMesh(el, preset){
+function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(el.shape!=='rect' || preset.icon==='power') return null;
   const baseColor = el.color || preset.color || '#B5934C';
   const heightFt = furnitureHeightFt3D(el.presetKey, preset.icon);
@@ -9684,7 +9694,12 @@ function build3DFurnitureMesh(el, preset){
   const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
   const mesh = new THREE.Mesh(geo, mat);
   const baseY = preset.icon==='tv' ? 2.6 : 0; // TVs read as wall-mounted, floating at a sensible height
-  mesh.position.set(el.xPx/state.scalePxPerFt, baseY+heightFt/2, el.yPx/state.scalePxPerFt);
+  // Every other 3D mesh builder places itself via ftPos3D, which centres
+  // coordinates on the ground plane (xPx/scale - groundWFt/2); this one used
+  // to skip that offset entirely, so furniture rendered miles from the house
+  // and camera instead of inside it.
+  const pos = ftPos3D(el, groundWFt, groundHFt);
+  mesh.position.set(pos.x, baseY+heightFt/2, pos.z);
   mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return mesh;
 }
@@ -9879,7 +9894,7 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
 function build3DElementMesh(el, groundWFt, groundHFt){
   const preset = PRESETS[el.presetKey];
   if(!preset) return null;
-  if(preset.icon) return build3DFurnitureMesh(el, preset);
+  if(preset.icon) return build3DFurnitureMesh(el, preset, groundWFt, groundHFt);
   if(el.presetKey==='tree') return build3DTreeMesh(el, groundWFt, groundHFt);
   if(el.shape==='path') return build3DPathMesh(el, groundWFt, groundHFt);
   return build3DAreaMesh(el, preset, groundWFt, groundHFt);
@@ -10078,7 +10093,7 @@ function init3DScene(){
   const groundHFt = Math.max(20, bgCanvas.height/state.scalePxPerFt);
   scene.fog = new THREE.Fog(0x0B1D34, Math.max(groundWFt,groundHFt)*1.2, Math.max(groundWFt,groundHFt)*5);
 
-  const camera = new THREE.PerspectiveCamera(50, w/h, 0.1, 5000);
+  const camera = new THREE.PerspectiveCamera(ORBIT_FOV_DEG, w/h, 0.1, 5000);
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.65));
   const sun = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -10145,6 +10160,8 @@ function set3DMode(mode){
   state3d.mode = mode;
   preview3dModeToggle.querySelectorAll('button').forEach(b=>b.classList.toggle('active', b.dataset.mode3d===mode));
   preview3dCanvas.style.cursor = mode==='walk' ? 'crosshair' : 'grab';
+  state3d.camera.fov = mode==='walk' ? WALK_FOV_DEG : ORBIT_FOV_DEG;
+  state3d.camera.updateProjectionMatrix();
   if(mode==='walk'){
     const start = computeWalkStartPos(state3d.groundWFt, state3d.groundHFt);
     state3d.walk.x = start.x; state3d.walk.z = start.z;
