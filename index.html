@@ -792,6 +792,34 @@
           <label>Rotation (°) — optional</label>
           <input type="number" id="addRotationInput" step="1" min="0" max="359" placeholder="0">
         </div>
+        <div id="openingFields" style="display:none;">
+          <p class="helptext" id="openingHostHint">Select a wall on the plan or in the list first, then add this to it.</p>
+          <div class="row2">
+            <div class="field">
+              <label>Width (<span class="unit-label">m</span>)</label>
+              <input type="number" id="openingWidthInput" step="0.01" min="0.1" placeholder="0.82">
+            </div>
+            <div class="field">
+              <label id="openingHeightFieldLabel">Height (<span class="unit-label">m</span>)</label>
+              <input type="number" id="openingHeightInput" step="0.01" min="0.1" placeholder="2.04">
+            </div>
+          </div>
+          <div class="field" id="openingSillFieldWrap" style="display:none;">
+            <label>Sill height above floor (<span class="unit-label">m</span>)</label>
+            <input type="number" id="openingSillInput" step="0.01" min="0" placeholder="0.9">
+          </div>
+          <div class="row2" id="openingSwingFieldWrap" style="display:none;">
+            <div class="field">
+              <label>Hinge side</label>
+              <select id="openingSwingSideSelect"><option value="left">Left</option><option value="right">Right</option></select>
+            </div>
+            <div class="field">
+              <label>Swings toward</label>
+              <select id="openingSwingFlipSelect"><option value="0">This side</option><option value="1">Other side</option></select>
+            </div>
+          </div>
+          <button class="btn" id="openingAddBtn" type="button" style="margin-top:4px;">Add to selected wall</button>
+        </div>
         <p class="helptext" id="freeformDivider" style="border-top:1px solid var(--line);padding-top:10px;margin-top:2px;">— or trace an irregular shape —</p>
         <div id="pathFields">
           <p class="helptext" id="pathHint">Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.</p>
@@ -1056,6 +1084,19 @@ const WALL_COLOR_EXTERIOR = '#8B8478';
 PRESETS.wall_interior = {label:'Wall — Interior', color:WALL_COLOR_INTERIOR, texture:null, quick:'none', isWall:true, wallType:'internal', thicknessM:0.09, wallHeightFt:WALL_HEIGHT_FT_3D};
 PRESETS.wall_exterior = {label:'Wall — Exterior', color:WALL_COLOR_EXTERIOR, texture:null, quick:'none', isWall:true, wallType:'external', thicknessM:0.19, wallHeightFt:WALL_HEIGHT_FT_3D};
 
+// Doors and windows: a small rect element that belongs to exactly one wall
+// (hostWallId) at a distance along it (offsetFt) instead of a free xPx/yPx --
+// syncOpeningTransform() derives its actual position/rotation/depth from the
+// host wall every time that wall changes, so an opening can never end up
+// floating disconnected from the wall it was cut into.
+const OPENING_COLOR_DOOR = '#7A5233';
+const OPENING_COLOR_WINDOW = '#BFD8E8';
+PRESETS.door_hinged = {label:'Door — Hinged', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'hinged', widthM:0.82, heightM:2.04};
+PRESETS.door_sliding = {label:'Door — Sliding', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'sliding', widthM:1.8, heightM:2.04};
+PRESETS.door_stacker = {label:'Door — Stacker (multi-panel)', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'stacker', widthM:2.4, heightM:2.1};
+PRESETS.window_standard = {label:'Window', color:OPENING_COLOR_WINDOW, texture:null, quick:'opening', isOpening:true, openingKind:'window', widthM:1.2, heightM:1.2, sillM:0.9};
+PRESETS.opening_large = {label:'Large opening (no door/window fitted)', color:OPENING_COLOR_WINDOW, texture:null, quick:'opening', isOpening:true, openingKind:'opening', widthM:3.0, heightM:2.1};
+
 // Standard real-world furniture footprints (inches, width x depth as seen from
 // directly above -- these are TOP-VIEW/plan-view footprints, matching what a
 // site or floor plan actually shows, not front-elevation or diagonal sizes).
@@ -1308,6 +1349,17 @@ const snapToggleInput = document.getElementById('snapToggleInput');
 const wallFields = document.getElementById('wallFields');
 const wallThicknessInput = document.getElementById('wallThicknessInput');
 const wallHeightInput = document.getElementById('wallHeightInput');
+const openingFields = document.getElementById('openingFields');
+const openingHostHint = document.getElementById('openingHostHint');
+const openingWidthInput = document.getElementById('openingWidthInput');
+const openingHeightInput = document.getElementById('openingHeightInput');
+const openingHeightFieldLabel = document.getElementById('openingHeightFieldLabel');
+const openingSillFieldWrap = document.getElementById('openingSillFieldWrap');
+const openingSillInput = document.getElementById('openingSillInput');
+const openingSwingFieldWrap = document.getElementById('openingSwingFieldWrap');
+const openingSwingSideSelect = document.getElementById('openingSwingSideSelect');
+const openingSwingFlipSelect = document.getElementById('openingSwingFlipSelect');
+const openingAddBtn = document.getElementById('openingAddBtn');
 const startDrawBtn = document.getElementById('startDrawBtn');
 const drawBar = document.getElementById('drawBar');
 const drawStat = document.getElementById('drawStat');
@@ -1531,7 +1583,12 @@ pasteBtn.addEventListener('click', ()=>{
   const copy = JSON.parse(JSON.stringify(state.clipboard));
   copy.id = state.nextId++;
   copy.page = state.currentPage;
-  if(copy.shape==='rect' || copy.shape==='circle' || copy.shape==='image'){
+  if(copy.isOpening){
+    // Not a free xPx/yPx paste -- it stays on its (cloned) host wall, nudged
+    // along it so the paste doesn't land exactly on top of the original.
+    copy.offsetFt = (copy.offsetFt||0) + (copy.wFt||0.5);
+    syncOpeningTransform(copy);
+  } else if(copy.shape==='rect' || copy.shape==='circle' || copy.shape==='image'){
     copy.xPx = Math.min(Math.max(targetX,0), overlayCanvas.width);
     copy.yPx = Math.min(Math.max(targetY,0), overlayCanvas.height);
   } else if(copy.points){
@@ -1803,6 +1860,15 @@ async function applyLoadedProjectRecord(rec, name){
   state.northRotationDeg = rec.northRotationDeg || 0;
   northInput.value = state.northRotationDeg;
   state.elements = (rec.elements||[]).map(el=>JSON.parse(JSON.stringify(el)));
+  // Defensive integrity pass for doors/windows: deleting a wall already
+  // cascades to its openings, so this should never actually fire on a normal
+  // save -- but a hand-edited or corrupted project file should still never
+  // leave a "floating disconnected" opening on the plan rather than just
+  // dropping it. Every surviving opening is then resynced to its host wall's
+  // real current geometry rather than trusting whatever xPx/yPx/rotationDeg
+  // happened to be on disk.
+  state.elements = state.elements.filter(el=>!el.isOpening || getElementById(el.hostWallId));
+  state.elements.forEach(el=>{ if(el.isOpening) syncOpeningTransform(el); });
   state.pdfMasks = (rec.pdfMasks||[]).map(m=>({...m}));
   state.nextId = rec.nextId || (state.elements.reduce((m,e)=>Math.max(m,e.id||0),0)+1);
   state.selectedId = null;
@@ -2786,6 +2852,7 @@ function updateUnitLabels(){
 /* ============================ Type select population ============================ */
 const TYPE_GROUPS = [
   {label:'Walls (trace mode)', keys:['wall_interior','wall_exterior']},
+  {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','window_standard','opening_large']},
   {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','tree','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
@@ -2901,6 +2968,7 @@ function updateAddFieldsForType(){
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
   const isDimension = typeSelect.value==='dimension';
+  const isOpening = !!preset.isOpening;
   // A furniture item (e.g. "TV -- 75in") carries its real-world size right on
   // the preset -- fill it in immediately on selection, one step, no separate
   // "which size" picker to dig for.
@@ -2925,9 +2993,9 @@ function updateAddFieldsForType(){
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
   addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') ? 'block' : 'none';
   heightFieldLabel.firstChild.textContent = preset.isVehicle ? 'Length (' : 'Height (';
-  addElBtn.style.display = isFence ? 'none' : '';
-  pathFields.style.display = 'block';
-  freeformDivider.style.display = isFence ? 'none' : 'block';
+  addElBtn.style.display = (isFence || isOpening) ? 'none' : '';
+  pathFields.style.display = isOpening ? 'none' : 'block';
+  freeformDivider.style.display = (isFence || isOpening) ? 'none' : 'block';
   cutoutFieldWrap.style.display = isFence ? 'none' : 'flex';
   if(isFence){ cutoutInput.checked = false; cutoutParentWrap.style.display = 'none'; }
   wallFields.style.display = preset.isWall ? 'flex' : 'none';
@@ -2937,6 +3005,15 @@ function updateAddFieldsForType(){
     // afterwards (and per already-placed wall in its own sidebar row).
     wallThicknessInput.value = formatNum(fromFt(toFt(preset.thicknessM,'m'), state.unit));
     wallHeightInput.value = formatNum(fromFt(preset.wallHeightFt, state.unit));
+  }
+  openingFields.style.display = isOpening ? 'block' : 'none';
+  if(isOpening){
+    openingWidthInput.value = formatNum(fromFt(toFt(preset.widthM,'m'), state.unit));
+    openingHeightInput.value = formatNum(fromFt(toFt(preset.heightM,'m'), state.unit));
+    openingSillFieldWrap.style.display = preset.openingKind==='window' ? 'block' : 'none';
+    if(preset.openingKind==='window') openingSillInput.value = formatNum(fromFt(toFt(preset.sillM,'m'), state.unit));
+    openingSwingFieldWrap.style.display = preset.doorType==='hinged' ? 'flex' : 'none';
+    updateOpeningHostHint();
   }
   costFieldWrap.style.display = isDimension ? 'none' : 'block';
   startDrawBtn.textContent = isDimension ? 'Start measuring on plan' : (preset.isWall ? 'Start tracing walls' : (isFence ? 'Start drawing on plan' : 'Trace freeform outline'));
@@ -2954,6 +3031,20 @@ function updateAddFieldsForType(){
   fixedPriceInput.checked = typeSelect.value==='pool' || typeSelect.value.indexOf('roof_')===0;
   updateCostFieldMode();
   updateTypePreview();
+}
+// Doors/windows attach to whichever wall is currently selected -- this keeps
+// the Add panel honest about that requirement instead of silently placing an
+// opening nowhere, and re-runs any time selection changes (renderElementsList
+// already runs on every select/deselect on the canvas or in the sidebar).
+function updateOpeningHostHint(){
+  const preset = PRESETS[typeSelect.value];
+  if(!preset || !preset.isOpening) return;
+  const wall = state.selectedId!=null ? getElementById(state.selectedId) : null;
+  const validHost = !!(wall && wall.isWall);
+  openingHostHint.textContent = validHost
+    ? 'Attaches to: '+wall.label+' — "Add to selected wall" places it at the middle of that wall.'
+    : 'Select a wall on the plan or in the list first, then add this to it.';
+  openingAddBtn.disabled = !validHost;
 }
 function updateCostFieldMode(){
   const fixed = fixedPriceInput.checked;
@@ -3782,7 +3873,7 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
     return;
   }
   const selectedEl = state.selectedId!=null ? getElementById(state.selectedId) : null;
-  if(selectedEl && (selectedEl.shape==='rect' || selectedEl.shape==='circle' || selectedEl.shape==='image')){
+  if(selectedEl && !selectedEl.isOpening && (selectedEl.shape==='rect' || selectedEl.shape==='circle' || selectedEl.shape==='image')){
     const hp = getRotationHandlePos(selectedEl);
     const handleThresh = 14/state.zoom;
     if(Math.hypot(x-hp.x, y-hp.y) <= handleThresh){
@@ -3842,7 +3933,9 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
   const hit = findElementAt(x,y);
   if(hit){
     state.selectedId = hit.id;
-    if(hit.shape==='rect' || hit.shape==='circle' || hit.shape==='image'){
+    if(hit.isOpening){
+      state.dragging = {id:hit.id, mode:'openingslide'};
+    } else if(hit.shape==='rect' || hit.shape==='circle' || hit.shape==='image'){
       state.dragging = {id:hit.id, mode:'point', offsetX:x-hit.xPx, offsetY:y-hit.yPx};
     } else {
       state.dragging = {id:hit.id, mode:'points', anchorX:x, anchorY:y, startPoints:hit.points.map(p=>({x:p.x,y:p.y}))};
@@ -3922,6 +4015,26 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
       const w = getElementById(id);
       if(w) w.points[idx] = {x:snapX, y:snapY};
     });
+    // Re-derive every door/window hosted on any wall that just moved -- the
+    // formula in syncOpeningTransform (offset measured from points[0]) already
+    // does the right thing whether the moved end was the wall's start or its
+    // far end, so no special-casing is needed here beyond calling it.
+    const movedWallIds = new Set(state.dragging.linked.map(l=>l.id));
+    currentPageElements().forEach(o=>{ if(o.isOpening && movedWallIds.has(o.hostWallId)) syncOpeningTransform(o); });
+  } else if(state.dragging.mode==='openingslide'){
+    // Dragging a door/window doesn't move it freely -- it slides along its
+    // host wall's own centerline, exactly like sliding a symbol along a
+    // ruler, so it can never end up off the wall or floating in open space.
+    const wall = getElementById(el.hostWallId);
+    if(wall && wall.isWall){
+      const [p1,p2] = wall.points;
+      const dx=p2.x-p1.x, dy=p2.y-p1.y, lenSq=dx*dx+dy*dy;
+      if(lenSq>1e-6){
+        const t = ((x-p1.x)*dx+(y-p1.y)*dy)/lenSq;
+        el.offsetFt = t*Math.hypot(dx,dy)/(state.scalePxPerFt||40);
+        syncOpeningTransform(el);
+      }
+    }
   } else if(state.dragging.mode==='rotate'){
     const curAngle = Math.atan2(y-state.dragging.centerY, x-state.dragging.centerX);
     // Incremental angle change since the last frame, wrapped to (-180,180] so a
@@ -6594,9 +6707,32 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor){
   }
 }
 
+// The host wall's own render pass (drawWallElement) already paints the real
+// door/window symbol -- the gap it cuts, the swing arc or mullions -- as part
+// of its band, since the gap and the symbol have to line up exactly. This
+// only adds the label and, when selected, a highlight outline, so clicking an
+// opening in the sidebar or on the plan behaves exactly like selecting
+// anything else in Site Plan Studio.
+function drawOpeningElement(ctx, el, selected){
+  drawElementLabel(ctx, el, state.blackMode ? BW_INK : '#E7ECF2', selected);
+  if(!selected) return;
+  const wPx = el.wFt*state.scalePxPerFt, hPx = Math.max(el.hFt*state.scalePxPerFt, 6);
+  ctx.save();
+  ctx.translate(el.xPx, el.yPx);
+  ctx.rotate(el.rotationDeg*Math.PI/180);
+  ctx.shadowColor = 'rgba(181,147,76,0.55)';
+  ctx.shadowBlur = 10/Math.max(state.zoom, 0.01);
+  ctx.setLineDash([6,4]);
+  ctx.strokeStyle = '#B5934C';
+  ctx.lineWidth = 1.5;
+  const pad = 3;
+  ctx.strokeRect(-wPx/2-pad, -hPx/2-pad, wPx+pad*2, hPx+pad*2);
+  ctx.restore();
+}
 function drawElement(ctx, el, selected){
   if(el.shape==='path'){ drawPathElement(ctx, el, selected); return; }
   if(el.shape==='polygon'){ drawPolygonElement(ctx, el, selected); return; }
+  if(el.isOpening){ drawOpeningElement(ctx, el, selected); return; }
   const pop = getPopState(el);
   ctx.save();
   ctx.translate(el.xPx, el.yPx);
@@ -7050,6 +7186,32 @@ function fencePostPositions(points, spacingPx){
 // snapped endpoint-drag lands on it exactly too. This is how a join is
 // detected at all: there's no separate "corner"/"junction" object, just two
 // wall elements whose points happen to coincide.
+// A door/window never stores its own absolute position -- it's always
+// derived from its host wall's CURRENT geometry plus a distance along that
+// wall (offsetFt, measured from the wall's own points[0]). Calling this after
+// ANY change to the host wall's points (drag, split, merge) is what
+// guarantees an opening can never end up floating disconnected from the wall
+// it belongs to. It also keeps xPx/yPx/rotationDeg/hFt populated exactly like
+// any other rect element, so every existing rect render/hit-test/3D/sidebar
+// code path already works for openings with no further changes.
+function syncOpeningTransform(el){
+  const wall = getElementById(el.hostWallId);
+  if(!wall || !wall.isWall) return false;
+  const [p1,p2] = wall.points;
+  const dx=p2.x-p1.x, dy=p2.y-p1.y, lenPx=Math.hypot(dx,dy)||1;
+  const ux=dx/lenPx, uy=dy/lenPx;
+  const scalePxPerFt = state.scalePxPerFt||40;
+  const wallLenFt = lenPx/scalePxPerFt;
+  const halfW = (el.wFt||0)/2;
+  const upperBound = Math.max(halfW, wallLenFt-halfW);
+  el.offsetFt = Math.min(Math.max(el.offsetFt||0, halfW), upperBound);
+  const offsetPx = el.offsetFt*scalePxPerFt;
+  el.xPx = p1.x + ux*offsetPx;
+  el.yPx = p1.y + uy*offsetPx;
+  el.rotationDeg = Math.atan2(dy,dx)*180/Math.PI;
+  el.hFt = wall.thicknessFt||0.1;
+  return true;
+}
 function wallsSharingPoint(pt, excludeId){
   const eps = 0.5;
   return currentPageElements().filter(o=>o.isWall && o.id!==excludeId &&
@@ -7076,6 +7238,20 @@ function wallJoinExtension(el, atStart, scalePxPerFt){
 function splitWallAtMidpoint(el){
   const [p1,p2] = el.points;
   const mid = {x:(p1.x+p2.x)/2, y:(p1.y+p2.y)/2};
+  const scalePxPerFt = state.scalePxPerFt||40;
+  const openings = currentPageElements().filter(o=>o.isOpening && o.hostWallId===el.id);
+  // Splitting exactly through a door/window would leave it straddling two
+  // walls with no sensible single home -- ask the user to move or delete it
+  // first instead of silently producing a broken opening.
+  const straddling = openings.find(o=>{
+    const halfW = (o.wFt||0)/2;
+    const distToMidFt = Math.hypot(o.xPx-mid.x, o.yPx-mid.y)/scalePxPerFt;
+    return distToMidFt < halfW;
+  });
+  if(straddling){
+    alert('Can\'t split here — "'+straddling.label+'" spans the midpoint. Move or delete it first.');
+    return null;
+  }
   const secondHalf = Object.assign({}, el, {
     id: state.nextId++,
     label: uniqueLabel(el.label),
@@ -7084,6 +7260,20 @@ function splitWallAtMidpoint(el){
   });
   el.points = [{x:p1.x,y:p1.y}, mid];
   state.elements.push(secondHalf);
+  // Re-home any opening that now sits on the new second half, rebasing its
+  // offset to be measured from THAT half's own start point (mid) rather than
+  // the original wall's -- syncOpeningTransform reads offsetFt as "distance
+  // from this wall's points[0]", so this keeps every opening's real,
+  // physical position on the plan exactly where it was before the split.
+  const firstHalfLenFt = Math.hypot(mid.x-p1.x, mid.y-p1.y)/scalePxPerFt;
+  openings.forEach(o=>{
+    const distFromP1Ft = Math.hypot(o.xPx-p1.x, o.yPx-p1.y)/scalePxPerFt;
+    if(distFromP1Ft > firstHalfLenFt){
+      o.hostWallId = secondHalf.id;
+      o.offsetFt = Math.hypot(o.xPx-mid.x, o.yPx-mid.y)/scalePxPerFt;
+    }
+    syncOpeningTransform(o);
+  });
   return secondHalf;
 }
 // Finds another wall connected to el at one of el's own endpoints whose far
@@ -7114,9 +7304,23 @@ function mergeableNeighbor(el){
 function mergeWallWithNeighbor(el){
   const m = mergeableNeighbor(el);
   if(!m) return false;
+  // Capture every opening on EITHER wall's current, physical on-canvas
+  // position before touching any geometry -- merging never actually moves an
+  // opening in the real world, only which wall "owns" it and which point its
+  // offset is measured from, so re-deriving offsetFt from real distance to
+  // the new start point (farPt) is exactly correct and needs no index/end
+  // bookkeeping about which original wall pointed which way.
+  const openings = currentPageElements().filter(o=>o.isOpening && (o.hostWallId===el.id || o.hostWallId===m.other.id));
+  const preserved = openings.map(o=>({el:o, x:o.xPx, y:o.yPx}));
   pushUndo();
   el.points = [m.farPt, m.oFar];
   state.elements = state.elements.filter(x=>x.id!==m.other.id);
+  const scalePxPerFt = state.scalePxPerFt||40;
+  preserved.forEach(({el:o, x, y})=>{
+    o.hostWallId = el.id;
+    o.offsetFt = Math.hypot(x-m.farPt.x, y-m.farPt.y)/scalePxPerFt;
+    syncOpeningTransform(o);
+  });
   return true;
 }
 // Traced walls: a real thickness band along the centerline (not a stroked
@@ -7125,6 +7329,77 @@ function mergeWallWithNeighbor(el){
 // external/structural walls read as a solid black fill, internal
 // partitions as a hollow outline only, immediately legible as which is
 // which the way a real construction drawing distinguishes them.
+// The two jamb ticks a door/window symbol always shows, marking where the
+// cut gap meets solid wall either side -- shared by every opening kind,
+// including a plain "large opening" with no door/window fitted, so it still
+// reads as a deliberate, modeled cut rather than a rendering gap.
+function drawOpeningJambTick(ctx, p, nx, ny, half){
+  ctx.beginPath();
+  ctx.moveTo(p.x+nx*half, p.y+ny*half);
+  ctx.lineTo(p.x-nx*half, p.y-ny*half);
+  ctx.stroke();
+}
+// Draws one opening's own plan symbol -- a door's leaf + swing arc, a sliding/
+// stacker door's overlapping panel lines, or a window's glazing bar -- flush
+// inside the gap the host wall's band already cut for it. a/b are the two
+// jamb points (in world space) bounding that gap.
+function drawOpeningSymbol(ctx, o, a, b, nx, ny, half){
+  ctx.save();
+  ctx.strokeStyle = state.blackMode ? BW_INK : '#2A2F36';
+  ctx.lineWidth = 1.3;
+  drawOpeningJambTick(ctx, a, nx, ny, half);
+  drawOpeningJambTick(ctx, b, nx, ny, half);
+
+  if(o.openingKind==='window'){
+    if(!state.blackMode){
+      ctx.beginPath();
+      ctx.moveTo(a.x+nx*half, a.y+ny*half); ctx.lineTo(b.x+nx*half, b.y+ny*half);
+      ctx.lineTo(b.x-nx*half, b.y-ny*half); ctx.lineTo(a.x-nx*half, a.y-ny*half);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(191,216,232,0.5)';
+      ctx.fill();
+    }
+    // Two thin lines across the width, just inside each wall face, read as
+    // glass sitting in a frame -- the standard plan-view window symbol.
+    const inset = half*0.4;
+    [inset, -inset].forEach(off=>{
+      ctx.beginPath();
+      ctx.moveTo(a.x+nx*off, a.y+ny*off);
+      ctx.lineTo(b.x+nx*off, b.y+ny*off);
+      ctx.stroke();
+    });
+  } else if(o.openingKind==='door' && o.doorType==='hinged'){
+    const width = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+    const hingeAtA = o.swingDir!=='right';
+    const hinge = hingeAtA ? a : b;
+    const away = hingeAtA ? b : a;
+    const dirX=(away.x-hinge.x)/width, dirY=(away.y-hinge.y)/width;
+    const flip = o.swingFlip ? -1 : 1;
+    const roomX = nx*flip, roomY = ny*flip;
+    const leaf = {x:hinge.x+roomX*width, y:hinge.y+roomY*width};
+    ctx.beginPath(); ctx.moveTo(hinge.x,hinge.y); ctx.lineTo(leaf.x,leaf.y); ctx.stroke();
+    const a0 = Math.atan2(roomY, roomX), a1 = Math.atan2(dirY, dirX);
+    const diff = ((a1-a0+Math.PI)%(2*Math.PI))-Math.PI;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath();
+    ctx.arc(hinge.x, hinge.y, width, a0, a1, diff<0);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else if(o.openingKind==='door' && (o.doorType==='sliding' || o.doorType==='stacker')){
+    // Two (sliding) or three (stacker) parallel offset lines suggest
+    // overlapping panels in their track, distinct from a hinged door's arc
+    // and a window's centered glazing bar.
+    const n = o.doorType==='stacker' ? 3 : 2;
+    for(let i=0;i<n;i++){
+      const off = half*0.6*(1 - i*(1.2/n));
+      ctx.beginPath();
+      ctx.moveTo(a.x+nx*off, a.y+ny*off);
+      ctx.lineTo(b.x+nx*off, b.y+ny*off);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
 function drawWallElement(ctx, el, selected){
   const [p1,p2] = el.points;
   const dx=p2.x-p1.x, dy=p2.y-p1.y, len=Math.hypot(dx,dy)||1;
@@ -7134,45 +7409,74 @@ function drawWallElement(ctx, el, selected){
   const half = thicknessPx/2;
   const extStart = wallJoinExtension(el, true, scalePxPerFt);
   const extEnd = wallJoinExtension(el, false, scalePxPerFt);
-  const s = {x:p1.x-ux*extStart, y:p1.y-uy*extStart};
-  const e = {x:p2.x+ux*extEnd, y:p2.y+uy*extEnd};
-  const corners = [
-    {x:s.x+nx*half, y:s.y+ny*half},
-    {x:e.x+nx*half, y:e.y+ny*half},
-    {x:e.x-nx*half, y:e.y-ny*half},
-    {x:s.x-nx*half, y:s.y-ny*half},
-  ];
-  ctx.save();
-  ctx.globalAlpha *= getPopState(el).alpha;
-  const pathBand = ()=>{
+  const isExternal = el.wallType==='external';
+
+  // A band quad for one stretch of the wall, from distance startPx to endPx
+  // along ux/uy measured from p1 -- opening cut boundaries and the wall's own
+  // (possibly join-extended) true ends all share this one coordinate space,
+  // so the gaps line up exactly with where each opening actually sits.
+  function bandQuad(startPx, endPx){
+    const a = {x:p1.x+ux*startPx, y:p1.y+uy*startPx};
+    const b = {x:p1.x+ux*endPx, y:p1.y+uy*endPx};
+    return [
+      {x:a.x+nx*half, y:a.y+ny*half}, {x:b.x+nx*half, y:b.y+ny*half},
+      {x:b.x-nx*half, y:b.y-ny*half}, {x:a.x-nx*half, y:a.y-ny*half},
+    ];
+  }
+  function traceQuad(corners){
     ctx.beginPath();
     ctx.moveTo(corners[0].x, corners[0].y);
     for(let i=1;i<4;i++) ctx.lineTo(corners[i].x, corners[i].y);
     ctx.closePath();
-  };
-  const isExternal = el.wallType==='external';
-  pathBand();
-  if(state.blackMode){
-    ctx.fillStyle = isExternal ? BW_INK : BW_PAPER;
-    ctx.fill();
-    ctx.strokeStyle = BW_INK;
-    ctx.lineWidth = selected ? 2.4 : 1.3;
-    pathBand(); ctx.stroke();
-  } else {
-    // A soft cross-thickness gradient (light edge, true colour centre,
-    // darker edge) reads as a real painted/plastered surface catching light
-    // across its depth, not a flat tinted rectangle.
-    const grad = ctx.createLinearGradient(s.x+nx*half, s.y+ny*half, s.x-nx*half, s.y-ny*half);
-    grad.addColorStop(0, shadeColor(el.color, 0.14));
-    grad.addColorStop(0.5, el.color);
-    grad.addColorStop(1, shadeColor(el.color, -0.18));
-    ctx.fillStyle = grad;
-    ctx.fill();
-    ctx.strokeStyle = shadeColor(el.color, -0.42);
-    ctx.lineWidth = selected ? 2.4 : 1.3;
-    pathBand(); ctx.stroke();
   }
+  function fillBand(corners){
+    traceQuad(corners);
+    if(state.blackMode){
+      ctx.fillStyle = isExternal ? BW_INK : BW_PAPER;
+      ctx.fill();
+      ctx.strokeStyle = BW_INK;
+      ctx.lineWidth = selected ? 2.4 : 1.3;
+      traceQuad(corners); ctx.stroke();
+    } else {
+      // A soft cross-thickness gradient (light edge, true colour centre,
+      // darker edge) reads as a real painted/plastered surface catching light
+      // across its depth, not a flat tinted rectangle.
+      const grad = ctx.createLinearGradient(corners[0].x, corners[0].y, corners[3].x, corners[3].y);
+      grad.addColorStop(0, shadeColor(el.color, 0.14));
+      grad.addColorStop(0.5, el.color);
+      grad.addColorStop(1, shadeColor(el.color, -0.18));
+      ctx.fillStyle = grad;
+      ctx.fill();
+      ctx.strokeStyle = shadeColor(el.color, -0.42);
+      ctx.lineWidth = selected ? 2.4 : 1.3;
+      traceQuad(corners); ctx.stroke();
+    }
+  }
+
+  // Doors/windows hosted on this wall, in order along its length -- the band
+  // is painted as the stretches BETWEEN them, so the wall genuinely has a cut
+  // gap at each one instead of a solid band with a symbol drawn on top of it.
+  const openings = currentPageElements().filter(o=>o.isOpening && o.hostWallId===el.id)
+    .map(o=>({o, startPx:(o.offsetFt-o.wFt/2)*scalePxPerFt, endPx:(o.offsetFt+o.wFt/2)*scalePxPerFt}))
+    .sort((x,y)=>x.startPx-y.startPx);
+  const segStartPx = -extStart, segEndPx = len+extEnd;
+
+  ctx.save();
+  ctx.globalAlpha *= getPopState(el).alpha;
+  let cursor = segStartPx;
+  openings.forEach(({startPx,endPx})=>{
+    if(startPx>cursor) fillBand(bandQuad(cursor, startPx));
+    cursor = Math.max(cursor, endPx);
+  });
+  if(segEndPx>cursor) fillBand(bandQuad(cursor, segEndPx));
   ctx.restore();
+
+  openings.forEach(({o, startPx, endPx})=>{
+    const a = {x:p1.x+ux*startPx, y:p1.y+uy*startPx};
+    const b = {x:p1.x+ux*endPx, y:p1.y+uy*endPx};
+    drawOpeningSymbol(ctx, o, a, b, nx, ny, half);
+  });
+
   drawElementLabel(ctx, el, state.blackMode ? BW_INK : '#E7ECF2', selected);
   if(selected){
     ctx.save();
@@ -7181,7 +7485,7 @@ function drawWallElement(ctx, el, selected){
     ctx.setLineDash([6,4]);
     ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
-    pathBand(); ctx.stroke();
+    traceQuad(bandQuad(segStartPx, segEndPx)); ctx.stroke();
     ctx.restore();
     // Small square grip handles at the wall's own TRUE endpoints (not the
     // extended render corners) -- the drag target for reshaping/extending/
@@ -7611,6 +7915,61 @@ addElBtn.addEventListener('click', ()=>{
   drawOverlay();
 });
 
+// Doors/windows don't get a free xPx/yPx like a rect placed at the viewport
+// centre -- they only make sense attached to a specific wall, so creation
+// requires a wall to already be selected and places the new opening at that
+// wall's midpoint (offsetFt = half its length); syncOpeningTransform then
+// derives its real position/rotation/depth, and the user can drag it along
+// the wall or type an exact offset afterwards.
+openingAddBtn.addEventListener('click', ()=>{
+  const preset = PRESETS[typeSelect.value];
+  if(!preset.isOpening) return;
+  const wall = state.selectedId!=null ? getElementById(state.selectedId) : null;
+  if(!wall || !wall.isWall){ updateOpeningHostHint(); return; }
+  const w = parseFloat(openingWidthInput.value);
+  if(!w || w<=0){ openingWidthInput.focus(); return; }
+  const h = parseFloat(openingHeightInput.value);
+  if(!h || h<=0){ openingHeightInput.focus(); return; }
+  const widthFt = toFt(w, state.unit);
+  const [p1,p2] = wall.points;
+  const wallLenFt = Math.hypot(p2.x-p1.x, p2.y-p1.y)/(state.scalePxPerFt||40);
+  if(widthFt > wallLenFt-0.05){ alert('This wall isn\'t long enough for an opening that wide.'); return; }
+  const typedLabel = labelInput.value.trim();
+  const label = typedLabel || uniqueLabel(preset.label);
+  const el = {
+    id: state.nextId++,
+    page: state.currentPage,
+    shape: 'rect',
+    presetKey: typeSelect.value,
+    label,
+    color: colorInput.value || preset.color,
+    unitCost: parseFloat(costInput.value) || 0,
+    priceMode: fixedPriceInput.checked ? 'fixed' : 'rate',
+    fixedCost: parseFloat(fixedCostInput.value) || 0,
+    isCutout: false,
+    parentId: null,
+    isOpening: true,
+    openingKind: preset.openingKind,
+    doorType: preset.doorType,
+    hostWallId: wall.id,
+    offsetFt: wallLenFt/2,
+    wFt: widthFt,
+    openingHeightFt: toFt(h, state.unit),
+    sillHeightFt: preset.openingKind==='window' ? toFt(parseFloat(openingSillInput.value)||preset.sillM, state.unit) : 0,
+    swingDir: openingSwingSideSelect.value,
+    swingFlip: openingSwingFlipSelect.value==='1',
+    _bornAt: performance.now(),
+  };
+  syncOpeningTransform(el);
+  pushUndo();
+  state.elements.push(el);
+  state.selectedId = el.id;
+  labelInput.value='';
+  costInput.value='';
+  renderElementsList();
+  drawOverlay();
+});
+
 // Scrolls the selected item's row into view WITHIN the sidebar only (its
 // nearest scrolling ancestor is #sidebar itself -- see the CSS) -- never the
 // main canvas/page. A no-op when the row is already comfortably visible, so
@@ -7627,6 +7986,7 @@ function focusSidebarRow(id){
   if(row) row.scrollIntoView({block:'nearest', inline:'nearest', behavior:'auto'});
 }
 function renderElementsList(){
+  updateOpeningHostHint();
   elementsList.innerHTML='';
   const pageEls = currentPageElements();
   emptyNote.style.display = pageEls.length ? 'none' : 'flex';
@@ -7755,7 +8115,83 @@ function renderElementsList(){
     }
     const dims = document.createElement('div');
     dims.className='dims';
-    if(el.shape==='rect'){
+    if(el.isOpening){
+      const hostWall = getElementById(el.hostWallId);
+      const wIn = document.createElement('input'); wIn.type='number'; wIn.step='0.01'; wIn.min='0.1';
+      wIn.title = 'Opening width';
+      wIn.value = formatNum(fromFt(el.wFt, state.unit));
+      wIn.addEventListener('click', e=>e.stopPropagation());
+      wIn.addEventListener('change', ()=>{
+        const v = parseFloat(wIn.value);
+        if(v>0){ pushUndo(); el.wFt = toFt(v, state.unit); syncOpeningTransform(el); drawOverlay(); renderElementsList(); }
+        else wIn.value = formatNum(fromFt(el.wFt, state.unit));
+      });
+      dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn);
+
+      const hIn = document.createElement('input'); hIn.type='number'; hIn.step='0.01'; hIn.min='0.1';
+      hIn.title = 'Opening height';
+      hIn.value = formatNum(fromFt(el.openingHeightFt, state.unit));
+      hIn.addEventListener('click', e=>e.stopPropagation());
+      hIn.addEventListener('change', ()=>{
+        const v = parseFloat(hIn.value);
+        if(v>0){ pushUndo(); el.openingHeightFt = toFt(v, state.unit); drawOverlay(); renderElementsList(); }
+        else hIn.value = formatNum(fromFt(el.openingHeightFt, state.unit));
+      });
+      dims.appendChild(document.createTextNode('H')); dims.appendChild(hIn);
+
+      const offIn = document.createElement('input'); offIn.type='number'; offIn.step='0.01'; offIn.min='0';
+      offIn.title = 'Distance from the wall\'s start corner to the middle of this opening';
+      offIn.value = formatNum(fromFt(el.offsetFt, state.unit));
+      offIn.addEventListener('click', e=>e.stopPropagation());
+      offIn.addEventListener('change', ()=>{
+        const v = parseFloat(offIn.value);
+        if(v>=0){ pushUndo(); el.offsetFt = toFt(v, state.unit); syncOpeningTransform(el); drawOverlay(); renderElementsList(); }
+        else offIn.value = formatNum(fromFt(el.offsetFt, state.unit));
+      });
+      dims.appendChild(document.createTextNode('@')); dims.appendChild(offIn);
+      dims.appendChild(document.createTextNode(unitAbbrev()));
+
+      if(el.openingKind==='window'){
+        const sillIn = document.createElement('input'); sillIn.type='number'; sillIn.step='0.01'; sillIn.min='0';
+        sillIn.title = 'Sill height above floor';
+        sillIn.value = formatNum(fromFt(el.sillHeightFt||0, state.unit));
+        sillIn.addEventListener('click', e=>e.stopPropagation());
+        sillIn.addEventListener('change', ()=>{
+          const v = parseFloat(sillIn.value);
+          if(v>=0){ pushUndo(); el.sillHeightFt = toFt(v, state.unit); drawOverlay(); renderElementsList(); }
+          else sillIn.value = formatNum(fromFt(el.sillHeightFt||0, state.unit));
+        });
+        dims.appendChild(document.createTextNode('Sill')); dims.appendChild(sillIn);
+      }
+
+      if(el.openingKind==='door' && el.doorType==='hinged'){
+        const sideSel = document.createElement('select');
+        sideSel.title = 'Which jamb the door is hinged from';
+        [['left','Hinge: left'],['right','Hinge: right']].forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; sideSel.appendChild(o); });
+        sideSel.value = el.swingDir||'left';
+        sideSel.addEventListener('click', e=>e.stopPropagation());
+        sideSel.addEventListener('change', ()=>{ pushUndo(); el.swingDir = sideSel.value; drawOverlay(); });
+        dims.appendChild(sideSel);
+
+        const flipSel = document.createElement('select');
+        flipSel.title = 'Which side of the wall the door swings into';
+        [['0','Swings this side'],['1','Swings other side']].forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; flipSel.appendChild(o); });
+        flipSel.value = el.swingFlip ? '1' : '0';
+        flipSel.addEventListener('click', e=>e.stopPropagation());
+        flipSel.addEventListener('change', ()=>{ pushUndo(); el.swingFlip = flipSel.value==='1'; drawOverlay(); });
+        dims.appendChild(flipSel);
+      }
+
+      const hostInfo = document.createElement('span');
+      hostInfo.style.marginLeft='4px'; hostInfo.style.color='var(--ink-dim)'; hostInfo.style.fontSize='11px';
+      hostInfo.textContent = 'on: '+(hostWall ? hostWall.label : '(missing wall)');
+      dims.appendChild(hostInfo);
+
+      const kindBadge = document.createElement('span');
+      kindBadge.style.marginLeft='4px'; kindBadge.style.color='var(--ink-dim)'; kindBadge.style.fontSize='11px';
+      kindBadge.textContent = el.openingKind==='door' ? el.doorType : el.openingKind;
+      dims.appendChild(kindBadge);
+    } else if(el.shape==='rect'){
       const wIn = document.createElement('input'); wIn.type='number'; wIn.step='0.1';
       wIn.value = formatNum(fromFt(el.wFt,state.unit));
       wIn.addEventListener('click', e=>e.stopPropagation());
@@ -7983,6 +8419,7 @@ function renderElementsList(){
         e.stopPropagation();
         pushUndo();
         const secondHalf = splitWallAtMidpoint(el);
+        if(!secondHalf) return;
         state.selectedId = secondHalf.id;
         renderElementsList(); drawOverlay();
       });
@@ -8030,7 +8467,16 @@ function renderElementsList(){
     dupBtn.addEventListener('click', (e)=>{
       e.stopPropagation();
       let copy;
-      if(el.shape==='rect' || el.shape==='circle' || el.shape==='image'){
+      if(el.isOpening){
+        // A plain xPx/yPx nudge would leave the copy's hit-test/label at a
+        // spot the wall never actually cut a gap at (the gap position always
+        // comes from offsetFt, not xPx/yPx) -- nudge the offset instead and
+        // resync, so the duplicate lands as a real, clickable second opening
+        // further along the same wall rather than an invisible stray one.
+        copy = Object.assign({}, el, {id:state.nextId++, label: uniqueLabel(el.label)});
+        copy.offsetFt = el.offsetFt + (el.wFt||0.5);
+        syncOpeningTransform(copy);
+      } else if(el.shape==='rect' || el.shape==='circle' || el.shape==='image'){
         copy = Object.assign({}, el, {id:state.nextId++, xPx:el.xPx+24, yPx:el.yPx+24, label: uniqueLabel(el.label)});
       } else {
         copy = Object.assign({}, el, {id:state.nextId++, points: el.points.map(p=>({x:p.x+24,y:p.y+24})), label: uniqueLabel(el.label)});
@@ -8057,8 +8503,12 @@ function renderElementsList(){
     delBtn.addEventListener('click', (e)=>{
       e.stopPropagation();
       pushUndo();
-      state.elements = state.elements.filter(x=>x.id!==el.id);
-      if(state.selectedId===el.id) state.selectedId=null;
+      // Deleting a wall takes every door/window hosted on it with it -- an
+      // opening can never legitimately outlive the wall it's cut into.
+      const removeIds = new Set([el.id]);
+      if(el.isWall) currentPageElements().forEach(o=>{ if(o.isOpening && o.hostWallId===el.id) removeIds.add(o.id); });
+      state.elements = state.elements.filter(x=>!removeIds.has(x.id));
+      if(removeIds.has(state.selectedId)) state.selectedId=null;
       renderElementsList(); drawOverlay();
     });
     actionsRow.appendChild(delBtn);
@@ -8644,6 +9094,14 @@ function build3DPathMesh(el, groundWFt, groundHFt){
   // a real corner should read as solid.
   const extStartFt = isWall ? wallJoinExtension(el, true, state.scalePxPerFt)/state.scalePxPerFt : 0;
   const extEndFt = isWall ? wallJoinExtension(el, false, state.scalePxPerFt)/state.scalePxPerFt : 0;
+  // Doors/windows on this wall, sorted along its length -- a real geometric
+  // cut (full sill-to-head gap, sill box below a window, header box above
+  // any opening that doesn't reach the ceiling) instead of a solid wall with
+  // a decorative shape on it, so the dollhouse/walkthrough view actually
+  // shows the door or window rather than hiding it inside a solid box.
+  const openings = isWall
+    ? currentPageElements().filter(o=>o.isOpening && o.hostWallId===el.id).sort((a,b)=>a.offsetFt-b.offsetFt)
+    : [];
   for(let i=0;i<pts.length-1;i++){
     const a = pts[i], b = pts[i+1];
     const ax = a.x/state.scalePxPerFt - groundWFt/2, az = a.y/state.scalePxPerFt - groundHFt/2;
@@ -8654,10 +9112,33 @@ function build3DPathMesh(el, groundWFt, groundHFt){
     const ux = dx/segLen, uz = dz/segLen;
     const sExt = (i===0) ? extStartFt : 0;
     const eExt = (i===pts.length-2) ? extEndFt : 0;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(segLen+sExt+eExt, heightFt, widthFt), mat);
-    mesh.position.set((ax+bx)/2 + (eExt-sExt)/2*ux, heightFt/2, (az+bz)/2 + (eExt-sExt)/2*uz);
-    mesh.rotation.y = -Math.atan2(dz, dx);
-    group.add(mesh);
+
+    function addBox(startFt, endFt, yBottom, yTop){
+      const boxLen = endFt-startFt, boxH = yTop-yBottom;
+      if(boxLen<0.02 || boxH<0.02) return;
+      const midFt = (startFt+endFt)/2;
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(boxLen, boxH, widthFt), mat);
+      mesh.position.set(ax+ux*midFt, yBottom+boxH/2, az+uz*midFt);
+      mesh.rotation.y = -Math.atan2(dz, dx);
+      group.add(mesh);
+    }
+
+    if(!openings.length){
+      addBox(-sExt, segLen+eExt, 0, heightFt);
+      continue;
+    }
+    let cursor = -sExt;
+    openings.forEach(o=>{
+      const halfW = (o.wFt||0)/2;
+      const oStart = o.offsetFt-halfW, oEnd = o.offsetFt+halfW;
+      addBox(cursor, oStart, 0, heightFt);
+      const sill = o.openingKind==='window' ? (o.sillHeightFt||0) : 0;
+      const head = sill + (o.openingHeightFt||heightFt);
+      if(sill>0.02) addBox(oStart, oEnd, 0, sill);
+      if(head < heightFt-0.02) addBox(oStart, oEnd, head, heightFt);
+      cursor = Math.max(cursor, oEnd);
+    });
+    addBox(cursor, segLen+eExt, 0, heightFt);
   }
   return group;
 }
@@ -8818,7 +9299,7 @@ function init3DScene(){
 
   const group = new THREE.Group();
   currentPageElements().forEach(el=>{
-    if(el.isDimension || el.shape==='image') return;
+    if(el.isDimension || el.shape==='image' || el.isOpening) return;
     const mesh = build3DElementMesh(el, groundWFt, groundHFt);
     if(mesh) group.add(mesh);
   });
