@@ -1105,7 +1105,7 @@ PRESETS.wall_exterior = {label:'Wall — Exterior', color:WALL_COLOR_EXTERIOR, t
 // syncOpeningTransform() derives its actual position/rotation/depth from the
 // host wall every time that wall changes, so an opening can never end up
 // floating disconnected from the wall it was cut into.
-const OPENING_COLOR_DOOR = '#7A5233';
+const OPENING_COLOR_DOOR = '#F1EEE6';
 const OPENING_COLOR_WINDOW = '#BFD8E8';
 PRESETS.door_hinged = {label:'Door — Hinged', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'hinged', widthM:0.82, heightM:2.04};
 PRESETS.door_sliding = {label:'Door — Sliding', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'sliding', widthM:1.8, heightM:2.04};
@@ -5057,9 +5057,15 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     ctx.fillStyle = streak; ctx.fillRect(x,y,w,h);
     ctx.restore();
   } else if(icon==='table' || icon==='desk' || icon==='table_dining'){
-    const pat = getTilePattern(ctx,'wood', state.scalePxPerFt||40);
+    // A fixed wood TEXTURE PATTERN here (independent of baseColor) used to
+    // mean the colour swatch silently did nothing for a table/desk, unlike
+    // every other furniture icon (bed, sofa, dresser, ...), which all fill
+    // with some shadeColor(baseColor, ...) and genuinely change when you
+    // change their colour. A flat shaded fill still reads as wood by
+    // default (the table/desk preset colour already is a wood brown) while
+    // actually respecting whatever colour is picked.
     roundRectPath(ctx,x,y,w,h,short*0.1);
-    ctx.fillStyle = pat || shadeColor(baseColor,0.1);
+    ctx.fillStyle = shadeColor(baseColor,0.1);
     ctx.fill();
     ctx.save(); ctx.clip();
     const bw = Math.max(1.5, short*0.05);
@@ -9755,7 +9761,13 @@ function furnitureTextureFor3D(icon, color, pxW, pxH){
 function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(el.shape!=='rect' || preset.icon==='power') return null;
   const baseColor = el.color || preset.color || '#B5934C';
-  const heightFt = furnitureHeightFt3D(el.presetKey, preset.icon);
+  // Every TV preset used to share one flat FURNITURE_HEIGHT_FT_3D.tv height
+  // regardless of screen size -- a 32in and an 85in TV rendered identically
+  // tall. Every tv_* preset's own wIn is already the real 16:9 screen width
+  // for its labelled diagonal (e.g. tv_65's 57in matches a real 65in 16:9
+  // panel's width), so its height is simply derived the same way any real
+  // flat panel's is, instead of a fixed guess.
+  const heightFt = preset.icon==='tv' ? el.wFt*9/16 : furnitureHeightFt3D(el.presetKey, preset.icon);
   const baseY = preset.icon==='tv' ? 2.6 : 0; // TVs read as wall-mounted, floating at a sensible height
   // Every other 3D mesh builder places itself via ftPos3D, which centres
   // coordinates on the ground plane (xPx/scale - groundWFt/2); this one used
@@ -9765,6 +9777,13 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(preset.icon==='sofa_corner') return build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos);
   if(preset.icon==='sofa' || preset.icon==='armchair') return build3DSofaMesh(el, preset, baseColor, heightFt, pos);
   if(preset.icon==='table' || preset.icon==='desk' || preset.icon==='table_dining') return build3DTableMesh(el, preset, heightFt, pos);
+  if(preset.icon==='tv') return build3DTVMesh(el, preset, baseColor, heightFt, {x:pos.x, y:baseY, z:pos.z});
+  if(preset.icon==='toilet') return build3DToiletMesh(el, baseColor, pos);
+  if(preset.icon==='bed') return build3DBedMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='vanity') return build3DVanityMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='wardrobe') return build3DWardrobeMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='dresser') return build3DDresserMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='fridge') return build3DFridgeMesh(el, preset, baseColor, heightFt, pos);
   const geo = new THREE.BoxGeometry(el.wFt, heightFt, el.hFt);
   const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
   const topTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, el.hFt*40);
@@ -9839,6 +9858,230 @@ function build3DSofaMesh(el, preset, baseColor, heightFt, pos){
     arm.position.set(side*(el.wFt/2-armWFt/2), seatHFt+(armHFt-seatHFt)/2, 0);
     group.add(arm);
   });
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A flat-panel TV is genuinely thin in real life -- the generic box path
+// (which uses the item's own 2D plan DEPTH, ~5in for every wall-mount
+// symbol, as its 3D depth) instead extrudes that same ~5in uniformly across
+// the TV's full on-wall HEIGHT, reading as a thick slab, not a screen. Also
+// fixes a separate real bug: every TV preset shared one flat 1.6ft height
+// regardless of screen size (see the heightFt override in
+// build3DFurnitureMesh) -- a 32in and an 85in TV were rendering identically
+// tall. The screen face reuses the exact same icon texture (dark bezel +
+// glowing-screen gradient) already baked for the 2D plan, now mapped onto
+// the actual front face instead of an unseen top face.
+function build3DTVMesh(el, preset, baseColor, screenHFt, pos){
+  const panelDepthFt = 0.18;
+  const bezelMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#14171B'), roughness:0.4});
+  const screenTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, screenHFt*40);
+  const screenMat = new THREE.MeshStandardMaterial({map:screenTex, roughness:0.25, metalness:0.1});
+  // BoxGeometry's 6-material group order is [+X,-X,+Y,-Y,+Z,-Z] -- +Z is
+  // this file's established "faces the room" side (see build3DSofaMesh's
+  // backDepthFt sitting at -hFt/2, the wall side), so the screen goes there.
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(el.wFt, screenHFt, panelDepthFt),
+    [bezelMat, bezelMat, bezelMat, bezelMat, screenMat, bezelMat]
+  );
+  mesh.position.set(pos.x, pos.y+screenHFt/2, pos.z);
+  mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return mesh;
+}
+// A toilet is a tank-plus-bowl silhouette, nothing like the rectangular
+// footprint box every other generic item uses -- a flat box with a top-down
+// toilet photo painted on it reads as exactly that: a labelled crate, not a
+// fixture. The tank's width/depth and the bowl's own footprint ellipse
+// reuse drawFurnitureIcon's toilet branch exactly (tankH=h*0.32 as a real
+// DEPTH fraction, bowl rx/ry as real footprint fractions -- both are
+// genuine plan-view proportions, valid to reuse directly in 3D); the
+// vertical tank/bowl split has no 2D equivalent at all (a top-down icon
+// carries no height information), so those numbers are a reasonable
+// real-world estimate instead (a two-piece toilet's bowl+seat sits around
+// 1.3ft/15.6in high, its tank rises to roughly 2.4ft/28.8in total).
+function build3DToiletMesh(el, baseColor, pos){
+  const group = new THREE.Group();
+  const bowlTopFt = 1.3, tankTopFt = 2.4, tankBottomFt = bowlTopFt*0.55;
+  const tankDepthFt = el.hFt*0.32;
+  const tankMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.25)), roughness:0.3});
+  const tank = new THREE.Mesh(new THREE.BoxGeometry(el.wFt*0.8, tankTopFt-tankBottomFt, tankDepthFt), tankMat);
+  tank.position.set(0, tankBottomFt+(tankTopFt-tankBottomFt)/2, -el.hFt/2+tankDepthFt/2);
+  group.add(tank);
+  const bowlDepthFt = el.hFt-tankDepthFt;
+  const rxFt = el.wFt*0.42, ryFt = bowlDepthFt*0.46;
+  const bowlMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#F2F5F6'), roughness:0.25});
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, bowlTopFt, 16), bowlMat);
+  bowl.scale.set(rxFt, 1, ryFt);
+  bowl.position.set(0, bowlTopFt/2, -el.hFt/2+tankDepthFt+bowlDepthFt/2);
+  group.add(bowl);
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A bed is a stack of distinct soft shapes -- a low frame, a raised
+// mattress, two pillows, a headboard standing up at the head end -- not one
+// flat slab. Pillow/headboard width, depth, and gap reuse
+// drawFurnitureIcon's own bed proportions exactly (all genuine footprint
+// fractions); frame/mattress/headboard/pillow HEIGHTS have no 2D equivalent
+// (a top-down icon carries no vertical information) and are reasonable
+// real-world estimates instead.
+function build3DBedMesh(el, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const frameHFt = heightFt*0.4;
+  const frameMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.2)), roughness:0.8});
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, frameHFt, el.hFt), frameMat);
+  frame.position.set(0, frameHFt/2, 0);
+  group.add(frame);
+  const mattMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.35)), roughness:0.9});
+  const mattress = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, heightFt-frameHFt, el.hFt), mattMat);
+  mattress.position.set(0, frameHFt+(heightFt-frameHFt)/2, 0);
+  group.add(mattress);
+  const hbDepthFt = el.hFt*0.07; // matches drawFurnitureIcon's own hbH ratio
+  const hbTopFt = heightFt*1.7;
+  const hbMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.4)), roughness:0.8});
+  const headboard = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, hbTopFt, hbDepthFt), hbMat);
+  headboard.position.set(0, hbTopFt/2, -el.hFt/2+hbDepthFt/2);
+  group.add(headboard);
+  const pillowWFt = el.wFt*0.36, pillowDFt = el.hFt*0.22, gapFt = el.wFt*0.06, pillowHFt = 0.35;
+  const pillowMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#F4F1EA'), roughness:0.9});
+  const pillowCz = -el.hFt/2+hbDepthFt+el.hFt*0.05+pillowDFt/2;
+  [-1, 1].forEach(side=>{
+    const pillow = new THREE.Mesh(new THREE.BoxGeometry(pillowWFt, pillowHFt, pillowDFt), pillowMat);
+    pillow.position.set(side*(gapFt/2+pillowWFt/2), heightFt+pillowHFt/2, pillowCz);
+    group.add(pillow);
+  });
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A vanity's defining feature -- the basin sitting on/in the counter -- is
+// completely invisible on a flat box no matter what's texture-mapped on
+// top, since a walkthrough sees its SIDE, not its top. Basin footprint
+// (rx/ry) reuses drawFurnitureIcon's own vanity proportions exactly; basin
+// height and the faucet are a reasonable real-world estimate (a top-down
+// icon carries no vertical information).
+function build3DVanityMesh(el, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const cabinetMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.15)), roughness:0.75});
+  const cabinet = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, heightFt, el.hFt), cabinetMat);
+  cabinet.position.set(0, heightFt/2, 0);
+  group.add(cabinet);
+  const shortFt = Math.min(el.wFt, el.hFt);
+  const rxFt = Math.min(el.wFt*0.28, shortFt*0.5), ryFt = Math.min(el.hFt*0.32, shortFt*0.4);
+  const basinHFt = 0.35;
+  const basinMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#DCE7EC'), roughness:0.2});
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, basinHFt, 16), basinMat);
+  basin.scale.set(rxFt, 1, ryFt);
+  basin.position.set(0, heightFt+basinHFt/2, 0);
+  group.add(basin);
+  const faucetMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#8FA6AE'), roughness:0.3, metalness:0.6});
+  const faucet = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 8), faucetMat);
+  faucet.position.set(0, heightFt+basinHFt+0.25, -ryFt*0.35);
+  faucet.castShadow = false; // tiny thin fixture -- the cabinet/basin below already ground the vanity with a real shadow
+  group.add(faucet);
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A wardrobe's real footprint IS just a box -- the realism gap isn't its
+// silhouette, it's that it currently shows no door seam and no handles at
+// all (the generic path only textures the TOP face, never seen at eye
+// height). Door width reuses drawFurnitureIcon's own doorW ratio exactly;
+// door/handle protrusion depth and handle size are real-world estimates
+// (a 2D top-down icon carries no information about how far anything stands
+// proud of the front face).
+function build3DWardrobeMesh(el, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const carcassMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.15)), roughness:0.7});
+  const carcass = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, heightFt, el.hFt), carcassMat);
+  carcass.position.set(0, heightFt/2, 0);
+  group.add(carcass);
+  const padFt = 0.05;
+  const doorWFt = (el.wFt-padFt*3)/2;
+  const doorThickFt = 0.04;
+  const doorMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.08)), roughness:0.6});
+  const handleMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.6)), roughness:0.3, metalness:0.5});
+  [-1, 1].forEach(side=>{
+    const doorCx = side*(padFt/2+doorWFt/2);
+    const door = new THREE.Mesh(new THREE.BoxGeometry(doorWFt, heightFt-padFt*2, doorThickFt), doorMat);
+    door.position.set(doorCx, heightFt/2, el.hFt/2+doorThickFt/2);
+    group.add(door);
+    const handleCx = side*(el.wFt*0.045);
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8), handleMat);
+    handle.rotation.x = Math.PI/2;
+    handle.position.set(handleCx, heightFt/2, el.hFt/2+doorThickFt+0.03);
+    handle.castShadow = false; // thin hardware -- the door panel behind it already grounds this piece
+    group.add(handle);
+  });
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// Same reasoning as the wardrobe above -- a dresser's footprint really is a
+// box, it just needs its drawer fronts and pull handles to actually show up
+// on the visible face. Row count reuses drawFurnitureIcon's own w>h*2 rule
+// exactly (its layout condition, not a footprint fraction, but the same
+// rule either way); protrusion depths and handle size are real-world
+// estimates the same way the wardrobe's are.
+function build3DDresserMesh(el, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const carcassMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.15)), roughness:0.7});
+  const carcass = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, heightFt, el.hFt), carcassMat);
+  carcass.position.set(0, heightFt/2, 0);
+  group.add(carcass);
+  const rows = el.wFt>el.hFt*2 ? 2 : 3;
+  const padFt = 0.05;
+  const rowHFt = (heightFt-padFt*(rows+1))/rows;
+  const drawerThickFt = 0.04;
+  const drawerMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.1)), roughness:0.6});
+  const handleMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.6)), roughness:0.3, metalness:0.5});
+  for(let i=0;i<rows;i++){
+    const rowCy = padFt+i*(rowHFt+padFt)+rowHFt/2;
+    const drawer = new THREE.Mesh(new THREE.BoxGeometry(el.wFt-padFt*2, rowHFt, drawerThickFt), drawerMat);
+    drawer.position.set(0, rowCy, el.hFt/2+drawerThickFt/2);
+    drawer.castShadow = false; // thin repeated panel -- the carcass behind it already grounds the dresser, and a run of these across several rows/dressers adds up
+    group.add(drawer);
+    const handle = new THREE.Mesh(new THREE.BoxGeometry(el.wFt*0.18, 0.03, 0.03), handleMat);
+    handle.position.set(0, rowCy, el.hFt/2+drawerThickFt+0.02);
+    handle.castShadow = false; // thin hardware
+    group.add(handle);
+  }
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A fridge's footprint is also genuinely a box -- it needs the same
+// front-face texture (brushed-steel gradient + split line, already baked
+// for the 2D plan) mapped onto its actual front face instead of its unseen
+// top, plus real handle geometry standing proud of that face. Orientation
+// (French-door-style vs side-by-side) reuses drawFurnitureIcon's own
+// h>=w rule exactly; handle heights have no 2D equivalent (no vertical
+// information in a top-down icon) and are real-world estimates.
+function build3DFridgeMesh(el, preset, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.4, metalness:0.3});
+  const frontTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, heightFt*40);
+  const frontMat = new THREE.MeshStandardMaterial({map:frontTex, roughness:0.35, metalness:0.3});
+  const carcass = new THREE.Mesh(
+    new THREE.BoxGeometry(el.wFt, heightFt, el.hFt),
+    [sideMat, sideMat, sideMat, sideMat, frontMat, sideMat]
+  );
+  carcass.position.set(0, heightFt/2, 0);
+  group.add(carcass);
+  const handleMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.55)), roughness:0.3, metalness:0.6});
+  const addHandle = (cx, cy)=>{
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, heightFt*0.28, 8), handleMat);
+    handle.position.set(cx, cy, el.hFt/2+0.03);
+    handle.castShadow = false; // thin hardware -- the carcass behind it already grounds the fridge
+    group.add(handle);
+  };
+  if(el.hFt>=el.wFt){
+    addHandle(0, heightFt*0.58);
+    addHandle(0, heightFt*0.22);
+  } else {
+    addHandle(-el.wFt*0.06, heightFt*0.5);
+    addHandle(el.wFt*0.06, heightFt*0.5);
+  }
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
@@ -10173,13 +10416,32 @@ function build3DDoorLeafMesh(o, groundWFt, groundHFt){
     const hingeX = ax+ux*hingeOffsetFt, hingeZ = az+uz*hingeOffsetFt;
     const flip = o.swingFlip ? -1 : 1;
     const roomX = nx*flip, roomZ = nz*flip; // unit vector: the direction the open leaf actually points
-    const mesh = new THREE.Mesh(
+    // o.color was previously ignored entirely -- every door rendered the
+    // fixed OPENING_COLOR_DOOR swatch no matter what colour was actually
+    // set on it, the exact same "colour picker does nothing" bug the
+    // table/desk icon had.
+    const leaf = new THREE.Mesh(
       new THREE.BoxGeometry(leafThickFt, heightFt, widthFt),
-      new THREE.MeshStandardMaterial({color:new THREE.Color(OPENING_COLOR_DOOR), roughness:0.7})
+      new THREE.MeshStandardMaterial({color:new THREE.Color(o.color || OPENING_COLOR_DOOR), roughness:0.7})
     );
-    mesh.position.set(hingeX+roomX*widthFt/2, heightFt/2, hingeZ+roomZ*widthFt/2);
-    mesh.rotation.y = Math.atan2(roomX, roomZ);
-    return mesh;
+    const group = new THREE.Group();
+    group.add(leaf);
+    // A bare slab with no hardware at all reads as a panel, not a door --
+    // a real doorknob on the free (non-hinge) edge, at a real handle
+    // height, on both faces so it looks right approaching from either
+    // side of the doorway.
+    const knobMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#C9B896'), roughness:0.35, metalness:0.6});
+    const knobLocalY = heightFt*0.418 - heightFt/2; // ~2.8ft absolute on a standard ~6.7ft door, expressed relative to the leaf's own vertical centre
+    const knobLocalZ = widthFt/2 - 0.25; // inset from the free edge, same as a real doorknob's backset
+    [-1, 1].forEach(side=>{
+      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), knobMat);
+      knob.position.set(side*(leafThickFt/2+0.06), knobLocalY, knobLocalZ);
+      knob.castShadow = false; // tiny hardware -- the leaf itself already grounds the door
+      group.add(knob);
+    });
+    group.position.set(hingeX+roomX*widthFt/2, heightFt/2, hingeZ+roomZ*widthFt/2);
+    group.rotation.y = Math.atan2(roomX, roomZ);
+    return group;
   }
 
   // Sliding/stacker: a panel slid to one side, sitting IN the wall's own
@@ -10504,11 +10766,18 @@ function init3DScene(){
   renderer.shadowMap.type = THREE.PCFShadowMap;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0B1D34);
+  // A deep saturated backdrop reads as a moody render, but it also makes
+  // the model itself look smaller -- like a diorama sitting in a dark box,
+  // rather than a full-scale space photographed under open sky. A neutral
+  // white backdrop is the standard architectural-visualisation choice for
+  // exactly this reason (background and fog share one colour so there's no
+  // visible "wall" where the fog reaches its far distance).
+  const SKY_COLOR_3D = 0xF4F5F7;
+  scene.background = new THREE.Color(SKY_COLOR_3D);
 
   const groundWFt = Math.max(20, bgCanvas.width/state.scalePxPerFt);
   const groundHFt = Math.max(20, bgCanvas.height/state.scalePxPerFt);
-  scene.fog = new THREE.Fog(0x0B1D34, Math.max(groundWFt,groundHFt)*1.2, Math.max(groundWFt,groundHFt)*5);
+  scene.fog = new THREE.Fog(SKY_COLOR_3D, Math.max(groundWFt,groundHFt)*1.2, Math.max(groundWFt,groundHFt)*5);
 
   const camera = new THREE.PerspectiveCamera(ORBIT_FOV_DEG, w/h, 0.1, 5000);
 
