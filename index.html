@@ -456,6 +456,12 @@
     display:flex;justify-content:space-between;font-family:'Space Mono',monospace;
     font-size:13px;border-top:1px solid var(--line);padding-top:8px;margin-top:4px;
   }
+  .linkbtn{
+    background:none;border:none;padding:0;margin:0;font-family:'Space Mono',monospace;
+    font-size:11px;color:var(--accent);cursor:pointer;text-decoration:underline;text-underline-offset:2px;
+  }
+  .linkbtn:hover:not(:disabled){opacity:0.8;}
+  .linkbtn:disabled{color:var(--ink-dim);text-decoration:none;cursor:not-allowed;opacity:0.6;}
   .pagerow{display:flex;align-items:center;gap:8px;margin-top:6px;}
   .pagerow input{width:50px;text-align:center;}
   .mat-summary-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;}
@@ -895,7 +901,11 @@
         </div>
         <div class="totalline" id="verifySummaryRow" style="display:none;">
           <span>DIMENSION VERIFICATION</span>
-          <span id="verifySummary">0 checked</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <span id="verifySummary">0 checked</span>
+            <button type="button" id="verifyCheckAllBtn" class="linkbtn" title="Mark every dimension/wall on this page that has a plan length as checked">Check all</button>
+            <button type="button" id="verifyUncheckAllBtn" class="linkbtn" title="Clear the checked mark from every dimension/wall on this page">Uncheck all</button>
+          </span>
         </div>
       </div>
 
@@ -1464,6 +1474,28 @@ const totalCostRow = document.getElementById('totalCostRow');
 const totalCost = document.getElementById('totalCost');
 const verifySummaryRow = document.getElementById('verifySummaryRow');
 const verifySummary = document.getElementById('verifySummary');
+const verifyCheckAllBtn = document.getElementById('verifyCheckAllBtn');
+const verifyUncheckAllBtn = document.getElementById('verifyUncheckAllBtn');
+// Bulk-toggles every dimension/wall on the CURRENT PAGE that has a plan
+// length to check against -- the exact same set verifySummary's own "X/Y
+// checked" count is drawn from, so clicking this only ever touches what the
+// count right next to it is showing, never something on another page. One
+// pushUndo for the whole bulk change, not one per element -- reverting a
+// "check all" should be a single undo, not forty.
+verifyCheckAllBtn.addEventListener('click', ()=>{
+  const verifiable = verifiableElements();
+  if(!verifiable.length) return;
+  pushUndo();
+  verifiable.forEach(e=>{ e.verified = true; });
+  renderElementsList(); drawOverlay();
+});
+verifyUncheckAllBtn.addEventListener('click', ()=>{
+  const verifiable = verifiableElements();
+  if(!verifiable.length) return;
+  pushUndo();
+  verifiable.forEach(e=>{ e.verified = false; });
+  renderElementsList(); drawOverlay();
+});
 
 const titleBlockPanel = document.getElementById('titleBlockPanel');
 const projectNameInput = document.getElementById('projectNameInput');
@@ -9413,6 +9445,8 @@ function renderElementsList(){
       ? flaggedCount+' flagged, '+checkedCount+'/'+verifiable.length+' checked'
       : checkedCount+'/'+verifiable.length+' checked, all match';
     verifySummary.style.color = flaggedCount ? '#E2543A' : '';
+    verifyCheckAllBtn.disabled = checkedCount===verifiable.length;
+    verifyUncheckAllBtn.disabled = checkedCount===0;
   } else {
     verifySummaryRow.style.display='none';
   }
