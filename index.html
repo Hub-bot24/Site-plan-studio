@@ -973,6 +973,10 @@
 <div id="preview3dOverlay">
   <div id="preview3dHeader">
     <h3>3D Preview</h3>
+    <div class="unit-toggle" id="preview3dModeToggle" title="Orbit views the whole model from outside; Walkthrough drops you inside it at eye height, walking through real doorways and blocked by real walls.">
+      <button type="button" data-mode3d="orbit" class="active">ORBIT</button>
+      <button type="button" data-mode3d="walk">WALKTHROUGH</button>
+    </div>
     <span id="preview3dHint">Drag to rotate &middot; scroll or pinch to zoom &middot; right-drag to pan</span>
     <button type="button" id="close3dPreviewBtn" class="icnbtn" title="Close">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -9564,6 +9568,8 @@ const preview3dOverlay = document.getElementById('preview3dOverlay');
 const preview3dCanvas = document.getElementById('preview3dCanvas');
 const preview3dLoading = document.getElementById('preview3dLoading');
 const close3dPreviewBtn = document.getElementById('close3dPreviewBtn');
+const preview3dModeToggle = document.getElementById('preview3dModeToggle');
+const preview3dHint = document.getElementById('preview3dHint');
 
 const AREA_HEIGHT_FT_3D = {
   deck:0.3, patio:0.2, concrete:0.2, gravel:0.15, lawn:0.1, turf:0.15,
@@ -9584,9 +9590,17 @@ function furnitureHeightFt3D(presetKey, icon){
   return FURNITURE_HEIGHT_FT_3D[icon] != null ? FURNITURE_HEIGHT_FT_3D[icon] : 2.2;
 }
 
+const WALK_EYE_HEIGHT_FT = 5.5;
+const WALK_PLAYER_RADIUS_FT = 0.85;
+const WALK_SPEED_FT_PER_SEC = 6.5;
 const state3d = {
   renderer:null, scene:null, camera:null, animId:null,
   target:{x:0,y:0,z:0}, radius:40, theta:Math.PI/4, phi:Math.PI/3.2,
+  mode:'orbit', // 'orbit' | 'walk'
+  walk:{x:0, z:0, yaw:0, pitch:0},
+  walkKeys:new Set(),
+  collisionRects:[],
+  lastFrameTime:0,
   _teardown:null,
 };
 
@@ -9764,6 +9778,57 @@ function build3DPathMesh(el, groundWFt, groundHFt){
   }
   return group;
 }
+// Walkthrough collision data: one oriented rectangle (centre, half-length
+// along the wall, half-thickness, angle) per SOLID span of every wall,
+// mirroring build3DPathMesh's own join-extension and door/window-cut logic
+// exactly -- collision can never disagree with what's actually drawn. A
+// door (or a large opening with nothing fitted) always has sill 0, so its
+// span gets no rect and is walkable; a window's span still gets one, since
+// its "gap" is up at sill height, not at the floor -- you can walk through
+// a doorway but not through a window, the same as in a real house. Unlike
+// the 3D mesh, only one rect per span is needed regardless of sill/header
+// splitting: collision only cares about the XZ footprint, not which height
+// band is solid.
+function computeWallCollisionRects(groundWFt, groundHFt){
+  const rects = [];
+  currentPageElements().filter(e=>e.isWall).forEach(el=>{
+    const pts = el.points;
+    if(!pts || pts.length<2) return;
+    const widthFt = el.thicknessFt||0.1;
+    const extStartFt = wallJoinExtension(el, true, state.scalePxPerFt)/state.scalePxPerFt;
+    const extEndFt = wallJoinExtension(el, false, state.scalePxPerFt)/state.scalePxPerFt;
+    const openings = currentPageElements().filter(o=>o.isOpening && o.hostWallId===el.id).sort((a,b)=>a.offsetFt-b.offsetFt);
+    for(let i=0;i<pts.length-1;i++){
+      const a = pts[i], b = pts[i+1];
+      const ax = a.x/state.scalePxPerFt - groundWFt/2, az = a.y/state.scalePxPerFt - groundHFt/2;
+      const bx = b.x/state.scalePxPerFt - groundWFt/2, bz = b.y/state.scalePxPerFt - groundHFt/2;
+      const dx=bx-ax, dz=bz-az, segLen=Math.hypot(dx,dz);
+      if(segLen<0.01) continue;
+      const ux=dx/segLen, uz=dz/segLen;
+      const angle = Math.atan2(dz,dx);
+      const sExt = (i===0)?extStartFt:0, eExt=(i===pts.length-2)?extEndFt:0;
+
+      function addRect(startFt,endFt){
+        const len = endFt-startFt;
+        if(len<0.02) return;
+        const midFt=(startFt+endFt)/2;
+        rects.push({ cx: ax+ux*midFt, cz: az+uz*midFt, halfLen: len/2, halfWidth: widthFt/2, angle });
+      }
+      if(!openings.length){ addRect(-sExt, segLen+eExt); continue; }
+      let cursor = -sExt;
+      openings.forEach(o=>{
+        const halfW=(o.wFt||0)/2;
+        const oStart=o.offsetFt-halfW, oEnd=o.offsetFt+halfW;
+        addRect(cursor, oStart);
+        const sill = o.openingKind==='window' ? (o.sillHeightFt||0) : 0;
+        if(sill>0.02) addRect(oStart, oEnd);
+        cursor = Math.max(cursor, oEnd);
+      });
+      addRect(cursor, segLen+eExt);
+    }
+  });
+  return rects;
+}
 function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   const baseColor = el.color || preset.color || '#B5934C';
   const isRoof = ROOF_PRESETS_3D.has(el.presetKey);
@@ -9828,6 +9893,83 @@ function updateCamera3D(){
   state3d.camera.position.set(x,y,z);
   state3d.camera.lookAt(target.x, target.y, target.z);
 }
+// Closest-point circle-vs-oriented-rectangle test: rotate the player's
+// candidate position into the wall segment's own local frame, clamp to its
+// footprint to find the nearest point on it, then compare that distance to
+// the player's own radius -- correct for overlap against an edge OR a
+// corner, not just an axis-aligned approximation.
+function circleOverlapsWallRect(px, pz, rect, radius){
+  const dx = px-rect.cx, dz = pz-rect.cz;
+  const cos = Math.cos(-rect.angle), sin = Math.sin(-rect.angle);
+  const lx = dx*cos - dz*sin, lz = dx*sin + dz*cos;
+  const nearX = Math.max(-rect.halfLen, Math.min(rect.halfLen, lx));
+  const nearZ = Math.max(-rect.halfWidth, Math.min(rect.halfWidth, lz));
+  const ddx = lx-nearX, ddz = lz-nearZ;
+  return (ddx*ddx + ddz*ddz) < radius*radius;
+}
+function walkPositionClear(x, z){
+  return !state3d.collisionRects.some(r => circleOverlapsWallRect(x, z, r, WALK_PLAYER_RADIUS_FT));
+}
+// Classic axis-separated slide: if the full diagonal move is blocked, try
+// each axis alone before giving up entirely -- walking into a wall at an
+// angle slides you along it instead of just stopping dead (or, worse,
+// letting you clip through because the check was too permissive).
+function resolveWalkMove(curX, curZ, wantX, wantZ){
+  if(walkPositionClear(wantX, wantZ)) return {x:wantX, z:wantZ};
+  if(walkPositionClear(wantX, curZ)) return {x:wantX, z:curZ};
+  if(walkPositionClear(curX, wantZ)) return {x:curX, z:wantZ};
+  return {x:curX, z:curZ};
+}
+// Drops the walkthrough starting point inside the first real room on the
+// page (its centroid) rather than at some arbitrary world origin that could
+// easily land inside a wall or out in open space -- falls back to the
+// average of all wall points, then the scene centre, if there's no
+// detected room yet.
+function computeWalkStartPos(groundWFt, groundHFt){
+  const rooms = currentPageElements().filter(e=>e.isRoom);
+  if(rooms.length){
+    const c = polygonCentroid(rooms[0].points);
+    return { x: c.x/state.scalePxPerFt - groundWFt/2, z: c.y/state.scalePxPerFt - groundHFt/2 };
+  }
+  const walls = currentPageElements().filter(e=>e.isWall);
+  if(walls.length){
+    let sx=0, sz=0, n=0;
+    walls.forEach(w=>w.points.forEach(p=>{ sx+=p.x; sz+=p.y; n++; }));
+    return { x: sx/n/state.scalePxPerFt - groundWFt/2, z: sz/n/state.scalePxPerFt - groundHFt/2 };
+  }
+  return { x:0, z:0 };
+}
+function updateWalkCamera3D(){
+  const {walk} = state3d;
+  state3d.camera.position.set(walk.x, WALK_EYE_HEIGHT_FT, walk.z);
+  state3d.camera.rotation.order = 'YXZ';
+  state3d.camera.rotation.set(walk.pitch, walk.yaw, 0);
+}
+// Per-frame movement while in walk mode -- WASD/arrows relative to the
+// current look direction (yaw only, so looking up/down never changes
+// horizontal speed), scaled by real elapsed time so it feels the same on
+// any framerate, then run through the same collision resolver every other
+// candidate move goes through.
+function updateWalkMovement(dtSec){
+  const keys = state3d.walkKeys;
+  let fwd = 0, strafe = 0;
+  if(keys.has('w')||keys.has('arrowup')) fwd += 1;
+  if(keys.has('s')||keys.has('arrowdown')) fwd -= 1;
+  if(keys.has('d')||keys.has('arrowright')) strafe += 1;
+  if(keys.has('a')||keys.has('arrowleft')) strafe -= 1;
+  if(fwd===0 && strafe===0) return;
+  const len = Math.hypot(fwd, strafe) || 1;
+  fwd/=len; strafe/=len;
+  const yaw = state3d.walk.yaw;
+  const fwdX = -Math.sin(yaw), fwdZ = -Math.cos(yaw);
+  const rightX = Math.cos(yaw), rightZ = -Math.sin(yaw);
+  const step = WALK_SPEED_FT_PER_SEC*dtSec;
+  const wantX = state3d.walk.x + (fwdX*fwd + rightX*strafe)*step;
+  const wantZ = state3d.walk.z + (fwdZ*fwd + rightZ*strafe)*step;
+  const resolved = resolveWalkMove(state3d.walk.x, state3d.walk.z, wantX, wantZ);
+  state3d.walk.x = resolved.x;
+  state3d.walk.z = resolved.z;
+}
 function resize3DCanvas(){
   if(!state3d.renderer) return;
   const bodyEl = document.getElementById('preview3dBody');
@@ -9847,6 +9989,16 @@ function setup3DInteraction(){
     if(!dragging) return;
     const dx = e.clientX-dragging.x, dy = e.clientY-dragging.y;
     dragging.x = e.clientX; dragging.y = e.clientY;
+    if(state3d.mode==='walk'){
+      // Drag-to-look, same gesture as orbit's own rotate -- no pointer-lock
+      // (keeps the cursor free to click the mode toggle or close button
+      // without a separate "press Esc to release the mouse" step).
+      state3d.walk.yaw -= dx*0.006;
+      const maxPitch = Math.PI/2-0.05;
+      state3d.walk.pitch = Math.min(Math.max(state3d.walk.pitch - dy*0.006, -maxPitch), maxPitch);
+      updateWalkCamera3D();
+      return;
+    }
     if(dragging.pan){
       const panSpeed = state3d.radius*0.0016;
       const camDir = new THREE.Vector3();
@@ -9864,17 +10016,31 @@ function setup3DInteraction(){
   };
   const onPointerUp = (e)=>{ dragging=null; try{canvas.releasePointerCapture(e.pointerId);}catch(_){} };
   const onWheel = (e)=>{
+    if(state3d.mode==='walk') return; // no zoom in walkthrough -- eye height/FOV stay real-world fixed
     e.preventDefault();
     state3d.radius = Math.min(Math.max(state3d.radius*(1+e.deltaY*0.001), 3), 800);
     updateCamera3D();
   };
   const onContextMenu = (e)=> e.preventDefault();
+  const WALK_KEYS = new Set(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright']);
+  const onKeyDown = (e)=>{
+    if(state3d.mode!=='walk') return;
+    const k = e.key.toLowerCase();
+    if(!WALK_KEYS.has(k)) return;
+    e.preventDefault();
+    state3d.walkKeys.add(k);
+  };
+  const onKeyUp = (e)=>{
+    state3d.walkKeys.delete(e.key.toLowerCase());
+  };
   canvas.addEventListener('pointerdown', onPointerDown);
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', onPointerUp);
   canvas.addEventListener('wheel', onWheel, {passive:false});
   canvas.addEventListener('contextmenu', onContextMenu);
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
   state3d._teardown = ()=>{
     canvas.removeEventListener('pointerdown', onPointerDown);
     canvas.removeEventListener('pointermove', onPointerMove);
@@ -9882,6 +10048,9 @@ function setup3DInteraction(){
     canvas.removeEventListener('pointercancel', onPointerUp);
     canvas.removeEventListener('wheel', onWheel);
     canvas.removeEventListener('contextmenu', onContextMenu);
+    window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('keyup', onKeyUp);
+    state3d.walkKeys.clear();
   };
 }
 function teardown3DInteraction(){
@@ -9895,6 +10064,12 @@ function init3DScene(){
   const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio||1, 2));
   renderer.setSize(w, h, false);
+  // Soft shadows are the single biggest realism upgrade available from the
+  // existing light rig for the price of a few lines -- grounds every wall
+  // and piece of furniture with a real contact shadow instead of everything
+  // looking like it's floating, in both Orbit and Walkthrough.
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0B1D34);
@@ -9908,6 +10083,11 @@ function init3DScene(){
   scene.add(new THREE.AmbientLight(0xffffff, 0.65));
   const sun = new THREE.DirectionalLight(0xffffff, 0.9);
   sun.position.set(groundWFt*0.3, Math.max(groundWFt,groundHFt)*0.6, groundHFt*0.25);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0015;
+  const shadowSpan = Math.max(groundWFt, groundHFt)*0.75;
+  Object.assign(sun.shadow.camera, {left:-shadowSpan, right:shadowSpan, top:shadowSpan, bottom:-shadowSpan, near:1, far:Math.max(groundWFt,groundHFt)*2});
   scene.add(sun);
   scene.add(new THREE.HemisphereLight(0xbfd6ff, 0x2a2318, 0.35));
 
@@ -9917,6 +10097,7 @@ function init3DScene(){
   );
   ground.rotation.x = -Math.PI/2;
   ground.position.y = -0.02;
+  ground.receiveShadow = true;
   scene.add(ground);
 
   const group = new THREE.Group();
@@ -9925,25 +10106,61 @@ function init3DScene(){
     const mesh = build3DElementMesh(el, groundWFt, groundHFt);
     if(mesh) group.add(mesh);
   });
+  group.traverse(obj=>{ if(obj.isMesh){ obj.castShadow = true; obj.receiveShadow = true; } });
   scene.add(group);
 
   state3d.renderer = renderer;
   state3d.scene = scene;
   state3d.camera = camera;
+  state3d.groundWFt = groundWFt;
+  state3d.groundHFt = groundHFt;
+  state3d.collisionRects = computeWallCollisionRects(groundWFt, groundHFt);
   state3d.target = {x:0, y:Math.min(6, WALL_HEIGHT_FT_3D*0.35), z:0};
   state3d.radius = Math.max(groundWFt, groundHFt, 15)*0.95;
   state3d.theta = Math.PI/4;
   state3d.phi = Math.PI/3.2;
-  updateCamera3D();
+  set3DMode('orbit');
 
   setup3DInteraction();
   window.addEventListener('resize', resize3DCanvas);
+  state3d.lastFrameTime = performance.now();
   const loop = ()=>{
     state3d.animId = requestAnimationFrame(loop);
+    const now = performance.now();
+    const dt = Math.min((now-state3d.lastFrameTime)/1000, 0.1); // clamp so a tab switch/stall doesn't fling the player
+    state3d.lastFrameTime = now;
+    if(state3d.mode==='walk'){
+      updateWalkMovement(dt);
+      updateWalkCamera3D();
+    }
     renderer.render(scene, camera);
   };
   loop();
 }
+// Switches the 3D preview between Orbit (view the whole model from outside)
+// and Walkthrough (eye-height, inside the model, collides with real walls
+// and passes through real doorways) -- same scene, same renderer, just a
+// different camera model, so toggling is instant with no rebuild.
+function set3DMode(mode){
+  state3d.mode = mode;
+  preview3dModeToggle.querySelectorAll('button').forEach(b=>b.classList.toggle('active', b.dataset.mode3d===mode));
+  preview3dCanvas.style.cursor = mode==='walk' ? 'crosshair' : 'grab';
+  if(mode==='walk'){
+    const start = computeWalkStartPos(state3d.groundWFt, state3d.groundHFt);
+    state3d.walk.x = start.x; state3d.walk.z = start.z;
+    state3d.walk.yaw = 0; state3d.walk.pitch = 0;
+    updateWalkCamera3D();
+    preview3dHint.textContent = 'WASD or arrow keys to walk · drag to look · blocked by real walls, passes through real doorways';
+  } else {
+    updateCamera3D();
+    preview3dHint.textContent = 'Drag to rotate · scroll or pinch to zoom · right-drag to pan';
+  }
+}
+preview3dModeToggle.addEventListener('click', (e)=>{
+  const btn = e.target.closest('button[data-mode3d]');
+  if(!btn || !state3d.renderer) return;
+  set3DMode(btn.dataset.mode3d);
+});
 
 preview3dBtn.addEventListener('click', open3DPreview);
 close3dPreviewBtn.addEventListener('click', close3DPreview);
