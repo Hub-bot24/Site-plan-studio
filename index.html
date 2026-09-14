@@ -893,6 +893,10 @@
           <span>ESTIMATED COST</span>
           <span id="totalCost">$0.00</span>
         </div>
+        <div class="totalline" id="verifySummaryRow" style="display:none;">
+          <span>DIMENSION VERIFICATION</span>
+          <span id="verifySummary">0 checked</span>
+        </div>
       </div>
 
       <div class="panel disabled" id="titleBlockPanel">
@@ -1422,6 +1426,8 @@ const fixedCostInput = document.getElementById('fixedCostInput');
 const fixedPriceInput = document.getElementById('fixedPriceInput');
 const totalCostRow = document.getElementById('totalCostRow');
 const totalCost = document.getElementById('totalCost');
+const verifySummaryRow = document.getElementById('verifySummaryRow');
+const verifySummary = document.getElementById('verifySummary');
 
 const titleBlockPanel = document.getElementById('titleBlockPanel');
 const projectNameInput = document.getElementById('projectNameInput');
@@ -2136,6 +2142,29 @@ function pathLengthPx(points){
 function pathLengthDisplay(points){
   if(!state.scalePxPerFt) return 0;
   return fromFt(pathLengthPx(points)/state.scalePxPerFt, state.unit);
+}
+// Accuracy verification: how far a traced dimension or wall's ACTUAL length
+// (from its own points, via the one shared scalePxPerFt -- never a second
+// scale) is from the length the user typed in after reading it off the
+// original plan. A small absolute tolerance (rather than a percentage) is
+// deliberate: this exists to catch tracing mistakes -- a snap to the wrong
+// corner, the wrong wall selected -- which read as a clearly-wrong distance,
+// not to nitpick sub-millimetre rounding on a hand-traced drawing.
+const VERIFY_TOLERANCE_FT = 0.1;
+function verificationDeltaFt(el){
+  if(el.expectedLengthFt==null || !state.scalePxPerFt) return null;
+  const actualFt = pathLengthPx(el.points)/state.scalePxPerFt;
+  return actualFt - el.expectedLengthFt;
+}
+function isVerificationFlagged(el){
+  const delta = verificationDeltaFt(el);
+  return delta!=null && Math.abs(delta) > VERIFY_TOLERANCE_FT;
+}
+// Every dimension/wall that's been given a known plan length to check
+// against -- used both for the sidebar/canvas indicators on each one and for
+// the plan-wide verification summary.
+function verifiableElements(){
+  return currentPageElements().filter(e=>(e.isDimension||e.isWall) && e.expectedLengthFt!=null);
 }
 function polygonAreaPx(points){
   let a=0;
@@ -6897,10 +6926,20 @@ function elementLabelAnchor(el){
   if(el.shape==='polygon') return polygonCentroid(el.points);
   return {x: el.xPx, y: el.yPx};
 }
+// A small glyph appended to a dimension/wall's own on-canvas label, so
+// whether it's been checked against the original plan (and whether it
+// passed) is visible at a glance on the plan itself, not just in the
+// sidebar. Empty for anything with no expected length AND not manually
+// ticked "checked" -- i.e. never appears for a plain fence or an
+// unverified wall/dimension.
+function verificationSuffix(el){
+  if(el.expectedLengthFt!=null) return isVerificationFlagged(el) ? ' ⚠' : ' ✓';
+  return el.verified ? ' ✓' : '';
+}
 function elementLabelText(el){
   if(el.shape==='path'){
-    if(el.isDimension) return formatNum(pathLengthDisplay(el.points))+' '+state.unit;
-    return el.label+' — '+formatNum(pathLengthDisplay(el.points))+' '+state.unit;
+    if(el.isDimension) return formatNum(pathLengthDisplay(el.points))+' '+state.unit+verificationSuffix(el);
+    return el.label+' — '+formatNum(pathLengthDisplay(el.points))+' '+state.unit+verificationSuffix(el);
   }
   if(el.shape==='polygon'){
     if(el.isCutout){
@@ -6996,7 +7035,7 @@ function drawElementLabel(ctx, el, color, selected){
     ctx.stroke();
     ctx.restore();
   }
-  drawLabelChip(ctx, pos.x, pos.y, elementLabelText(el), color, el.isDimension ? 1.3 : 1);
+  drawLabelChip(ctx, pos.x, pos.y, elementLabelText(el), color, el.isDimension ? 1.3 : 1, isVerificationFlagged(el) ? '#E2543A' : null);
   if(selected){
     const hp = labelHandlePos(ctx, el);
     const s = 1/Math.max(state.zoom, 0.01);
@@ -7011,7 +7050,7 @@ function drawElementLabel(ctx, el, color, selected){
     ctx.restore();
   }
 }
-function drawLabelChip(ctx, x, y, text, textColor, sizeMult){
+function drawLabelChip(ctx, x, y, text, textColor, sizeMult, accentColor){
   ctx.save();
   // Text is drawn in raw canvas pixels, which get shrunk by CSS to whatever
   // the current zoom is -- at a typical ~40% fit-to-view zoom, a fixed 11px
@@ -7029,8 +7068,11 @@ function drawLabelChip(ctx, x, y, text, textColor, sizeMult){
   // of a monochrome architectural drawing rather than a leftover colour chip.
   const bw = state.blackMode;
   ctx.fillStyle = bw ? 'rgba(246,244,238,0.95)' : 'rgba(10,26,46,0.72)';
-  ctx.strokeStyle = bw ? BW_INK : 'rgba(223,231,240,0.16)';
-  ctx.lineWidth = (bw ? 1.1 : 1)*s;
+  // A flagged dimension/wall gets an accent-coloured border instead of the
+  // usual faint one -- a verification problem should be visible on the plan
+  // itself at a glance, not just as a tooltip in the sidebar.
+  ctx.strokeStyle = accentColor || (bw ? BW_INK : 'rgba(223,231,240,0.16)');
+  ctx.lineWidth = (accentColor ? 2 : (bw ? 1.1 : 1))*s;
   const rx = x-w/2, ry = y-h/2, rr = 3*s;
   ctx.beginPath();
   ctx.moveTo(rx+rr, ry);
@@ -8378,6 +8420,57 @@ function renderElementsList(){
         dims.appendChild(parentSel);
       }
     }
+    // Accuracy verification, shared by dimensions and walls: an optional
+    // "what the original plan says this should be" length, an automatic
+    // flag when the traced result is off by more than a small tracing
+    // tolerance, and an independent "checked" tickbox for a plain visual
+    // comparison against the underlay when the user doesn't want to type an
+    // exact number.
+    function appendVerificationControls(dims, el){
+      const expWrap = document.createElement('span');
+      expWrap.style.display='inline-flex'; expWrap.style.alignItems='center'; expWrap.style.gap='2px'; expWrap.style.marginLeft='6px';
+      const expLbl = document.createElement('span');
+      expLbl.textContent = 'plan says';
+      expLbl.style.color = 'var(--ink-dim)'; expLbl.style.fontSize='11px';
+      const expIn = document.createElement('input'); expIn.type='number'; expIn.step='0.01'; expIn.min='0';
+      expIn.style.width='58px';
+      expIn.placeholder='—';
+      expIn.title = 'The length printed on the original plan for this '+(el.isWall?'wall':'measurement')+' -- type it in to check the traced result against it';
+      expIn.value = el.expectedLengthFt!=null ? formatNum(fromFt(el.expectedLengthFt, state.unit)) : '';
+      expIn.addEventListener('click', e=>e.stopPropagation());
+      expIn.addEventListener('change', ()=>{
+        pushUndo();
+        const v = parseFloat(expIn.value);
+        el.expectedLengthFt = (v>0) ? toFt(v, state.unit) : null;
+        renderElementsList(); drawOverlay();
+      });
+      expWrap.appendChild(expLbl); expWrap.appendChild(expIn); expWrap.appendChild(document.createTextNode(unitAbbrev()));
+      dims.appendChild(expWrap);
+
+      if(el.expectedLengthFt!=null){
+        const delta = verificationDeltaFt(el);
+        const flagged = isVerificationFlagged(el);
+        const deltaSpan = document.createElement('span');
+        deltaSpan.style.marginLeft='4px'; deltaSpan.style.fontSize='11px'; deltaSpan.style.fontWeight='500';
+        deltaSpan.style.color = flagged ? '#E2543A' : '#5FA779';
+        deltaSpan.textContent = flagged
+          ? '⚠ off by '+formatNum(fromFt(Math.abs(delta), state.unit))+' '+unitAbbrev()
+          : '✓ matches';
+        deltaSpan.title = flagged
+          ? 'The traced result differs from the plan\'s stated length by more than a small tracing tolerance -- check the snap points'
+          : 'The traced result is within a small tolerance of the plan\'s stated length';
+        dims.appendChild(deltaSpan);
+      }
+
+      const verLabel = document.createElement('label');
+      verLabel.style.display='inline-flex'; verLabel.style.alignItems='center'; verLabel.style.gap='3px'; verLabel.style.marginLeft='6px';
+      verLabel.style.fontSize='11px'; verLabel.title = 'Mark this as checked against the original plan';
+      const verChk = document.createElement('input'); verChk.type='checkbox'; verChk.checked=!!el.verified;
+      verChk.addEventListener('click', e=>e.stopPropagation());
+      verChk.addEventListener('change', ()=>{ pushUndo(); el.verified = verChk.checked; renderElementsList(); drawOverlay(); });
+      verLabel.appendChild(verChk); verLabel.appendChild(document.createTextNode('checked'));
+      dims.appendChild(verLabel);
+    }
     const dims = document.createElement('div');
     dims.className='dims';
     if(el.isOpening){
@@ -8525,6 +8618,7 @@ function renderElementsList(){
         });
         dims.appendChild(lenIn);
         dims.appendChild(document.createTextNode(unitAbbrev()));
+        appendVerificationControls(dims, el);
       } else if(el.isWall){
         const lenIn2 = document.createElement('input'); lenIn2.type='number'; lenIn2.step='0.01'; lenIn2.min='0.01';
         lenIn2.title = 'Correct this wall\'s length -- the far end slides along the same line to match';
@@ -8573,6 +8667,7 @@ function renderElementsList(){
         typeBadge.style.marginLeft='4px'; typeBadge.style.color='var(--ink-dim)'; typeBadge.style.fontSize='11px';
         typeBadge.textContent = el.wallType==='external' ? 'external' : 'internal';
         dims.appendChild(typeBadge);
+        appendVerificationControls(dims, el);
       } else {
         const info = document.createElement('span');
         info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
@@ -8877,6 +8972,21 @@ function renderElementsList(){
     totalCost.textContent = formatCurrency(costTotal);
   } else {
     totalCostRow.style.display='none';
+  }
+  // Only shown at all once at least one dimension/wall has been given a
+  // known plan length to check against -- otherwise it's a row about a
+  // workflow the user isn't using yet, cluttering the totals for no reason.
+  const verifiable = verifiableElements();
+  if(verifiable.length){
+    verifySummaryRow.style.display='flex';
+    const flaggedCount = verifiable.filter(isVerificationFlagged).length;
+    const checkedCount = verifiable.filter(e=>e.verified).length;
+    verifySummary.textContent = flaggedCount
+      ? flaggedCount+' flagged, '+checkedCount+'/'+verifiable.length+' checked'
+      : checkedCount+'/'+verifiable.length+' checked, all match';
+    verifySummary.style.color = flaggedCount ? '#E2543A' : '';
+  } else {
+    verifySummaryRow.style.display='none';
   }
 
   const roomEl = getElementById(state.selectedId);
