@@ -860,6 +860,14 @@
           </button>
           <p class="helptext" id="autoArrangeStatus" style="margin-top:6px;margin-bottom:0;display:none;"></p>
         </div>
+        <div id="roomDetectBlock" style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--line);">
+          <p class="helptext" style="margin-top:0;">Once your walls form closed rooms, detect them to get real room polygons, floor area, and floor surfaces for the 3D view — name and type each one below.</p>
+          <button class="btn secondary" id="detectRoomsBtn" type="button" style="width:100%;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M3 9h6"/></svg>
+            <span class="btn-label">Detect rooms from walls</span>
+          </button>
+          <p class="helptext" id="detectRoomsStatus" style="margin-top:6px;margin-bottom:0;display:none;"></p>
+        </div>
         <div id="elementsList"></div>
         <div class="empty-note" id="emptyNote">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
@@ -1096,6 +1104,30 @@ PRESETS.door_sliding = {label:'Door — Sliding', color:OPENING_COLOR_DOOR, text
 PRESETS.door_stacker = {label:'Door — Stacker (multi-panel)', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'stacker', widthM:2.4, heightM:2.1};
 PRESETS.window_standard = {label:'Window', color:OPENING_COLOR_WINDOW, texture:null, quick:'opening', isOpening:true, openingKind:'window', widthM:1.2, heightM:1.2, sillM:0.9};
 PRESETS.opening_large = {label:'Large opening (no door/window fitted)', color:OPENING_COLOR_WINDOW, texture:null, quick:'opening', isOpening:true, openingKind:'opening', widthM:3.0, heightM:2.1};
+
+// Rooms are detected, not hand-drawn: a polygon element (isRoom:true) whose
+// points are the wall network's own interior face, found by
+// findClosedRoomLoops()+insetRoomPolygon() -- never a manually re-traced
+// outline, and never a second geometry system alongside the walls.
+const ROOM_FILL_COLOR = '#F2ECDC';
+// Gives every room a normal preset entry purely so the EXISTING generic
+// polygon 3D extrusion (build3DAreaMesh's shape==='polygon' branch, already
+// used for custom traced areas) picks it up for free as a thin floor slab at
+// ground level -- no separate 3D code path for rooms at all.
+PRESETS.room = {label:'Room floor', color:ROOM_FILL_COLOR, texture:null, quick:'none'};
+const ROOM_TYPES = [
+  {key:'other', label:'Other / unspecified'},
+  {key:'living', label:'Living'},
+  {key:'family', label:'Family'},
+  {key:'kitchen', label:'Kitchen'},
+  {key:'bedroom', label:'Bedroom'},
+  {key:'ensuite', label:'Ensuite'},
+  {key:'wir', label:'WIR (walk-in robe)'},
+  {key:'laundry', label:'Laundry'},
+  {key:'pantry', label:'Pantry / scullery'},
+  {key:'garage', label:'Garage'},
+  {key:'alfresco', label:'Alfresco'},
+];
 
 // Standard real-world furniture footprints (inches, width x depth as seen from
 // directly above -- these are TOP-VIEW/plan-view footprints, matching what a
@@ -1373,6 +1405,8 @@ const emptyNote = document.getElementById('emptyNote');
 const emptyNoteText = document.getElementById('emptyNoteText');
 const autoArrangeBtn = document.getElementById('autoArrangeBtn');
 const autoArrangeStatus = document.getElementById('autoArrangeStatus');
+const detectRoomsBtn = document.getElementById('detectRoomsBtn');
+const detectRoomsStatus = document.getElementById('detectRoomsStatus');
 const materialSummaryWrap = document.getElementById('materialSummaryWrap');
 const materialSummaryList = document.getElementById('materialSummaryList');
 const totalArea = document.getElementById('totalArea');
@@ -2301,7 +2335,13 @@ function currentPageElements(){
 }
 function zOrderedElements(){
   const onPage = currentPageElements();
-  return onPage.filter(e=>!e.isCutout).concat(onPage.filter(e=>e.isCutout));
+  // Rooms are floor fill -- they belong underneath every wall, opening,
+  // piece of furniture and cutout on the plan, regardless of when they were
+  // detected relative to everything else, the same way a real floor sits
+  // physically below whatever's placed on it.
+  return onPage.filter(e=>e.isRoom)
+    .concat(onPage.filter(e=>!e.isRoom && !e.isCutout))
+    .concat(onPage.filter(e=>!e.isRoom && e.isCutout));
 }
 
 /* ---- Recommended furniture clearance zones ---- */
@@ -3937,7 +3977,10 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
       state.dragging = {id:hit.id, mode:'openingslide'};
     } else if(hit.shape==='rect' || hit.shape==='circle' || hit.shape==='image'){
       state.dragging = {id:hit.id, mode:'point', offsetX:x-hit.xPx, offsetY:y-hit.yPx};
-    } else {
+    } else if(!hit.isRoom){
+      // A room's points are entirely derived from the wall network by
+      // Detect Rooms -- there's no sensible "manually move it" position for
+      // one, so it's selectable (for naming/typing) but never draggable.
       state.dragging = {id:hit.id, mode:'points', anchorX:x, anchorY:y, startPoints:hit.points.map(p=>({x:p.x,y:p.y}))};
     }
     overlayCanvas.setPointerCapture(e.pointerId);
@@ -6731,7 +6774,10 @@ function drawOpeningElement(ctx, el, selected){
 }
 function drawElement(ctx, el, selected){
   if(el.shape==='path'){ drawPathElement(ctx, el, selected); return; }
-  if(el.shape==='polygon'){ drawPolygonElement(ctx, el, selected); return; }
+  if(el.shape==='polygon'){
+    if(el.isRoom){ drawRoomElement(ctx, el, selected); return; }
+    drawPolygonElement(ctx, el, selected); return;
+  }
   if(el.isOpening){ drawOpeningElement(ctx, el, selected); return; }
   const pop = getPopState(el);
   ctx.save();
@@ -7323,6 +7369,194 @@ function mergeWallWithNeighbor(el){
   });
   return true;
 }
+
+/* ============================ Room detection ============================
+   Finds every closed region enclosed by the wall network and turns each one
+   into a real room polygon, using the wall centerlines only -- no separate
+   scale or geometry system, and no manual re-tracing of rooms the walls
+   already define.
+
+   The core is the standard "trace every face of a planar straight-line
+   graph" algorithm (half-edge / rotation-system traversal): at each wall
+   junction, sort the edges leaving that point by angle, and always continue
+   a face by taking the next edge around from wherever you arrived. Every
+   directed wall-edge belongs to exactly one face this way; tracing all of
+   them finds every enclosed region AND the one unbounded "outside" region
+   per connected group of walls, distinguished from real rooms purely by the
+   sign of the traced polygon's own (signed, not absolute) area -- verified
+   against single-room, multi-room, T-junction and dangling-wall-spur cases
+   before this was wired in, not assumed from theory alone. */
+
+// Where (px,py) -- another wall's endpoint -- projects onto the INTERIOR of
+// segment p1-p2, as a 0..1 fraction, or null if it's not actually a
+// T-junction on this segment (too close to either end, which already share
+// a node once wall endpoints are matched by proximity, or not actually on
+// the line at all).
+function segmentInteriorParam(px, py, p1, p2){
+  const dx=p2.x-p1.x, dy=p2.y-p1.y;
+  const lenSq = dx*dx+dy*dy;
+  if(lenSq<1e-6) return null;
+  const t = ((px-p1.x)*dx+(py-p1.y)*dy)/lenSq;
+  if(t<=1e-4 || t>=1-1e-4) return null;
+  const projX = p1.x+t*dx, projY = p1.y+t*dy;
+  if(Math.hypot(projX-px, projY-py) > 1.5) return null;
+  return t;
+}
+// Splits every wall wherever another wall's endpoint touches its interior --
+// a T-junction, e.g. an internal partition meeting partway along a long
+// exterior wall -- into virtual sub-segments that actually share a graph
+// node there. Without this, such a wall is only touching the other one
+// geometrically, not topologically, and face-tracing silently fails to find
+// the rooms it forms (confirmed by testing before this step was added).
+// Purely for detection purposes: never mutates the real wall elements.
+function planarizeWallsForRooms(walls){
+  const allEndpoints = [];
+  walls.forEach(w=>{ allEndpoints.push(w.points[0], w.points[1]); });
+  const segments = [];
+  walls.forEach(w=>{
+    const [p1,p2] = w.points;
+    const cuts = [0,1];
+    allEndpoints.forEach(ep=>{
+      const t = segmentInteriorParam(ep.x, ep.y, p1, p2);
+      if(t!=null) cuts.push(t);
+    });
+    const uniqueCuts = [...new Set(cuts.map(t=>t.toFixed(6)))].map(Number).sort((a,b)=>a-b);
+    for(let i=0;i<uniqueCuts.length-1;i++){
+      const ta=uniqueCuts[i], tb=uniqueCuts[i+1];
+      if(tb-ta<1e-6) continue;
+      segments.push({
+        p1:{x:p1.x+(p2.x-p1.x)*ta, y:p1.y+(p2.y-p1.y)*ta},
+        p2:{x:p1.x+(p2.x-p1.x)*tb, y:p1.y+(p2.y-p1.y)*tb},
+        wallId: w.id,
+      });
+    }
+  });
+  return segments;
+}
+function signedAreaRaw(points){
+  let a=0;
+  for(let i=0;i<points.length;i++){
+    const p1=points[i], p2=points[(i+1)%points.length];
+    a += p1.x*p2.y - p2.x*p1.y;
+  }
+  return a/2;
+}
+// Traces every face of the current page's (planarized) wall network and
+// returns only the bounded ones -- real, closed rooms -- each as
+// {points, edgeWallIds} where edgeWallIds[i] is the wall bounding the edge
+// from points[i] to points[(i+1)%N]. Faces with positive signed area are the
+// outer/exterior face(s) -- one per separate, unconnected group of walls --
+// and are discarded; this sign rule was verified empirically (not assumed)
+// against single- and multi-room layouts, including ones only connected via
+// a T-junction, before being used here.
+function findClosedRoomLoops(){
+  const walls = currentPageElements().filter(e=>e.isWall);
+  if(walls.length<3) return [];
+  const segments = planarizeWallsForRooms(walls);
+  const EPS = 0.5;
+  const nodes = [];
+  function nodeIndex(p){
+    for(let i=0;i<nodes.length;i++) if(Math.hypot(nodes[i].x-p.x, nodes[i].y-p.y)<EPS) return i;
+    nodes.push({x:p.x, y:p.y});
+    return nodes.length-1;
+  }
+  const edgeSet = new Set();
+  const edges = [];
+  segments.forEach(({p1,p2,wallId})=>{
+    const a = nodeIndex(p1), b = nodeIndex(p2);
+    if(a===b) return;
+    const k = Math.min(a,b)+':'+Math.max(a,b);
+    if(edgeSet.has(k)) return;
+    edgeSet.add(k);
+    edges.push({a,b,wallId});
+  });
+  if(edges.length<3) return [];
+
+  const adjacency = nodes.map(()=>[]);
+  edges.forEach(({a,b,wallId})=>{
+    adjacency[a].push({to:b, angle:Math.atan2(nodes[b].y-nodes[a].y, nodes[b].x-nodes[a].x), wallId});
+    adjacency[b].push({to:a, angle:Math.atan2(nodes[a].y-nodes[b].y, nodes[a].x-nodes[b].x), wallId});
+  });
+  adjacency.forEach(list=>list.sort((x,y)=>x.angle-y.angle));
+
+  const visited = new Set();
+  const faces = [];
+  const key = (u,v)=>u+'->'+v;
+
+  for(let u=0;u<nodes.length;u++){
+    for(const {to:v} of adjacency[u]){
+      if(visited.has(key(u,v))) continue;
+      const facePts = [nodes[u]];
+      const faceWallIds = [];
+      let curU=u, curV=v, guard=0, broken=false;
+      while(guard++<20000){
+        visited.add(key(curU,curV));
+        const curEdge = adjacency[curU].find(e=>e.to===curV);
+        faceWallIds.push(curEdge ? curEdge.wallId : null);
+        facePts.push(nodes[curV]);
+        const list = adjacency[curV];
+        const backAngle = Math.atan2(nodes[curU].y-nodes[curV].y, nodes[curU].x-nodes[curV].x);
+        const backIdx = list.findIndex(e=>e.to===curU && Math.abs(e.angle-backAngle)<1e-6);
+        if(backIdx<0){ broken=true; break; }
+        const nextEntry = list[(backIdx+1)%list.length];
+        const nextU=curV, nextV=nextEntry.to;
+        if(nextU===u && nextV===v) break;
+        curU=nextU; curV=nextV;
+      }
+      if(broken) continue;
+      facePts.pop();
+      if(facePts.length<3) continue;
+      const area = signedAreaRaw(facePts);
+      if(area<0) faces.push({points:facePts, edgeWallIds:faceWallIds});
+    }
+  }
+  return faces;
+}
+// Two lines given as point+direction; returns their intersection, or null if
+// (near-)parallel -- callers fall back to the offset point itself, rather
+// than dividing by ~zero, when two consecutive edges run the same direction
+// (e.g. an extra vertex left over from planarizing a straight run).
+function lineIntersect(p1, d1, p2, d2){
+  const denom = d1.x*d2.y - d1.y*d2.x;
+  if(Math.abs(denom) < 1e-9) return null;
+  const t = ((p2.x-p1.x)*d2.y - (p2.y-p1.y)*d2.x)/denom;
+  return { x: p1.x + d1.x*t, y: p1.y + d1.y*t };
+}
+// A room's usable floor area is bounded by the INSIDE face of its walls, not
+// their centerlines -- reporting centerline area would overstate every
+// room by roughly half its perimeter walls' thickness, which is exactly the
+// kind of inaccuracy this whole tracing system exists to avoid. Insets each
+// edge inward by that wall's own half-thickness and intersects consecutive
+// offset lines to find the true interior corner, correctly mitering corners
+// where two different-thickness walls meet. Falls back to the plain
+// centerline polygon -- clearly flagged, not silently -- if the result
+// degenerates (a room too small for its own walls to inset without
+// self-intersecting), verified against exactly that case before use.
+function insetRoomPolygon(points, edgeWallIds){
+  const scalePxPerFt = state.scalePxPerFt||40;
+  const n = points.length;
+  const offsetLines = [];
+  for(let i=0;i<n;i++){
+    const p1=points[i], p2=points[(i+1)%n];
+    const dx=p2.x-p1.x, dy=p2.y-p1.y, len=Math.hypot(dx,dy)||1;
+    const ux=dx/len, uy=dy/len;
+    const nx=uy, ny=-ux; // inward normal for a negative-signed-area room polygon (verified)
+    const wall = edgeWallIds[i]!=null ? getElementById(edgeWallIds[i]) : null;
+    const half = ((wall && wall.thicknessFt) || 0.1)*scalePxPerFt/2;
+    offsetLines.push({ point:{x:p1.x+nx*half, y:p1.y+ny*half}, dir:{x:ux,y:uy} });
+  }
+  const insetPts = [];
+  for(let i=0;i<n;i++){
+    const prev = offsetLines[(i-1+n)%n], cur = offsetLines[i];
+    const hit = lineIntersect(prev.point, prev.dir, cur.point, cur.dir);
+    insetPts.push(hit || cur.point);
+  }
+  const originalArea = Math.abs(signedAreaRaw(points));
+  const insetArea = Math.abs(signedAreaRaw(insetPts));
+  const degenerate = originalArea<1e-6 || insetArea > originalArea || insetArea < originalArea*0.2;
+  return degenerate ? {points, degenerate:true} : {points:insetPts, degenerate:false};
+}
+
 // Traced walls: a real thickness band along the centerline (not a stroked
 // line) with automatic join extension at shared endpoints, and the
 // standard architectural "poche" convention in Black Drawing mode --
@@ -7561,6 +7795,37 @@ function drawPathElement(ctx, el, selected){
   }
 }
 
+// A room is floor fill, not a material area like a patio or lawn -- a plain,
+// soft, neutral tint (never the grass/paver/etc textures fillMaterial would
+// otherwise apply) that reads as "this is the floor" without competing with
+// the walls, furniture or the door/window symbols drawn on top of it. Black
+// Drawing mode skips the fill entirely, matching how a real black-and-white
+// floor plan leaves rooms as plain white space with just a name and area.
+function drawRoomElement(ctx, el, selected){
+  if(el.points.length<3) return;
+  if(!state.blackMode){
+    ctx.save();
+    ctx.globalAlpha *= getPopState(el).alpha;
+    ctx.beginPath();
+    ctx.moveTo(el.points[0].x, el.points[0].y);
+    for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
+    ctx.closePath();
+    ctx.fillStyle = el.color || ROOM_FILL_COLOR;
+    ctx.fill();
+    ctx.restore();
+  }
+  drawElementLabel(ctx, el, state.blackMode ? BW_INK : '#E7ECF2', selected);
+  if(selected){
+    ctx.save();
+    ctx.shadowColor = 'rgba(181,147,76,0.55)';
+    ctx.shadowBlur = 10/Math.max(state.zoom, 0.01);
+    ctx.setLineDash([6,4]);
+    ctx.strokeStyle = '#B5934C';
+    ctx.lineWidth = 1.5;
+    strokePolyline(ctx, el.points, true);
+    ctx.restore();
+  }
+}
 function drawPolygonElement(ctx, el, selected){
   if(el.points.length<3) return;
   ctx.save();
@@ -8313,6 +8578,41 @@ function renderElementsList(){
         info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
         dims.appendChild(info);
       }
+    } else if(el.isRoom){
+      const typeSel = document.createElement('select');
+      typeSel.title = 'Room type';
+      ROOM_TYPES.forEach(t=>{
+        const opt = document.createElement('option'); opt.value=t.key; opt.textContent=t.label;
+        typeSel.appendChild(opt);
+      });
+      typeSel.value = el.roomType||'other';
+      typeSel.addEventListener('click', e=>e.stopPropagation());
+      typeSel.addEventListener('change', ()=>{
+        pushUndo();
+        // Only auto-rename if the current name still looks like whatever
+        // default was assigned before -- a name the user actually typed
+        // themselves is never touched by changing the type afterward.
+        const stillDefault = /^Room( \d+)?$/.test(el.label) ||
+          ROOM_TYPES.some(t=>new RegExp('^'+t.label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'( \\d+)?$').test(el.label));
+        el.roomType = typeSel.value;
+        if(stillDefault){
+          const newType = ROOM_TYPES.find(t=>t.key===typeSel.value);
+          el.label = uniqueLabel(newType.label);
+        }
+        renderElementsList(); drawOverlay();
+      });
+      dims.appendChild(typeSel);
+      const info = document.createElement('span');
+      info.style.marginLeft='4px'; info.style.color='var(--ink-dim)';
+      info.textContent = formatNum(netAreaDisplay(el))+' sq '+unitAbbrev()+' (interior)';
+      dims.appendChild(info);
+      if(el.insetDegenerate){
+        const warn = document.createElement('span');
+        warn.style.marginLeft='4px'; warn.style.color='#D98A3D'; warn.style.fontSize='11px';
+        warn.title = 'This room is too small relative to its own wall thickness for an exact interior inset -- showing the centerline area instead, which slightly overstates it.';
+        warn.textContent = '(approx.)';
+        dims.appendChild(warn);
+      }
     } else if(el.shape==='polygon'){
       const info = document.createElement('span');
       info.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
@@ -8588,6 +8888,74 @@ function renderElementsList(){
   focusSidebarRow(state.selectedId);
 }
 
+// Re-running detection must never blow away naming/typing work already done
+// on a room that still exists -- match each newly-traced loop against
+// existing room elements by centroid containment (either direction, so a
+// room that grew or shrank a little from further wall edits still matches),
+// and only touch that room's geometry, keeping its label and type exactly as
+// the user set them. Only genuinely new enclosed regions get a fresh,
+// auto-numbered room; a room that no longer corresponds to any enclosed
+// region (its bounding walls opened up) is removed rather than left behind
+// as a stale shape no longer backed by real walls.
+detectRoomsBtn.addEventListener('click', ()=>{
+  const loops = findClosedRoomLoops();
+  const existingRooms = currentPageElements().filter(e=>e.isRoom);
+  if(!loops.length){
+    detectRoomsStatus.style.display = 'block';
+    detectRoomsStatus.textContent = existingRooms.length
+      ? 'No closed wall loops found -- check the walls are still fully joined (existing rooms left untouched).'
+      : 'No closed wall loops found yet -- trace a complete wall boundary first.';
+    if(!existingRooms.length) return;
+  }
+  pushUndo();
+  const matchedExistingIds = new Set();
+  let updatedCount = 0, createdCount = 0;
+  const newRoomElements = [];
+  loops.forEach(loop=>{
+    const inset = insetRoomPolygon(loop.points, loop.edgeWallIds);
+    const centroid = polygonCentroid(inset.points);
+    const match = existingRooms.find(r=>{
+      if(matchedExistingIds.has(r.id)) return false;
+      const rc = polygonCentroid(r.points);
+      return pointInPolygon(rc.x, rc.y, inset.points) || pointInPolygon(centroid.x, centroid.y, r.points);
+    });
+    const boundingWallIds = [...new Set(loop.edgeWallIds.filter(x=>x!=null))];
+    if(match){
+      matchedExistingIds.add(match.id);
+      match.points = inset.points;
+      match.centerlinePoints = loop.points;
+      match.boundingWallIds = boundingWallIds;
+      match.insetDegenerate = inset.degenerate;
+      updatedCount++;
+    } else {
+      newRoomElements.push({
+        id: state.nextId++, page: state.currentPage, shape:'polygon', isRoom:true, presetKey:'room',
+        roomType:'other', label: uniqueLabel('Room'), color: ROOM_FILL_COLOR,
+        points: inset.points, centerlinePoints: loop.points, boundingWallIds,
+        insetDegenerate: inset.degenerate,
+        unitCost:0, priceMode:'rate', fixedCost:0, isCutout:false, parentId:null,
+        _bornAt: performance.now(),
+      });
+      createdCount++;
+    }
+  });
+  const staleRooms = existingRooms.filter(r=>!matchedExistingIds.has(r.id));
+  if(staleRooms.length){
+    const staleIds = new Set(staleRooms.map(r=>r.id));
+    state.elements = state.elements.filter(e=>!staleIds.has(e.id));
+    if(staleIds.has(state.selectedId)) state.selectedId = null;
+  }
+  newRoomElements.forEach(el=>state.elements.push(el));
+
+  const parts = [];
+  if(createdCount) parts.push(createdCount+' new room'+(createdCount===1?'':'s')+' detected');
+  if(updatedCount) parts.push(updatedCount+' existing room'+(updatedCount===1?'':'s')+' updated');
+  if(staleRooms.length) parts.push(staleRooms.length+' room'+(staleRooms.length===1?'':'s')+' removed (no longer enclosed)');
+  detectRoomsStatus.style.display = 'block';
+  detectRoomsStatus.textContent = (parts.join(', ')||'No change.')+'.';
+  renderElementsList();
+  drawOverlay();
+});
 autoArrangeBtn.addEventListener('click', ()=>{
   const roomEl = getElementById(state.selectedId);
   if(!isValidRoomEl(roomEl)) return;
