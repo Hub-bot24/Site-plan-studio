@@ -794,6 +794,10 @@
           <label>Diameter (<span class="unit-label">m</span>)</label>
           <input type="number" id="diameterInput" step="0.1" placeholder="6">
         </div>
+        <div class="checkfield" id="poolStepToggleWrap" style="display:none;">
+          <input type="checkbox" id="poolStepToggleInput">
+          <label for="poolStepToggleInput">Add a step — cuts a rectangular notch into one edge, sized separately below</label>
+        </div>
         <div id="poolStepFields" class="row2" style="display:none;">
           <div class="field">
             <label>Step width (<span class="unit-label">m</span>)</label>
@@ -1085,17 +1089,24 @@ const PRESETS = {
   turf:      {label:'Artificial turf', color:'#4F8F52', texture:'turf',     quick:'rect'},
   gardenbed: {label:'Garden bed',      color:'#5A4A38', texture:'mulch',    quick:'rect'},
   hedge:     {label:'Hedge',           color:'#4A7A3E', texture:null,       quick:'none'},
-  pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect'},
-  // A step/entry ledge cut into one edge -- same water texture and
-  // rectangular-footprint form as a plain Pool, but hasStep:true diverts its
-  // creation (see addElBtn's click handler) into a compound polygon instead
-  // of a bare rect: the outer pool rectangle with a smaller rectangular
-  // notch bitten out of the middle of its "top" edge for the step. Built as
-  // shape:'polygon' -- the exact same kind of element a hand-traced Custom
-  // area or a detected Room already is -- so 2D fill, 3D extrusion, area,
-  // labeling, duplicate/paste and click-selection all come for free from
-  // that existing generic polygon machinery; no rotate handle, matching how
-  // every other traced-area preset (Pool included) already has none.
+  // canHaveStep:true offers the Add panel's "Add a step" checkbox (see
+  // addElBtn's click handler) -- checking it diverts creation into a
+  // compound polygon instead of a bare rect: the outer pool rectangle with
+  // a smaller rectangular notch bitten out of the middle of its "top" edge
+  // for the step. Built as shape:'polygon' -- the exact same kind of
+  // element a hand-traced Custom area or a detected Room already is -- so
+  // 2D fill, 3D extrusion, area, labeling, duplicate/paste and
+  // click-selection all come for free from that existing generic polygon
+  // machinery; no rotate handle once a step is added, since this shape
+  // doesn't support one (same as every other traced-area preset).
+  pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect', canHaveStep:true},
+  // Pool-with-step used to be its own separate preset, picked from the Type
+  // list alongside plain Pool -- confusing (two near-identical entries) and
+  // easy to pick the wrong one. Replaced by the canHaveStep checkbox above,
+  // one "Pool" entry point either way. No longer offered in TYPE_GROUPS, so
+  // it's unreachable from the UI, but kept defined so a plan someone already
+  // saved with a pool_step element from that earlier version still loads
+  // and renders correctly.
   pool_step: {label:'Pool with step', color:'#4A7A9B', texture:'water', quick:'rect', hasStep:true},
   tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
   custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
@@ -1440,6 +1451,8 @@ const widthInput = document.getElementById('widthInput');
 const heightInput = document.getElementById('heightInput');
 const heightFieldLabel = document.getElementById('heightFieldLabel');
 const diameterInput = document.getElementById('diameterInput');
+const poolStepToggleWrap = document.getElementById('poolStepToggleWrap');
+const poolStepToggleInput = document.getElementById('poolStepToggleInput');
 const poolStepFields = document.getElementById('poolStepFields');
 const stepWidthInput = document.getElementById('stepWidthInput');
 const stepDepthInput = document.getElementById('stepDepthInput');
@@ -3174,7 +3187,7 @@ function updateUnitLabels(){
 const TYPE_GROUPS = [
   {label:'Walls (trace mode)', keys:['wall_interior','wall_exterior']},
   {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','window_standard','opening_large']},
-  {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','pool_step','tree','custom']},
+  {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','tree','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
   {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom']},
@@ -3315,13 +3328,15 @@ function updateAddFieldsForType(){
   colorInput.value = preset.color;
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
-  poolStepFields.style.display = preset.hasStep ? 'flex' : 'none';
-  // A pool-with-step is built as a fixed compound polygon (see addElBtn's
-  // click handler) -- rotating it would need to be baked into how its
-  // points are generated, which this preset doesn't do (matching every
-  // other traced-area preset, which has no rotate handle either), so hide a
-  // control that would otherwise silently do nothing.
-  addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') && !preset.hasStep ? 'block' : 'none';
+  poolStepToggleWrap.style.display = preset.canHaveStep ? 'flex' : 'none';
+  const stepOn = !!(preset.canHaveStep && poolStepToggleInput.checked);
+  poolStepFields.style.display = stepOn ? 'flex' : 'none';
+  // A pool WITH a step added is built as a fixed compound polygon (see
+  // addElBtn's click handler) -- rotating it would need to be baked into
+  // how its points are generated, which this shape doesn't do (matching
+  // every other traced-area preset, which has no rotate handle either), so
+  // hide a control that would otherwise silently do nothing.
+  addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') && !stepOn ? 'block' : 'none';
   heightFieldLabel.firstChild.textContent = preset.isVehicle ? 'Length (' : 'Height (';
   addElBtn.style.display = (isFence || isOpening) ? 'none' : '';
   pathFields.style.display = isOpening ? 'none' : 'block';
@@ -3358,7 +3373,7 @@ function updateAddFieldsForType(){
   // Jobs like a pool or a roof are usually quoted as one flat number, not
   // $/area -- default the toggle accordingly, but it's still just a toggle,
   // not locked to those types.
-  fixedPriceInput.checked = typeSelect.value==='pool' || typeSelect.value==='pool_step' || typeSelect.value.indexOf('roof_')===0;
+  fixedPriceInput.checked = typeSelect.value==='pool' || typeSelect.value.indexOf('roof_')===0;
   updateCostFieldMode();
   updateTypePreview();
 }
@@ -3387,6 +3402,7 @@ function updateCostFieldMode(){
 }
 fixedPriceInput.addEventListener('change', updateCostFieldMode);
 typeSelect.addEventListener('change', updateAddFieldsForType);
+poolStepToggleInput.addEventListener('change', updateAddFieldsForType);
 updateAddFieldsForType();
 
 /* ============================ Linked cutouts (boolean subtract) ============================ */
@@ -8709,10 +8725,11 @@ addElBtn.addEventListener('click', ()=>{
   if(preset.quick!=='rect' && preset.quick!=='circle') return;
   const typedLabel = labelInput.value.trim();
   const label = typedLabel || uniqueLabel(preset.label);
+  const stepOn = !!(preset.canHaveStep && poolStepToggleInput.checked);
   const el = {
     id: state.nextId++,
     page: state.currentPage,
-    shape: preset.hasStep ? 'polygon' : preset.quick,
+    shape: stepOn ? 'polygon' : preset.quick,
     presetKey: typeSelect.value,
     label,
     color: colorInput.value || preset.color,
@@ -8724,7 +8741,7 @@ addElBtn.addEventListener('click', ()=>{
     parentId: (cutoutInput.checked && cutoutParentSelect.value) ? parseInt(cutoutParentSelect.value,10) : null,
   };
   const {x:cx, y:cy} = currentAddTargetPx();
-  if(preset.hasStep){
+  if(stepOn){
     const w = parseFloat(widthInput.value), h = parseFloat(heightInput.value);
     if(!w || !h || w<=0 || h<=0){ widthInput.focus(); return; }
     const stepW = parseFloat(stepWidthInput.value);
@@ -8751,6 +8768,8 @@ addElBtn.addEventListener('click', ()=>{
   labelInput.value='';
   widthInput.value=''; heightInput.value=''; diameterInput.value=''; costInput.value=''; addRotationInput.value='';
   stepWidthInput.value=''; stepDepthInput.value='';
+  poolStepToggleInput.checked=false;
+  updateAddFieldsForType(); // re-syncs poolStepFields/addRotationFieldWrap now that the step toggle above was just reset
   cutoutInput.checked=false;
   cutoutParentWrap.style.display='none';
   renderElementsList();
