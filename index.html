@@ -796,7 +796,14 @@
         </div>
         <div class="checkfield" id="poolStepToggleWrap" style="display:none;">
           <input type="checkbox" id="poolStepToggleInput">
-          <label for="poolStepToggleInput">Add a step — cuts a rectangular notch into one edge, sized separately below</label>
+          <label for="poolStepToggleInput">Add a step — sized separately below</label>
+        </div>
+        <div class="field" id="poolStepDirectionWrap" style="display:none;">
+          <label>Step direction</label>
+          <select id="poolStepDirectionSelect">
+            <option value="out" selected>Outward — a ledge added onto one edge (most pools)</option>
+            <option value="in">Inward — a notch cut into one edge</option>
+          </select>
         </div>
         <div id="poolStepFields" class="row2" style="display:none;">
           <div class="field">
@@ -1092,13 +1099,16 @@ const PRESETS = {
   // canHaveStep:true offers the Add panel's "Add a step" checkbox (see
   // addElBtn's click handler) -- checking it diverts creation into a
   // compound polygon instead of a bare rect: the outer pool rectangle with
-  // a smaller rectangular notch bitten out of the middle of its "top" edge
-  // for the step. Built as shape:'polygon' -- the exact same kind of
-  // element a hand-traced Custom area or a detected Room already is -- so
-  // 2D fill, 3D extrusion, area, labeling, duplicate/paste and
-  // click-selection all come for free from that existing generic polygon
-  // machinery; no rotate handle once a step is added, since this shape
-  // doesn't support one (same as every other traced-area preset).
+  // a step attached to the middle of its "top" edge, either as an OUTWARD
+  // ledge (the default -- a real extra ledge/sun-shelf area, added onto the
+  // pool's own outline, most pools actually have this) or an INWARD notch
+  // (a recessed step cut into the pool instead). Built as shape:'polygon'
+  // -- the exact same kind of element a hand-traced Custom area or a
+  // detected Room already is -- so 2D fill, 3D extrusion, area, labeling,
+  // duplicate/paste and click-selection all come for free from that
+  // existing generic polygon machinery; no rotate handle once a step is
+  // added, since this shape doesn't support one (same as every other
+  // traced-area preset).
   pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect', canHaveStep:true},
   // Pool-with-step used to be its own separate preset, picked from the Type
   // list alongside plain Pool -- confusing (two near-identical entries) and
@@ -1453,6 +1463,8 @@ const heightFieldLabel = document.getElementById('heightFieldLabel');
 const diameterInput = document.getElementById('diameterInput');
 const poolStepToggleWrap = document.getElementById('poolStepToggleWrap');
 const poolStepToggleInput = document.getElementById('poolStepToggleInput');
+const poolStepDirectionWrap = document.getElementById('poolStepDirectionWrap');
+const poolStepDirectionSelect = document.getElementById('poolStepDirectionSelect');
 const poolStepFields = document.getElementById('poolStepFields');
 const stepWidthInput = document.getElementById('stepWidthInput');
 const stepDepthInput = document.getElementById('stepDepthInput');
@@ -3330,6 +3342,7 @@ function updateAddFieldsForType(){
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
   poolStepToggleWrap.style.display = preset.canHaveStep ? 'flex' : 'none';
   const stepOn = !!(preset.canHaveStep && poolStepToggleInput.checked);
+  poolStepDirectionWrap.style.display = stepOn ? 'block' : 'none';
   poolStepFields.style.display = stepOn ? 'flex' : 'none';
   // A pool WITH a step added is built as a fixed compound polygon (see
   // addElBtn's click handler) -- rotating it would need to be baked into
@@ -8700,23 +8713,31 @@ function uniqueLabel(base){
   }
   return label;
 }
-// Absolute canvas-point outline (in PX) for a rectangular pool with a
-// smaller rectangular step notch bitten out of the middle of its "top" edge
-// (in its own unrotated frame -- this preset has no rotate handle, same as
-// every other traced-area preset). Traces: top-left corner -> along the top
-// edge to the notch's left side -> down into the notch -> across its
-// bottom -> back up out of it -> on along the top edge -> the remaining 3
-// corners. stepW/stepD are clamped so the notch can never consume the
-// whole pool, however the fields are filled in.
-function poolWithStepPoints(cx, cy, wFt, hFt, stepWFt, stepDFt, scalePxPerFt){
+// Absolute canvas-point outline (in PX) for a rectangular pool with a step
+// attached to the middle of its "top" edge (in its own unrotated frame --
+// this preset has no rotate handle, same as every other traced-area
+// preset), either as a ledge added OUTWARD (the real usable step/sun-shelf
+// area most pools actually have -- included in the pool's own outline, so
+// it gets the same water fill and counts toward the pool's own area) or as
+// a notch cut INWARD (the original, less common "recessed step" style).
+// Both are the same 8-point trace -- top-left corner -> along the top edge
+// to the step's left side -> out/in to the step's own far edge -> across it
+// -> back to the top edge -> on to the remaining 3 corners -- just with the
+// step's own far edge on the opposite side of the top edge. stepW is
+// clamped so it can never reach the pool's own left/right corners (would
+// self-intersect the outline); stepD is only clamped for the inward case,
+// where it could otherwise consume the whole pool -- an outward ledge has
+// no such limit, it's just extra area sitting outside the main rectangle.
+function poolWithStepPoints(cx, cy, wFt, hFt, stepWFt, stepDFt, scalePxPerFt, direction){
   const wPx = wFt*scalePxPerFt, hPx = hFt*scalePxPerFt;
   const stepWPx = Math.min(stepWFt*scalePxPerFt, wPx*0.9);
-  const stepDPx = Math.min(stepDFt*scalePxPerFt, hPx*0.9);
+  const stepDPx = direction==='in' ? Math.min(stepDFt*scalePxPerFt, hPx*0.9) : stepDFt*scalePxPerFt;
   const left = cx-wPx/2, right = cx+wPx/2, top = cy-hPx/2, bottom = cy+hPx/2;
-  const notchLeft = cx-stepWPx/2, notchRight = cx+stepWPx/2, notchBottom = top+stepDPx;
+  const notchLeft = cx-stepWPx/2, notchRight = cx+stepWPx/2;
+  const stepFarY = direction==='in' ? top+stepDPx : top-stepDPx;
   return [
-    {x:left, y:top}, {x:notchLeft, y:top}, {x:notchLeft, y:notchBottom},
-    {x:notchRight, y:notchBottom}, {x:notchRight, y:top},
+    {x:left, y:top}, {x:notchLeft, y:top}, {x:notchLeft, y:stepFarY},
+    {x:notchRight, y:stepFarY}, {x:notchRight, y:top},
     {x:right, y:top}, {x:right, y:bottom}, {x:left, y:bottom},
   ];
 }
@@ -8748,7 +8769,7 @@ addElBtn.addEventListener('click', ()=>{
     if(!stepW || stepW<=0){ stepWidthInput.focus(); return; }
     const stepD = parseFloat(stepDepthInput.value);
     if(!stepD || stepD<=0){ stepDepthInput.focus(); return; }
-    el.points = poolWithStepPoints(cx, cy, toFt(w,state.unit), toFt(h,state.unit), toFt(stepW,state.unit), toFt(stepD,state.unit), state.scalePxPerFt);
+    el.points = poolWithStepPoints(cx, cy, toFt(w,state.unit), toFt(h,state.unit), toFt(stepW,state.unit), toFt(stepD,state.unit), state.scalePxPerFt, poolStepDirectionSelect.value);
   } else if(preset.quick==='rect'){
     const w = parseFloat(widthInput.value), h = parseFloat(heightInput.value);
     if(!w || !h || w<=0 || h<=0){ widthInput.focus(); return; }
@@ -8769,6 +8790,7 @@ addElBtn.addEventListener('click', ()=>{
   widthInput.value=''; heightInput.value=''; diameterInput.value=''; costInput.value=''; addRotationInput.value='';
   stepWidthInput.value=''; stepDepthInput.value='';
   poolStepToggleInput.checked=false;
+  poolStepDirectionSelect.value='out';
   updateAddFieldsForType(); // re-syncs poolStepFields/addRotationFieldWrap now that the step toggle above was just reset
   cutoutInput.checked=false;
   cutoutParentWrap.style.display='none';
