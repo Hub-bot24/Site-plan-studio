@@ -3390,6 +3390,25 @@ typeSelect.addEventListener('change', updateAddFieldsForType);
 updateAddFieldsForType();
 
 /* ============================ Linked cutouts (boolean subtract) ============================ */
+// Best-effort auto-detect for the cutout parent dropdown -- the common case
+// (a pool traced inside an existing paved patio, say) already has a real
+// geometric answer sitting right there: whichever OTHER element's own
+// outline actually contains this point, picking the smallest (most
+// specific) one if more than one does, so a garden bed inside a lawn wins
+// over the lawn itself. Reuses elementToPolygonPoints so it works for a
+// plain rect/circle parent exactly as well as a polygon one -- no separate
+// shape-specific containment test needed.
+function findCutoutParentAt(pxX, pxY, excludeId){
+  let best = null, bestArea = Infinity;
+  currentPageElements().forEach(el=>{
+    if(el.isCutout || el.isDimension || el.shape==='image' || el.id===excludeId) return;
+    const poly = elementToPolygonPoints(el);
+    if(poly.length<3 || !pointInPolygon(pxX, pxY, poly)) return;
+    const area = polygonAreaPx(poly);
+    if(area < bestArea){ bestArea = area; best = el; }
+  });
+  return best;
+}
 function populateParentSelect(selectEl, currentValue, excludeId){
   const prev = currentValue!=null ? String(currentValue) : selectEl.value;
   selectEl.innerHTML = '';
@@ -3405,9 +3424,31 @@ function populateParentSelect(selectEl, currentValue, excludeId){
   });
   selectEl.value = prev && [...selectEl.options].some(o=>o.value===prev) ? prev : '';
 }
+// Where a quick-add rect/circle/pool-with-step element lands: the centre of
+// whatever's currently in view. Shared between the cutout auto-detect
+// preview below and addElBtn's own placement so they can never drift apart
+// -- what you see suggested in the dropdown is exactly where it'll land.
+function currentAddTargetPx(){
+  const cssX = canvasScroll.scrollLeft + canvasScroll.clientWidth/2 - 20;
+  const cssY = canvasScroll.scrollTop + canvasScroll.clientHeight/2 - 20;
+  return {
+    x: Math.min(Math.max(cssX / state.zoom, 0), overlayCanvas.width),
+    y: Math.min(Math.max(cssY / state.zoom, 0), overlayCanvas.height),
+  };
+}
 cutoutInput.addEventListener('change', ()=>{
   cutoutParentWrap.style.display = cutoutInput.checked ? 'block' : 'none';
-  if(cutoutInput.checked) populateParentSelect(cutoutParentSelect);
+  if(cutoutInput.checked){
+    // The common case this checkbox's own label calls out -- "a pool inside
+    // a tiled patio" -- already has a real geometric answer: whichever
+    // existing element the new one is about to land inside of. Default
+    // straight to that instead of the generic whole-plan total, so there's
+    // nothing to hunt for in a potentially long list; still fully editable
+    // right below.
+    const target = currentAddTargetPx();
+    const detected = findCutoutParentAt(target.x, target.y, null);
+    populateParentSelect(cutoutParentSelect, detected ? detected.id : null);
+  }
 });
 
 /* ============================ Unit toggle ============================ */
@@ -8682,10 +8723,7 @@ addElBtn.addEventListener('click', ()=>{
     isCutout: cutoutInput.checked,
     parentId: (cutoutInput.checked && cutoutParentSelect.value) ? parseInt(cutoutParentSelect.value,10) : null,
   };
-  const cssX = canvasScroll.scrollLeft + canvasScroll.clientWidth/2 - 20;
-  const cssY = canvasScroll.scrollTop + canvasScroll.clientHeight/2 - 20;
-  const cx = Math.min(Math.max(cssX / state.zoom, 0), overlayCanvas.width);
-  const cy = Math.min(Math.max(cssY / state.zoom, 0), overlayCanvas.height);
+  const {x:cx, y:cy} = currentAddTargetPx();
   if(preset.hasStep){
     const w = parseFloat(widthInput.value), h = parseFloat(heightInput.value);
     if(!w || !h || w<=0 || h<=0){ widthInput.focus(); return; }
@@ -8920,7 +8958,21 @@ function renderElementsList(){
       cutChk.addEventListener('change', ()=>{
         pushUndo();
         el.isCutout = cutChk.checked;
-        if(!el.isCutout) el.parentId = null;
+        if(!el.isCutout){
+          el.parentId = null;
+        } else if(el.parentId==null){
+          // Same auto-detect the Add panel's own cutout checkbox uses, but
+          // against this element's REAL placed position rather than a
+          // guessed drop point -- and written straight into el.parentId
+          // (a real, persisted choice, exactly as if picked by hand) rather
+          // than just pre-selected in the dropdown, since this whole block
+          // only ever runs once, right as the box is checked -- re-running
+          // it on every later render would silently overrule a deliberate
+          // "Whole plan total" pick back to the guess.
+          const anchor = elementLabelAnchor(el);
+          const detected = findCutoutParentAt(anchor.x, anchor.y, el.id);
+          if(detected) el.parentId = detected.id;
+        }
         drawOverlay(); renderElementsList();
       });
       cutLabel.appendChild(cutChk);
