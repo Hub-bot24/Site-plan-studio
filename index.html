@@ -9302,6 +9302,48 @@ function renderElementsList(){
       const info = document.createElement('span');
       info.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
       dims.appendChild(info);
+      // A hand-traced shape (a "Custom area", or any other preset traced
+      // instead of quick-added) that comes out square/rectangular gets the
+      // exact same W/H numeric editing a quick-add rect already has, not
+      // just imprecise point-dragging. Reuses roomOutlineRect -- already
+      // built for exactly this "read a rectangular polygon's effective
+      // xPx/yPx/wFt/hFt/rotationDeg" job for room auto-arrange -- to read
+      // the current size, and elementToPolygonPoints' own rect-corner
+      // formula to regenerate the 4 points around the same centre and
+      // orientation once either changes. Rooms are excluded -- their shape
+      // comes from the walls that bound them, not something to resize
+      // independently of those walls.
+      if(!el.isRoom && isRectangularPolygon(el.points)){
+        const isVeh = PRESETS[el.presetKey] && PRESETS[el.presetKey].isVehicle;
+        const makeSizeInput = (title, readFt, applyFt) => {
+          const inp = document.createElement('input'); inp.type='number'; inp.step='0.1';
+          inp.title = title+' -- this traced shape is rectangular enough to edit precisely as one';
+          inp.value = formatNum(fromFt(readFt(roomOutlineRect(el)), state.unit));
+          inp.addEventListener('click', e=>e.stopPropagation());
+          inp.addEventListener('change', ()=>{
+            const v = parseFloat(inp.value);
+            const o = roomOutlineRect(el); // re-read fresh, in case a sibling W/H edit already changed el.points
+            if(v>0){
+              pushUndo();
+              el.points = elementToPolygonPoints(applyFt(o, toFt(v, state.unit)));
+              drawOverlay(); renderElementsList();
+            } else {
+              inp.value = formatNum(fromFt(readFt(o), state.unit));
+            }
+          });
+          return inp;
+        };
+        const wIn2 = makeSizeInput('Width', o=>o.wFt, (o,v)=>({shape:'rect', xPx:o.xPx, yPx:o.yPx, wFt:v, hFt:o.hFt, rotationDeg:o.rotationDeg}));
+        const hIn2 = makeSizeInput('Height', o=>o.hFt, (o,v)=>({shape:'rect', xPx:o.xPx, yPx:o.yPx, wFt:o.wFt, hFt:v, rotationDeg:o.rotationDeg}));
+        if(isVeh){
+          dims.appendChild(document.createTextNode('L')); dims.appendChild(hIn2);
+          dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn2);
+        } else {
+          dims.appendChild(document.createTextNode('W')); dims.appendChild(wIn2);
+          dims.appendChild(document.createTextNode('H')); dims.appendChild(hIn2);
+        }
+        dims.appendChild(document.createTextNode(unitAbbrev()));
+      }
       appendCutoutControls(dims, el);
     } else if(el.shape==='image'){
       const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
