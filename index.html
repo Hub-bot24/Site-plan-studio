@@ -456,6 +456,12 @@
     display:flex;justify-content:space-between;font-family:'Space Mono',monospace;
     font-size:13px;border-top:1px solid var(--line);padding-top:8px;margin-top:4px;
   }
+  .linkbtn{
+    background:none;border:none;padding:0;margin:0;font-family:'Space Mono',monospace;
+    font-size:11px;color:var(--accent);cursor:pointer;text-decoration:underline;text-underline-offset:2px;
+  }
+  .linkbtn:hover:not(:disabled){opacity:0.8;}
+  .linkbtn:disabled{color:var(--ink-dim);text-decoration:none;cursor:not-allowed;opacity:0.6;}
   .pagerow{display:flex;align-items:center;gap:8px;margin-top:6px;}
   .pagerow input{width:50px;text-align:center;}
   .mat-summary-row{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12px;}
@@ -788,6 +794,16 @@
           <label>Diameter (<span class="unit-label">m</span>)</label>
           <input type="number" id="diameterInput" step="0.1" placeholder="6">
         </div>
+        <div id="poolStepFields" class="row2" style="display:none;">
+          <div class="field">
+            <label>Step width (<span class="unit-label">m</span>)</label>
+            <input type="number" id="stepWidthInput" step="0.1" placeholder="2">
+          </div>
+          <div class="field">
+            <label>Step depth (<span class="unit-label">m</span>)</label>
+            <input type="number" id="stepDepthInput" step="0.1" placeholder="0.5">
+          </div>
+        </div>
         <div class="field" id="addRotationFieldWrap">
           <label>Rotation (°) — optional</label>
           <input type="number" id="addRotationInput" step="1" min="0" max="359" placeholder="0">
@@ -895,7 +911,11 @@
         </div>
         <div class="totalline" id="verifySummaryRow" style="display:none;">
           <span>DIMENSION VERIFICATION</span>
-          <span id="verifySummary">0 checked</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <span id="verifySummary">0 checked</span>
+            <button type="button" id="verifyCheckAllBtn" class="linkbtn" title="Mark every dimension/wall on this page that has a plan length as checked">Check all</button>
+            <button type="button" id="verifyUncheckAllBtn" class="linkbtn" title="Clear the checked mark from every dimension/wall on this page">Uncheck all</button>
+          </span>
         </div>
       </div>
 
@@ -1066,6 +1086,17 @@ const PRESETS = {
   gardenbed: {label:'Garden bed',      color:'#5A4A38', texture:'mulch',    quick:'rect'},
   hedge:     {label:'Hedge',           color:'#4A7A3E', texture:null,       quick:'none'},
   pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect'},
+  // A step/entry ledge cut into one edge -- same water texture and
+  // rectangular-footprint form as a plain Pool, but hasStep:true diverts its
+  // creation (see addElBtn's click handler) into a compound polygon instead
+  // of a bare rect: the outer pool rectangle with a smaller rectangular
+  // notch bitten out of the middle of its "top" edge for the step. Built as
+  // shape:'polygon' -- the exact same kind of element a hand-traced Custom
+  // area or a detected Room already is -- so 2D fill, 3D extrusion, area,
+  // labeling, duplicate/paste and click-selection all come for free from
+  // that existing generic polygon machinery; no rotate handle, matching how
+  // every other traced-area preset (Pool included) already has none.
+  pool_step: {label:'Pool with step', color:'#4A7A9B', texture:'water', quick:'rect', hasStep:true},
   tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
   custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
   roof_tile:    {label:'Roof — Terracotta tile',   color:'#A15A34', texture:'tile',    quick:'rect'},
@@ -1409,6 +1440,9 @@ const widthInput = document.getElementById('widthInput');
 const heightInput = document.getElementById('heightInput');
 const heightFieldLabel = document.getElementById('heightFieldLabel');
 const diameterInput = document.getElementById('diameterInput');
+const poolStepFields = document.getElementById('poolStepFields');
+const stepWidthInput = document.getElementById('stepWidthInput');
+const stepDepthInput = document.getElementById('stepDepthInput');
 const addElBtn = document.getElementById('addElBtn');
 const pathFields = document.getElementById('pathFields');
 const freeformDivider = document.getElementById('freeformDivider');
@@ -1464,6 +1498,28 @@ const totalCostRow = document.getElementById('totalCostRow');
 const totalCost = document.getElementById('totalCost');
 const verifySummaryRow = document.getElementById('verifySummaryRow');
 const verifySummary = document.getElementById('verifySummary');
+const verifyCheckAllBtn = document.getElementById('verifyCheckAllBtn');
+const verifyUncheckAllBtn = document.getElementById('verifyUncheckAllBtn');
+// Bulk-toggles every dimension/wall on the CURRENT PAGE that has a plan
+// length to check against -- the exact same set verifySummary's own "X/Y
+// checked" count is drawn from, so clicking this only ever touches what the
+// count right next to it is showing, never something on another page. One
+// pushUndo for the whole bulk change, not one per element -- reverting a
+// "check all" should be a single undo, not forty.
+verifyCheckAllBtn.addEventListener('click', ()=>{
+  const verifiable = verifiableElements();
+  if(!verifiable.length) return;
+  pushUndo();
+  verifiable.forEach(e=>{ e.verified = true; });
+  renderElementsList(); drawOverlay();
+});
+verifyUncheckAllBtn.addEventListener('click', ()=>{
+  const verifiable = verifiableElements();
+  if(!verifiable.length) return;
+  pushUndo();
+  verifiable.forEach(e=>{ e.verified = false; });
+  renderElementsList(); drawOverlay();
+});
 
 const titleBlockPanel = document.getElementById('titleBlockPanel');
 const projectNameInput = document.getElementById('projectNameInput');
@@ -3118,7 +3174,7 @@ function updateUnitLabels(){
 const TYPE_GROUPS = [
   {label:'Walls (trace mode)', keys:['wall_interior','wall_exterior']},
   {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','window_standard','opening_large']},
-  {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','tree','custom']},
+  {label:'Site & landscaping', keys:['deck','patio','concrete','gravel','lawn','turf','gardenbed','hedge','pool','pool_step','tree','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
   {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom']},
@@ -3259,7 +3315,13 @@ function updateAddFieldsForType(){
   colorInput.value = preset.color;
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
   circleFields.style.display = preset.quick==='circle' ? 'block' : 'none';
-  addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') ? 'block' : 'none';
+  poolStepFields.style.display = preset.hasStep ? 'flex' : 'none';
+  // A pool-with-step is built as a fixed compound polygon (see addElBtn's
+  // click handler) -- rotating it would need to be baked into how its
+  // points are generated, which this preset doesn't do (matching every
+  // other traced-area preset, which has no rotate handle either), so hide a
+  // control that would otherwise silently do nothing.
+  addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') && !preset.hasStep ? 'block' : 'none';
   heightFieldLabel.firstChild.textContent = preset.isVehicle ? 'Length (' : 'Height (';
   addElBtn.style.display = (isFence || isOpening) ? 'none' : '';
   pathFields.style.display = isOpening ? 'none' : 'block';
@@ -3296,7 +3358,7 @@ function updateAddFieldsForType(){
   // Jobs like a pool or a roof are usually quoted as one flat number, not
   // $/area -- default the toggle accordingly, but it's still just a toggle,
   // not locked to those types.
-  fixedPriceInput.checked = typeSelect.value==='pool' || typeSelect.value.indexOf('roof_')===0;
+  fixedPriceInput.checked = typeSelect.value==='pool' || typeSelect.value==='pool_step' || typeSelect.value.indexOf('roof_')===0;
   updateCostFieldMode();
   updateTypePreview();
 }
@@ -3328,6 +3390,25 @@ typeSelect.addEventListener('change', updateAddFieldsForType);
 updateAddFieldsForType();
 
 /* ============================ Linked cutouts (boolean subtract) ============================ */
+// Best-effort auto-detect for the cutout parent dropdown -- the common case
+// (a pool traced inside an existing paved patio, say) already has a real
+// geometric answer sitting right there: whichever OTHER element's own
+// outline actually contains this point, picking the smallest (most
+// specific) one if more than one does, so a garden bed inside a lawn wins
+// over the lawn itself. Reuses elementToPolygonPoints so it works for a
+// plain rect/circle parent exactly as well as a polygon one -- no separate
+// shape-specific containment test needed.
+function findCutoutParentAt(pxX, pxY, excludeId){
+  let best = null, bestArea = Infinity;
+  currentPageElements().forEach(el=>{
+    if(el.isCutout || el.isDimension || el.shape==='image' || el.id===excludeId) return;
+    const poly = elementToPolygonPoints(el);
+    if(poly.length<3 || !pointInPolygon(pxX, pxY, poly)) return;
+    const area = polygonAreaPx(poly);
+    if(area < bestArea){ bestArea = area; best = el; }
+  });
+  return best;
+}
 function populateParentSelect(selectEl, currentValue, excludeId){
   const prev = currentValue!=null ? String(currentValue) : selectEl.value;
   selectEl.innerHTML = '';
@@ -3343,9 +3424,31 @@ function populateParentSelect(selectEl, currentValue, excludeId){
   });
   selectEl.value = prev && [...selectEl.options].some(o=>o.value===prev) ? prev : '';
 }
+// Where a quick-add rect/circle/pool-with-step element lands: the centre of
+// whatever's currently in view. Shared between the cutout auto-detect
+// preview below and addElBtn's own placement so they can never drift apart
+// -- what you see suggested in the dropdown is exactly where it'll land.
+function currentAddTargetPx(){
+  const cssX = canvasScroll.scrollLeft + canvasScroll.clientWidth/2 - 20;
+  const cssY = canvasScroll.scrollTop + canvasScroll.clientHeight/2 - 20;
+  return {
+    x: Math.min(Math.max(cssX / state.zoom, 0), overlayCanvas.width),
+    y: Math.min(Math.max(cssY / state.zoom, 0), overlayCanvas.height),
+  };
+}
 cutoutInput.addEventListener('change', ()=>{
   cutoutParentWrap.style.display = cutoutInput.checked ? 'block' : 'none';
-  if(cutoutInput.checked) populateParentSelect(cutoutParentSelect);
+  if(cutoutInput.checked){
+    // The common case this checkbox's own label calls out -- "a pool inside
+    // a tiled patio" -- already has a real geometric answer: whichever
+    // existing element the new one is about to land inside of. Default
+    // straight to that instead of the generic whole-plan total, so there's
+    // nothing to hunt for in a potentially long list; still fully editable
+    // right below.
+    const target = currentAddTargetPx();
+    const detected = findCutoutParentAt(target.x, target.y, null);
+    populateParentSelect(cutoutParentSelect, detected ? detected.id : null);
+  }
 });
 
 /* ============================ Unit toggle ============================ */
@@ -8581,6 +8684,26 @@ function uniqueLabel(base){
   }
   return label;
 }
+// Absolute canvas-point outline (in PX) for a rectangular pool with a
+// smaller rectangular step notch bitten out of the middle of its "top" edge
+// (in its own unrotated frame -- this preset has no rotate handle, same as
+// every other traced-area preset). Traces: top-left corner -> along the top
+// edge to the notch's left side -> down into the notch -> across its
+// bottom -> back up out of it -> on along the top edge -> the remaining 3
+// corners. stepW/stepD are clamped so the notch can never consume the
+// whole pool, however the fields are filled in.
+function poolWithStepPoints(cx, cy, wFt, hFt, stepWFt, stepDFt, scalePxPerFt){
+  const wPx = wFt*scalePxPerFt, hPx = hFt*scalePxPerFt;
+  const stepWPx = Math.min(stepWFt*scalePxPerFt, wPx*0.9);
+  const stepDPx = Math.min(stepDFt*scalePxPerFt, hPx*0.9);
+  const left = cx-wPx/2, right = cx+wPx/2, top = cy-hPx/2, bottom = cy+hPx/2;
+  const notchLeft = cx-stepWPx/2, notchRight = cx+stepWPx/2, notchBottom = top+stepDPx;
+  return [
+    {x:left, y:top}, {x:notchLeft, y:top}, {x:notchLeft, y:notchBottom},
+    {x:notchRight, y:notchBottom}, {x:notchRight, y:top},
+    {x:right, y:top}, {x:right, y:bottom}, {x:left, y:bottom},
+  ];
+}
 addElBtn.addEventListener('click', ()=>{
   const preset = PRESETS[typeSelect.value];
   if(preset.quick!=='rect' && preset.quick!=='circle') return;
@@ -8589,7 +8712,7 @@ addElBtn.addEventListener('click', ()=>{
   const el = {
     id: state.nextId++,
     page: state.currentPage,
-    shape: preset.quick,
+    shape: preset.hasStep ? 'polygon' : preset.quick,
     presetKey: typeSelect.value,
     label,
     color: colorInput.value || preset.color,
@@ -8600,28 +8723,34 @@ addElBtn.addEventListener('click', ()=>{
     isCutout: cutoutInput.checked,
     parentId: (cutoutInput.checked && cutoutParentSelect.value) ? parseInt(cutoutParentSelect.value,10) : null,
   };
-  if(preset.quick==='rect'){
+  const {x:cx, y:cy} = currentAddTargetPx();
+  if(preset.hasStep){
+    const w = parseFloat(widthInput.value), h = parseFloat(heightInput.value);
+    if(!w || !h || w<=0 || h<=0){ widthInput.focus(); return; }
+    const stepW = parseFloat(stepWidthInput.value);
+    if(!stepW || stepW<=0){ stepWidthInput.focus(); return; }
+    const stepD = parseFloat(stepDepthInput.value);
+    if(!stepD || stepD<=0){ stepDepthInput.focus(); return; }
+    el.points = poolWithStepPoints(cx, cy, toFt(w,state.unit), toFt(h,state.unit), toFt(stepW,state.unit), toFt(stepD,state.unit), state.scalePxPerFt);
+  } else if(preset.quick==='rect'){
     const w = parseFloat(widthInput.value), h = parseFloat(heightInput.value);
     if(!w || !h || w<=0 || h<=0){ widthInput.focus(); return; }
     el.wFt = toFt(w, state.unit);
     el.hFt = toFt(h, state.unit);
+    el.xPx = cx; el.yPx = cy;
   } else {
     const d = parseFloat(diameterInput.value);
     if(!d || d<=0){ diameterInput.focus(); return; }
     el.dFt = toFt(d, state.unit);
+    el.xPx = cx; el.yPx = cy;
   }
-  const cssX = canvasScroll.scrollLeft + canvasScroll.clientWidth/2 - 20;
-  const cssY = canvasScroll.scrollTop + canvasScroll.clientHeight/2 - 20;
-  const cx = cssX / state.zoom;
-  const cy = cssY / state.zoom;
-  el.xPx = Math.min(Math.max(cx,0), overlayCanvas.width);
-  el.yPx = Math.min(Math.max(cy,0), overlayCanvas.height);
   el._bornAt = performance.now();
   pushUndo();
   state.elements.push(el);
   state.selectedId = el.id;
   labelInput.value='';
   widthInput.value=''; heightInput.value=''; diameterInput.value=''; costInput.value=''; addRotationInput.value='';
+  stepWidthInput.value=''; stepDepthInput.value='';
   cutoutInput.checked=false;
   cutoutParentWrap.style.display='none';
   renderElementsList();
@@ -8829,7 +8958,21 @@ function renderElementsList(){
       cutChk.addEventListener('change', ()=>{
         pushUndo();
         el.isCutout = cutChk.checked;
-        if(!el.isCutout) el.parentId = null;
+        if(!el.isCutout){
+          el.parentId = null;
+        } else if(el.parentId==null){
+          // Same auto-detect the Add panel's own cutout checkbox uses, but
+          // against this element's REAL placed position rather than a
+          // guessed drop point -- and written straight into el.parentId
+          // (a real, persisted choice, exactly as if picked by hand) rather
+          // than just pre-selected in the dropdown, since this whole block
+          // only ever runs once, right as the box is checked -- re-running
+          // it on every later render would silently overrule a deliberate
+          // "Whole plan total" pick back to the guess.
+          const anchor = elementLabelAnchor(el);
+          const detected = findCutoutParentAt(anchor.x, anchor.y, el.id);
+          if(detected) el.parentId = detected.id;
+        }
         drawOverlay(); renderElementsList();
       });
       cutLabel.appendChild(cutChk);
@@ -9413,6 +9556,8 @@ function renderElementsList(){
       ? flaggedCount+' flagged, '+checkedCount+'/'+verifiable.length+' checked'
       : checkedCount+'/'+verifiable.length+' checked, all match';
     verifySummary.style.color = flaggedCount ? '#E2543A' : '';
+    verifyCheckAllBtn.disabled = checkedCount===verifiable.length;
+    verifyUncheckAllBtn.disabled = checkedCount===0;
   } else {
     verifySummaryRow.style.display='none';
   }
@@ -9855,7 +10000,7 @@ const preview3dHint = document.getElementById('preview3dHint');
 
 const AREA_HEIGHT_FT_3D = {
   deck:0.3, patio:0.2, concrete:0.2, gravel:0.15, lawn:0.1, turf:0.15,
-  gardenbed:0.25, pool:0.15, custom:0.2,
+  gardenbed:0.25, pool:0.15, pool_step:0.15, custom:0.2,
 };
 const ROOF_PRESETS_3D = new Set(['roof_tile','roof_metal','roof_shingle']);
 // Flat-colour/roughness stand-in for a room's floor texture in the 3D view.
