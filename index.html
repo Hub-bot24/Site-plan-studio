@@ -9457,6 +9457,51 @@ function renderElementsList(){
         }
         dims.appendChild(document.createTextNode(unitAbbrev()));
       }
+      if(!el.isRoom){
+        // A polygon has no live rotation transform the way a rect/circle's
+        // xPx/yPx/rotationDeg does -- its points ARE the final absolute
+        // geometry, so there was never any way to rotate one after placing
+        // it. That's a real gap for anything generated in one fixed
+        // orientation (a pool-with-step's step always starts on its "top"
+        // edge -- "cant tutn the pool with a step" was this exact request).
+        // Rotating means literally re-deriving every point around the
+        // shape's own centroid by a delta and writing straight back to
+        // el.points -- there's no separate unrotated copy to keep in sync,
+        // so each rotation is relative to the shape's CURRENT orientation,
+        // not a cumulative absolute angle the way a rect's rotationDeg is.
+        const rotatePolyBy = (deltaDeg) => {
+          if(!deltaDeg) return;
+          pushUndo();
+          const pts = el.points;
+          const cx = pts.reduce((s,p)=>s+p.x,0)/pts.length, cy = pts.reduce((s,p)=>s+p.y,0)/pts.length;
+          const rad = deltaDeg*Math.PI/180, cos=Math.cos(rad), sin=Math.sin(rad);
+          el.points = pts.map(p=>{
+            const dx=p.x-cx, dy=p.y-cy;
+            return { x: cx+dx*cos-dy*sin, y: cy+dx*sin+dy*cos };
+          });
+          drawOverlay(); renderElementsList();
+        };
+        const rotWrap = document.createElement('span');
+        rotWrap.style.display='inline-flex'; rotWrap.style.alignItems='center'; rotWrap.style.gap='3px';
+        const ccwBtn = document.createElement('button'); ccwBtn.type='button'; ccwBtn.className='linkbtn';
+        ccwBtn.textContent='⟲90°'; ccwBtn.title='Rotate 90° counter-clockwise';
+        ccwBtn.addEventListener('click', e=>{ e.stopPropagation(); rotatePolyBy(-90); });
+        const cwBtn = document.createElement('button'); cwBtn.type='button'; cwBtn.className='linkbtn';
+        cwBtn.textContent='90°⟳'; cwBtn.title='Rotate 90° clockwise';
+        cwBtn.addEventListener('click', e=>{ e.stopPropagation(); rotatePolyBy(90); });
+        const customRotIn = document.createElement('input'); customRotIn.type='number'; customRotIn.step='1'; customRotIn.placeholder='0';
+        customRotIn.style.width='42px';
+        customRotIn.title = 'Rotate by this many degrees (positive = clockwise), then resets to 0 ready for the next nudge';
+        customRotIn.addEventListener('click', e=>e.stopPropagation());
+        customRotIn.addEventListener('change', ()=>{
+          const v = parseFloat(customRotIn.value);
+          if(v) rotatePolyBy(v);
+          customRotIn.value = '';
+        });
+        rotWrap.appendChild(ccwBtn); rotWrap.appendChild(cwBtn);
+        rotWrap.appendChild(document.createTextNode('by')); rotWrap.appendChild(customRotIn); rotWrap.appendChild(document.createTextNode('°'));
+        dims.appendChild(rotWrap);
+      }
       appendCutoutControls(dims, el);
     } else if(el.shape==='image'){
       const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
