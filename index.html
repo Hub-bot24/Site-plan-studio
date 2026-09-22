@@ -7082,12 +7082,21 @@ function applyEdgeShading(ctx, bounds){
   ctx.fillRect(bounds.minX, bounds.minY, w, h);
   ctx.restore();
 }
-function fillMaterial(ctx, presetKey, bounds, overrideColor){
+// overrideScalePxPerFt lets a caller drawing into a canvas that ISN'T the
+// live plan canvas (materialTextureFor3D's capped-resolution 3D texture
+// bake, see below) supply the real px-per-ft that canvas actually
+// represents, instead of silently reading the plan's own calibration scale
+// (state.scalePxPerFt) -- a value that has nothing to do with that other
+// canvas's own size and, at a typical higher-resolution plan, produced
+// pattern features (mowed-lawn stripe width, grout lines, ...) bigger than
+// the whole capped canvas, baking what was meant to be a detailed texture
+// as a single near-flat shade instead.
+function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerFt){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
   const baseColor = overrideColor || (preset ? preset.color : '#B5934C');
   const fallbackColor = baseColor+'CC';
-  const scalePxPerFt = state.scalePxPerFt || 40;
+  const scalePxPerFt = overrideScalePxPerFt || state.scalePxPerFt || 40;
   if(preset && preset.icon){
     drawFurnitureIcon(ctx, preset.icon, bounds, baseColor);
     return;
@@ -10287,9 +10296,20 @@ function materialTextureFor3D(presetKey, color, pxW, pxH){
   canvas.height = aspect>=1 ? Math.max(16, Math.round(res/aspect)) : res;
   const ctx = canvas.getContext('2d');
   const bounds = {minX:0, maxX:canvas.width, minY:0, maxY:canvas.height};
+  // pxW/pxH arrive pre-scaled by the caller as realWidthFt*40 (a fixed
+  // convention, nothing to do with the plan's own calibration) purely to
+  // fix this canvas's aspect ratio -- so canvas.width*40/pxW is the real
+  // px-per-ft THIS capped, non-repeating canvas actually ends up
+  // representing once its real-world size is known. Passing that (instead
+  // of leaving fillMaterial to read the live plan's own state.scalePxPerFt)
+  // is what keeps every baked texture's pattern detail -- mowed-lawn
+  // stripes, grout lines, gravel speckle, ... -- correctly sized to this
+  // fixed 128px budget, regardless of what scale the plan itself happens
+  // to be calibrated at.
+  const effectiveScalePxPerFt = pxW>0 ? canvas.width*40/pxW : 40;
   ctx.save();
   ctx.beginPath(); ctx.rect(0,0,canvas.width,canvas.height);
-  fillMaterial(ctx, presetKey, bounds, color);
+  fillMaterial(ctx, presetKey, bounds, color, effectiveScalePxPerFt);
   ctx.restore();
   const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
