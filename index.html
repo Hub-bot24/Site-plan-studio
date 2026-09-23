@@ -1724,6 +1724,16 @@ function performUndo(){
 undoBtn.addEventListener('click', performUndo);
 
 /* ============================ Cut / Paste (elements) ============================ */
+// Removes an element plus, if it's a wall, every door/window hosted on it --
+// an opening can never legitimately outlive the wall it's cut into. Shared by
+// the sidebar delete, the Erase tool and Cut so none of them can leave a
+// "(missing wall)" door floating on the plan and still counted in totals.
+function removeElementWithDependents(el){
+  const removeIds = new Set([el.id]);
+  if(el.isWall) state.elements.forEach(o=>{ if(o.isOpening && o.hostWallId===el.id) removeIds.add(o.id); });
+  state.elements = state.elements.filter(x=>!removeIds.has(x.id));
+  if(removeIds.has(state.selectedId)) state.selectedId=null;
+}
 function updatePasteBtnState(){
   pasteBtn.disabled = !state.clipboard;
 }
@@ -1732,8 +1742,7 @@ function cutElementById(id){
   if(!el) return;
   pushUndo();
   state.clipboard = JSON.parse(JSON.stringify(el));
-  state.elements = state.elements.filter(x=>x.id!==id);
-  if(state.selectedId===id) state.selectedId=null;
+  removeElementWithDependents(el);
   updatePasteBtnState();
   renderElementsList();
   drawOverlay();
@@ -1742,15 +1751,21 @@ pasteBtn.addEventListener('click', ()=>{
   if(!state.clipboard) return;
   // Drop it in at the center of whatever you're currently looking at -- if
   // you cut on one page, flipped to another, and hit Paste, it lands there.
-  const cssX = canvasScroll.scrollLeft + canvasScroll.clientWidth/2 - 20;
-  const cssY = canvasScroll.scrollTop + canvasScroll.clientHeight/2 - 20;
-  const targetX = cssX / state.zoom, targetY = cssY / state.zoom;
+  // Same placement as addElBtn (see currentAddTargetPx) -- the old
+  // scrollLeft + clientWidth/2 formula drifts off the plan whenever the plan
+  // is smaller than the viewport, e.g. at a phone's fit-to-screen zoom.
+  const {x:targetX, y:targetY} = currentAddTargetPx();
   const copy = JSON.parse(JSON.stringify(state.clipboard));
-  copy.id = state.nextId++;
   copy.page = state.currentPage;
   if(copy.isOpening){
     // Not a free xPx/yPx paste -- it stays on its (cloned) host wall, nudged
     // along it so the paste doesn't land exactly on top of the original.
+    const wall = getElementById(copy.hostWallId);
+    if(!wall || !wall.isWall){
+      alert('The wall this door/window was on no longer exists, so it can\'t be pasted back. Add a new one to a wall instead.');
+      return;
+    }
+    copy.page = wall.page;
     copy.offsetFt = (copy.offsetFt||0) + (copy.wFt||0.5);
     syncOpeningTransform(copy);
   } else if(copy.shape==='rect' || copy.shape==='circle' || copy.shape==='image'){
@@ -1761,6 +1776,7 @@ pasteBtn.addEventListener('click', ()=>{
     const dx = targetX-(b.minX+b.maxX)/2, dy = targetY-(b.minY+b.maxY)/2;
     copy.points = copy.points.map(p=>({x:p.x+dx, y:p.y+dy}));
   }
+  copy.id = state.nextId++;
   copy._bornAt = performance.now();
   pushUndo();
   state.elements.push(copy);
@@ -4282,8 +4298,7 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
     const hit = findElementAt(x,y);
     if(hit){
       pushUndo();
-      state.elements = state.elements.filter(el=>el.id!==hit.id);
-      if(state.selectedId===hit.id) state.selectedId=null;
+      removeElementWithDependents(hit);
       renderElementsList();
       drawOverlay();
     }
@@ -9644,7 +9659,9 @@ function renderElementsList(){
     details.appendChild(dims);
     mainRow.appendChild(details);
 
-    if(state.numPages>1){
+    // Doors/windows always live on their host wall's page -- they move with
+    // it (below) rather than getting their own page picker.
+    if(state.numPages>1 && !el.isOpening){
       const moveSel = document.createElement('select');
       moveSel.title = 'Move this element to a different page of the PDF';
       moveSel.style.width='90px'; moveSel.style.flexShrink='0';
@@ -9663,6 +9680,7 @@ function renderElementsList(){
         if(!p) return;
         pushUndo();
         el.page = p;
+        if(el.isWall) state.elements.forEach(o=>{ if(o.isOpening && o.hostWallId===el.id) o.page = p; });
         if(state.selectedId===el.id) state.selectedId=null;
         renderElementsList(); drawOverlay();
       });
@@ -9761,12 +9779,7 @@ function renderElementsList(){
     delBtn.addEventListener('click', (e)=>{
       e.stopPropagation();
       pushUndo();
-      // Deleting a wall takes every door/window hosted on it with it -- an
-      // opening can never legitimately outlive the wall it's cut into.
-      const removeIds = new Set([el.id]);
-      if(el.isWall) currentPageElements().forEach(o=>{ if(o.isOpening && o.hostWallId===el.id) removeIds.add(o.id); });
-      state.elements = state.elements.filter(x=>!removeIds.has(x.id));
-      if(removeIds.has(state.selectedId)) state.selectedId=null;
+      removeElementWithDependents(el);
       renderElementsList(); drawOverlay();
     });
     actionsRow.appendChild(delBtn);
