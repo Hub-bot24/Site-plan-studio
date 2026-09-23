@@ -5275,6 +5275,119 @@ function getTilePattern(ctx, texture, scalePxPerFt){
   patternCache[key] = pattern;
   return pattern;
 }
+// Lawn and garden-bed textures are organic scatters, not a tiled module, so
+// they used to be drawn straight onto the plan across each area's whole
+// bounds on every redraw -- fine while they were a few stripes, but the
+// denser mottling/foliage looks took 100-600ms per area per redraw and froze
+// the app whenever a plan with lawns/beds was loaded, panned or edited.
+// They're now baked once into a pattern tile and cached like getTilePattern.
+// Each mark is also drawn wrapped at +/-size so the tile repeats seamlessly.
+function drawWrapped(size, x, y, reach, draw){
+  for(const dx of [-size,0,size]){
+    if(x+dx+reach < 0 || x+dx-reach > size) continue;
+    for(const dy of [-size,0,size]){
+      if(y+dy+reach < 0 || y+dy-reach > size) continue;
+      draw(x+dx, y+dy);
+    }
+  }
+}
+function getLawnPattern(ctx, baseColor, scalePxPerFt){
+  const key = 'lawn|'+baseColor+'|'+Math.round(scalePxPerFt);
+  if(patternCache[key]) return patternCache[key];
+  const cellTarget = Math.max(5, scalePxPerFt*0.4);
+  const n = Math.max(8, Math.min(120, Math.floor(640/cellTarget)));
+  const size = Math.max(40, Math.round(n*cellTarget));
+  const cell = size/n;
+  const tile = document.createElement('canvas');
+  tile.width = tile.height = size;
+  const tctx = tile.getContext('2d');
+  tctx.fillStyle = shadeColor(baseColor,-0.05);
+  tctx.fillRect(0,0,size,size);
+  const shades = [shadeColor(baseColor,0.16), shadeColor(baseColor,0.06), shadeColor(baseColor,-0.08), shadeColor(baseColor,-0.18)];
+  let idx = 0;
+  for(let gy=0; gy<n; gy++){
+    for(let gx=0; gx<n; gx++){
+      idx++;
+      const r1=seededRand(idx*3.1+1), r2=seededRand(idx*5.7+2), r3=seededRand(idx*7.9+3), r4=seededRand(idx*11.3+5);
+      if(r4<0.35) continue; // leave some base colour showing through, not a solid mosaic
+      const px = (gx+0.5)*cell+(r1-0.5)*cell, py = (gy+0.5)*cell+(r2-0.5)*cell;
+      const pr = cell*(0.4+r3*0.5);
+      tctx.fillStyle = shades[Math.floor(r3*shades.length)];
+      drawWrapped(size, px, py, pr, (x,y)=>{ tctx.beginPath(); tctx.arc(x,y,pr,0,Math.PI*2); tctx.fill(); });
+    }
+  }
+  const flecks = Math.round(size*size/140);
+  tctx.lineWidth = 1;
+  for(let k=0;k<flecks;k++){
+    const r1=seededRand(k*3.3+1), r2=seededRand(k*5.1+2), r3=seededRand(k*7.7+3), r4=seededRand(k*11.3+5);
+    const ang = r4*Math.PI*2, ex = Math.cos(ang)*2.4, ey = Math.sin(ang)*2.4;
+    tctx.strokeStyle = r3<0.5 ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
+    drawWrapped(size, r1*size, r2*size, 3, (x,y)=>{ tctx.beginPath(); tctx.moveTo(x,y); tctx.lineTo(x+ex, y+ey); tctx.stroke(); });
+  }
+  const pattern = ctx.createPattern(tile,'repeat');
+  patternCache[key] = pattern;
+  return pattern;
+}
+function getGardenBedPattern(ctx, scalePxPerFt){
+  const key = 'gardenbed|'+Math.round(scalePxPerFt);
+  if(patternCache[key]) return patternCache[key];
+  // Scatter small top-down plant/shrub canopies so the bed reads as an
+  // actual planted garden bed, not just bare mulch. Each plant reuses the
+  // tree icon's "real foliage" technique (see drawFurnitureIcon): a
+  // wobble-lobed outline, a radial gradient and mottled leaf-cluster blobs
+  // -- a single flat-gradient disc alone reads as a coloured dot.
+  const spacingTarget = Math.max(14, scalePxPerFt*1.6);
+  const n = Math.max(2, Math.min(24, Math.floor(768/spacingTarget)));
+  const size = Math.round(n*spacingTarget);
+  const spacing = size/n;
+  const tile = document.createElement('canvas');
+  tile.width = tile.height = size;
+  const tctx = tile.getContext('2d');
+  const plantColors = ['#5C8752','#4B7A46','#6B9760','#3F6B3B'];
+  let idx = 0;
+  for(let gy=0; gy<n; gy++){
+    for(let gx=0; gx<n; gx++){
+      idx++;
+      const r1 = seededRand(idx*7.13+1), r2 = seededRand(idx*13.7+5), r3 = seededRand(idx*3.3+9);
+      if(r1 < 0.22) continue; // skip some spots so it isn't a rigid grid
+      const cx = (gx+0.5)*spacing + (r2-0.5)*spacing*0.7;
+      const cy = (gy+0.5)*spacing + (r3-0.5)*spacing*0.7;
+      const rad = spacing*0.28*(0.7+r1*0.6);
+      const c = plantColors[idx%plantColors.length];
+      drawWrapped(size, cx, cy, rad*1.2, (px,py)=>{
+        const lobes = 6;
+        tctx.beginPath();
+        for(let li=0; li<lobes; li++){
+          const ang = (li/lobes)*Math.PI*2;
+          const wobble = 1 + (seededRand(idx*23+li*3.7+1)-0.5)*0.3;
+          const lx = px+Math.cos(ang)*rad*wobble, ly = py+Math.sin(ang)*rad*wobble;
+          li===0 ? tctx.moveTo(lx,ly) : tctx.lineTo(lx,ly);
+        }
+        tctx.closePath();
+        const pg = tctx.createRadialGradient(px-rad*0.3, py-rad*0.3, rad*0.1, px, py, rad);
+        pg.addColorStop(0, c+'FF');
+        pg.addColorStop(1, c+'AA');
+        tctx.fillStyle = pg;
+        tctx.fill();
+        tctx.save();
+        tctx.clip();
+        for(let bi=0; bi<3; bi++){
+          const bang = seededRand(idx*29+bi*5.1+2)*Math.PI*2;
+          const bdist = seededRand(idx*31+bi*7.3+3)*rad*0.7;
+          const bx = px+Math.cos(bang)*bdist, by = py+Math.sin(bang)*bdist;
+          const br = rad*(0.25+seededRand(idx*37+bi*9.1+4)*0.25);
+          tctx.beginPath(); tctx.arc(bx,by,br,0,Math.PI*2);
+          tctx.fillStyle = seededRand(idx*41+bi*2.3+5) < 0.5 ? 'rgba(180,220,150,0.32)' : 'rgba(20,35,20,0.26)';
+          tctx.fill();
+        }
+        tctx.restore();
+      });
+    }
+  }
+  const pattern = ctx.createPattern(tile,'repeat');
+  patternCache[key] = pattern;
+  return pattern;
+}
 // Deterministic pseudo-random (0..1) from a seed -- used for scattering
 // texture details that must stay put across redraws (a real Math.random()
 // would reshuffle every frame and look like flickering noise).
@@ -7183,35 +7296,12 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerF
       // real risk any large directional pattern has once baked into a 3D
       // area's capped, few-repeat texture (materialTextureFor3D): it can
       // show as ugly visible banding instead of natural texture.
-      ctx.fillStyle = shadeColor(baseColor,-0.05);
+      // Drawn from a cached, seamlessly-repeating tile (see
+      // getLawnPattern) rather than per-frame: scattering every blob and
+      // fleck across the whole area on each redraw took 100-300ms+ for a
+      // single lawn, freezing the app on load, pan and drag.
+      ctx.fillStyle = getLawnPattern(ctx, baseColor, scalePxPerFt);
       ctx.fill();
-      ctx.save();
-      ctx.clip();
-      const cell = Math.max(5, scalePxPerFt*0.4);
-      const shades = [shadeColor(baseColor,0.16), shadeColor(baseColor,0.06), shadeColor(baseColor,-0.08), shadeColor(baseColor,-0.18)];
-      let idx = 0;
-      for(let gy=bounds.minY-cell; gy<bounds.maxY+cell; gy+=cell){
-        for(let gx=bounds.minX-cell; gx<bounds.maxX+cell; gx+=cell){
-          idx++;
-          const r1=seededRand(idx*3.1+1), r2=seededRand(idx*5.7+2), r3=seededRand(idx*7.9+3), r4=seededRand(idx*11.3+5);
-          if(r4<0.35) continue; // leave some base colour showing through, not a solid mosaic
-          const px = gx+(r1-0.5)*cell, py = gy+(r2-0.5)*cell;
-          const pr = cell*(0.4+r3*0.5);
-          ctx.beginPath(); ctx.arc(px,py,pr,0,Math.PI*2);
-          ctx.fillStyle = shades[Math.floor(r3*shades.length)];
-          ctx.fill();
-        }
-      }
-      const flecks = Math.round((bounds.maxX-bounds.minX)*(bounds.maxY-bounds.minY)/140);
-      for(let k=0;k<flecks;k++){
-        const r1=seededRand(k*3.3+1), r2=seededRand(k*5.1+2), r3=seededRand(k*7.7+3), r4=seededRand(k*11.3+5);
-        const px=bounds.minX+r1*(bounds.maxX-bounds.minX), py=bounds.minY+r2*(bounds.maxY-bounds.minY);
-        const ang = r4*Math.PI*2;
-        ctx.strokeStyle = r3<0.5 ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
-        ctx.lineWidth=1;
-        ctx.beginPath(); ctx.moveTo(px,py); ctx.lineTo(px+Math.cos(ang)*2.4, py+Math.sin(ang)*2.4); ctx.stroke();
-      }
-      ctx.restore();
     }
   } else if(texture==='mulch'){
     if(state.blackMode){
@@ -7255,50 +7345,11 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerF
       // gradient, mottled leaf-cluster blobs inside, and a darkened rim --
       // a single flat-gradient disc alone reads as a coloured dot, not a
       // shrub.
-      ctx.save();
-      ctx.clip();
-      const spacing = Math.max(14, scalePxPerFt*1.6);
-      const plantColors = ['#5C8752','#4B7A46','#6B9760','#3F6B3B'];
-      let idx = 0;
-      for(let gy=bounds.minY-spacing; gy<bounds.maxY+spacing; gy+=spacing){
-        for(let gx=bounds.minX-spacing; gx<bounds.maxX+spacing; gx+=spacing){
-          idx++;
-          const r1 = seededRand(idx*7.13+1), r2 = seededRand(idx*13.7+5), r3 = seededRand(idx*3.3+9);
-          if(r1 < 0.22) continue; // skip some spots so it isn't a rigid grid
-          const px = gx + (r2-0.5)*spacing*0.7;
-          const py = gy + (r3-0.5)*spacing*0.7;
-          const rad = spacing*0.28*(0.7+r1*0.6);
-          const c = plantColors[idx%plantColors.length];
-          const lobes = 6;
-          ctx.beginPath();
-          for(let li=0; li<lobes; li++){
-            const ang = (li/lobes)*Math.PI*2;
-            const wobble = 1 + (seededRand(idx*23+li*3.7+1)-0.5)*0.3;
-            const lx = px+Math.cos(ang)*rad*wobble, ly = py+Math.sin(ang)*rad*wobble;
-            li===0 ? ctx.moveTo(lx,ly) : ctx.lineTo(lx,ly);
-          }
-          ctx.closePath();
-          const pg = ctx.createRadialGradient(px-rad*0.3, py-rad*0.3, rad*0.1, px, py, rad);
-          pg.addColorStop(0, c+'FF');
-          pg.addColorStop(1, c+'AA');
-          ctx.fillStyle = pg;
-          ctx.fill();
-          ctx.save();
-          ctx.clip();
-          const blobCount = 3;
-          for(let bi=0; bi<blobCount; bi++){
-            const bang = seededRand(idx*29+bi*5.1+2)*Math.PI*2;
-            const bdist = seededRand(idx*31+bi*7.3+3)*rad*0.7;
-            const bx = px+Math.cos(bang)*bdist, by = py+Math.sin(bang)*bdist;
-            const br = rad*(0.25+seededRand(idx*37+bi*9.1+4)*0.25);
-            ctx.beginPath(); ctx.arc(bx,by,br,0,Math.PI*2);
-            ctx.fillStyle = seededRand(idx*41+bi*2.3+5) < 0.5 ? 'rgba(180,220,150,0.32)' : 'rgba(20,35,20,0.26)';
-            ctx.fill();
-          }
-          ctx.restore();
-        }
-      }
-      ctx.restore();
+      // Plants come from a cached, seamlessly-repeating transparent tile
+      // (see getGardenBedPattern) -- same look, without re-drawing every
+      // shrub on every redraw.
+      ctx.fillStyle = getGardenBedPattern(ctx, scalePxPerFt);
+      ctx.fill();
     }
   } else if(texture==='water'){
     if(state.blackMode){
