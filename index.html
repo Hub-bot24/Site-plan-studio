@@ -3465,9 +3465,31 @@ function populateParentSelect(selectEl, currentValue, excludeId){
 // whatever's currently in view. Shared between the cutout auto-detect
 // preview below and addElBtn's own placement so they can never drift apart
 // -- what you see suggested in the dropdown is exactly where it'll land.
+// "Centre of the current viewport" used to mean literally
+// scrollLeft + clientWidth/2 -- correct as long as the rendered canvas
+// content fills at least the whole scrollable viewport, which is true for
+// most desktop use (zoomed in for detail work). At a typical mobile
+// fit-to-screen zoom on a large, detailed plan, the rendered content is
+// often SMALLER than the viewport instead, and that formula keeps walking
+// further from the plan's actual centre the smaller the content gets
+// relative to the viewport -- confirmed directly: at a real fit-zoom of
+// ~5.7% on a phone screen, a new element's centre landed at 92.6% of the
+// way across the plan instead of centred, clipping most of it off-canvas
+// ("no pool shows" on adding one). Using the centre of the true VISIBLE
+// content region (the intersection of the viewport and the content's own
+// bounds, accounting for canvasWrap's 20px margin) fixes that, and reduces
+// to the exact original formula whenever content already exceeds the
+// viewport -- the common desktop case is unchanged.
 function currentAddTargetPx(){
-  const cssX = canvasScroll.scrollLeft + canvasScroll.clientWidth/2 - 20;
-  const cssY = canvasScroll.scrollTop + canvasScroll.clientHeight/2 - 20;
+  const marginPx = 20;
+  const contentWCss = overlayCanvas.width * state.zoom;
+  const contentHCss = overlayCanvas.height * state.zoom;
+  const visLeft = Math.max(canvasScroll.scrollLeft - marginPx, 0);
+  const visTop = Math.max(canvasScroll.scrollTop - marginPx, 0);
+  const visRight = Math.min(canvasScroll.scrollLeft + canvasScroll.clientWidth - marginPx, contentWCss);
+  const visBottom = Math.min(canvasScroll.scrollTop + canvasScroll.clientHeight - marginPx, contentHCss);
+  const cssX = (visLeft + visRight) / 2;
+  const cssY = (visTop + visBottom) / 2;
   return {
     x: Math.min(Math.max(cssX / state.zoom, 0), overlayCanvas.width),
     y: Math.min(Math.max(cssY / state.zoom, 0), overlayCanvas.height),
