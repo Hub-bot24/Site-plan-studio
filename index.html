@@ -1117,7 +1117,7 @@ const PRESETS = {
   // existing generic polygon machinery; no rotate handle once a step is
   // added, since this shape doesn't support one (same as every other
   // traced-area preset).
-  pool:      {label:'Pool',            color:'#4A7A9B', texture:'water',    quick:'rect', canHaveStep:true},
+  pool:      {label:'Pool',            color:'#2FA6C4', texture:'water',    quick:'rect', canHaveStep:true},
   // Pool-with-step used to be its own separate preset, picked from the Type
   // list alongside plain Pool -- confusing (two near-identical entries) and
   // easy to pick the wrong one. Replaced by the canHaveStep checkbox above,
@@ -3368,12 +3368,9 @@ function updateAddFieldsForType(){
   const stepOn = !!(preset.canHaveStep && poolStepToggleInput.checked);
   poolStepDirectionWrap.style.display = stepOn ? 'block' : 'none';
   poolStepFields.style.display = stepOn ? 'flex' : 'none';
-  // A pool WITH a step added is built as a fixed compound polygon (see
-  // addElBtn's click handler) -- rotating it would need to be baked into
-  // how its points are generated, which this shape doesn't do (matching
-  // every other traced-area preset, which has no rotate handle either), so
-  // hide a control that would otherwise silently do nothing.
-  addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') && !stepOn ? 'block' : 'none';
+  // A pool WITH a step is built as a compound polygon (see addElBtn), and
+  // the typed rotation is baked straight into its generated points.
+  addRotationFieldWrap.style.display = (preset.quick==='rect' || preset.quick==='circle') ? 'block' : 'none';
   heightFieldLabel.firstChild.textContent = preset.isVehicle ? 'Length (' : 'Height (';
   addElBtn.style.display = (isFence || isOpening) ? 'none' : '';
   pathFields.style.display = isOpening ? 'none' : 'block';
@@ -4333,6 +4330,24 @@ overlayCanvas.addEventListener('pointerdown',(e)=>{
       return;
     }
   }
+  if(canRotatePolygon(selectedEl)){
+    const hp = getRotationHandlePos(selectedEl);
+    if(Math.hypot(x-hp.x, y-hp.y) <= 14/state.zoom){
+      const c = polygonVertexCentre(selectedEl.points);
+      state.dragging = {
+        id: selectedEl.id, mode:'rotatepoly',
+        centerX: c.x, centerY: c.y,
+        lastAngle: Math.atan2(y-c.y, x-c.x),
+        startPoints: selectedEl.points.map(p=>({x:p.x, y:p.y})),
+        totalDeg: 0, rawDeg: 0,
+        handleX: hp.x, handleY: hp.y,
+      };
+      overlayCanvas.setPointerCapture(e.pointerId);
+      renderElementsList();
+      drawOverlay();
+      return;
+    }
+  }
   // Dragging an already-selected item's own label chip moves just the text
   // (off whatever it's covering) instead of the shape underneath it.
   if(selectedEl && hitTestLabelHandle(ctxOverlay, selectedEl, x, y)){
@@ -4504,6 +4519,24 @@ overlayCanvas.addEventListener('pointermove',(e)=>{
     const nearest15 = Math.round(deg/15)*15;
     if(Math.abs(deg-nearest15) < 1.5) deg = nearest15%360;
     el.rotationDeg = deg;
+  } else if(state.dragging.mode==='rotatepoly'){
+    // Same feel as a rect's rotate handle (Precision-scaled, snaps to 15°),
+    // but always re-derived from the points captured at drag start, so many
+    // small moves can't accumulate rounding drift in the shape.
+    const d = state.dragging;
+    const curAngle = Math.atan2(y-d.centerY, x-d.centerX);
+    let stepDeg = (curAngle-d.lastAngle)*180/Math.PI;
+    stepDeg = ((stepDeg+180)%360+360)%360 - 180;
+    d.lastAngle = curAngle;
+    d.rawDeg += stepDeg*getSensitivity()*2;
+    let deg = d.rawDeg;
+    const nearest15 = Math.round(deg/15)*15;
+    if(Math.abs(deg-nearest15) < 1.5) deg = nearest15;
+    d.totalDeg = deg;
+    el.points = rotatePointsAbout(d.startPoints, d.centerX, d.centerY, deg);
+    const r = Math.hypot(d.handleX-d.centerX, d.handleY-d.centerY) || 1;
+    const a0 = Math.atan2(d.handleY-d.centerY, d.handleX-d.centerX) + deg*Math.PI/180;
+    d.dispX = d.centerX + Math.cos(a0)*r; d.dispY = d.centerY + Math.sin(a0)*r;
   } else if(state.dragging.mode==='label'){
     el.labelDx = state.dragging.startDx + (x-state.dragging.anchorX);
     el.labelDy = state.dragging.startDy + (y-state.dragging.anchorY);
@@ -4573,9 +4606,12 @@ function endDrag(e){
     // needed to actually remove transient drag-only overlays like the
     // alignment guide lines.
     const hadGuides = state.dragging.guides && state.dragging.guides.length;
+    // The rotate handles show a live degree chip (and a polygon's handle
+    // orbits with the shape) only mid-drag -- redraw to settle them.
+    const wasRotating = state.dragging.mode==='rotate' || state.dragging.mode==='rotatepoly';
     state.dragging = null;
     renderElementsList();
-    if(hadGuides) drawOverlay();
+    if(hadGuides || wasRotating) drawOverlay();
   }
   state.panning = null;
 }
@@ -5402,6 +5438,200 @@ function getGardenBedPattern(ctx, scalePxPerFt){
   const pattern = ctx.createPattern(tile,'repeat');
   patternCache[key] = pattern;
   return pattern;
+}
+// ---------- Realistic top-down pool ----------
+// Used to be a flat blue gradient with a few wavy lines. A real pool seen
+// from above is read from a handful of cues, each drawn here in order, all
+// clipped to the pool's own outline so it works for rect, circle and traced
+// / stepped polygon pools alike:
+//   water body  -- turquoise, lighter at the shallow end, deeper at the other
+//   sun shelf   -- a step/ledge is visibly shallower (paler) water
+//   caustics    -- the bright web of refracted sunlight on the pool floor
+//   wall shadow -- water darkens along the walls where they drop away
+//   waterline   -- a band of dark mosaic tile just inside the coping
+//   coping      -- a pale stone border with paver joints
+// Every band is a stroke of the outline itself (half of it falls inside the
+// clip), which is what lets one code path handle any outline shape.
+const LEGACY_POOL_COLORS = new Set(['#4a7a9b','#2fa6c4']);
+function boundsRectPath(b){
+  const p = new Path2D();
+  p.rect(b.minX, b.minY, b.maxX-b.minX, b.maxY-b.minY);
+  return p;
+}
+function poolCopingPx(bounds, scalePxPerFt){
+  const minDim = Math.max(1, Math.min(bounds.maxX-bounds.minX, bounds.maxY-bounds.minY));
+  return Math.min(scalePxPerFt*1.0, minDim*0.09); // ~300mm coping, never swamping a small pool
+}
+function poolPalette(baseColor){
+  if(!baseColor || LEGACY_POOL_COLORS.has(String(baseColor).toLowerCase())){
+    return {shallow:'#9BE6EE', mid:'#3DB6D0', deep:'#15739A', shelf:'#B9F1F4', tile:'#1D5F86'};
+  }
+  return {shallow:shadeColor(baseColor,0.45), mid:baseColor, deep:shadeColor(baseColor,-0.35),
+          shelf:shadeColor(baseColor,0.6), tile:shadeColor(baseColor,-0.5)};
+}
+let causticTileCanvas = null;
+function getCausticPattern(ctx, scalePxPerFt){
+  if(!causticTileCanvas){
+    // Worley-noise "F2-F1" gives exactly the thin bright cell network that
+    // sunlight refracted through a rippled surface throws onto a pool floor.
+    // Feature points wrap across the tile edges so it repeats seamlessly.
+    const N = 192, count = 30;
+    const pts = [];
+    for(let i=0;i<count;i++) pts.push([seededRand(i*12.9+1)*N, seededRand(i*7.3+2)*N]);
+    const tile = document.createElement('canvas');
+    tile.width = tile.height = N;
+    const tctx = tile.getContext('2d');
+    const img = tctx.createImageData(N, N);
+    const lineW = N*0.03;
+    const TAU = Math.PI*2;
+    for(let y=0;y<N;y++){
+      for(let x=0;x<N;x++){
+        // Domain warp (integer frequencies, so it still tiles) bends the
+        // straight cell edges into the wavy lines real caustics have.
+        const wx = x + N*0.035*Math.sin(TAU*(2*y/N)+1.3) + N*0.015*Math.sin(TAU*(5*y/N+3*x/N));
+        const wy = y + N*0.035*Math.sin(TAU*(2*x/N)+0.4) + N*0.015*Math.sin(TAU*(4*x/N-3*y/N));
+        let f1=Infinity, f2=Infinity;
+        for(let k=0;k<count;k++){
+          let dx=Math.abs(wx-pts[k][0])%N; if(dx>N/2) dx=N-dx;
+          let dy=Math.abs(wy-pts[k][1])%N; if(dy>N/2) dy=N-dy;
+          const d = dx*dx+dy*dy;
+          if(d<f1){ f2=f1; f1=d; } else if(d<f2){ f2=d; }
+        }
+        const edge = Math.sqrt(f2)-Math.sqrt(f1);
+        let v = Math.max(0, 1-edge/lineW);
+        v = v*v*(3-2*v);
+        // Uneven brightness along the network, like real rippling light.
+        v *= 0.45 + 0.55*(0.5+0.5*Math.sin(TAU*(3*x/N+2*y/N)+2.1)*Math.sin(TAU*(2*x/N-3*y/N)+0.7));
+        const i4 = (y*N+x)*4;
+        img.data[i4]=255; img.data[i4+1]=255; img.data[i4+2]=255;
+        img.data[i4+3]=Math.round(v*255);
+      }
+    }
+    tctx.putImageData(img, 0, 0);
+    causticTileCanvas = tile;
+    // Soften it -- blurred on a 3x3 tiling and cropped back to the centre so
+    // the blur wraps and the tile stays seamless. Skipped where the canvas
+    // filter isn't supported; the unblurred tile is still fine.
+    try{
+      const big = document.createElement('canvas');
+      big.width = big.height = N*3;
+      const bctx = big.getContext('2d');
+      if('filter' in bctx){
+        bctx.filter = 'blur('+(N*0.006).toFixed(2)+'px)';
+        for(let i=0;i<3;i++) for(let j=0;j<3;j++) bctx.drawImage(tile, i*N, j*N);
+        const soft = document.createElement('canvas');
+        soft.width = soft.height = N;
+        soft.getContext('2d').drawImage(big, N, N, N, N, 0, 0, N, N);
+        causticTileCanvas = soft;
+      }
+    }catch(e){ /* keep the sharp tile */ }
+  }
+  const pattern = ctx.createPattern(causticTileCanvas, 'repeat');
+  if(pattern && pattern.setTransform && typeof DOMMatrix!=='undefined'){
+    const k = (6*scalePxPerFt)/causticTileCanvas.width; // one tile ~6ft across -> ~1.1ft caustic cells
+    pattern.setTransform(new DOMMatrix([k,0,0,k,0,0]));
+  }
+  return pattern;
+}
+// The pool-with-step preset's 8-point outline (see poolWithStepPoints):
+// points 1..4 are the step. For an outward ledge that quad is inside the
+// pool -- a shallow sun shelf; for an inward notch it's outside it, so
+// there's no shelf to draw. Checked geometrically (0,1,4,5 collinear) so a
+// hand-traced 8-point pool that merely happens to have 8 points isn't
+// mistaken for one.
+function poolStepShelf(el){
+  if(!el || el.presetKey!=='pool' || el.shape!=='polygon' || !el.points || el.points.length!==8) return null;
+  const P = el.points;
+  const colinear = (a,b,c)=>{
+    const cross = (b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x);
+    return Math.abs(cross) <= 1e-3*Math.max(1, Math.hypot(b.x-a.x,b.y-a.y)*Math.hypot(c.x-a.x,c.y-a.y));
+  };
+  if(!colinear(P[0],P[1],P[4]) || !colinear(P[0],P[1],P[5])) return null;
+  const quad = [P[1],P[2],P[3],P[4]];
+  const mid = {x:(P[1].x+P[2].x+P[3].x+P[4].x)/4, y:(P[1].y+P[2].y+P[3].y+P[4].y)/4};
+  if(!pointInPolygon(mid.x, mid.y, P)) return null;
+  return {quad, edge:[P[4], P[1]]};
+}
+function drawRealisticPool(ctx, bounds, scalePxPerFt, baseColor, opts){
+  const outline = (opts && opts.outline) || boundsRectPath(bounds);
+  const shelf = opts && opts.shelf;
+  const w = bounds.maxX-bounds.minX, h = bounds.maxY-bounds.minY;
+  if(w<=0 || h<=0) return;
+  const pal = poolPalette(baseColor);
+  const coping = poolCopingPx(bounds, scalePxPerFt);
+  const tileBand = Math.max(1, Math.min(scalePxPerFt*0.5, coping*0.55));
+  ctx.save();
+  ctx.clip(outline);
+  ctx.lineJoin = 'miter';
+
+  // Water body, shallow -> deep along the pool's long axis.
+  const g = w>=h ? ctx.createLinearGradient(bounds.minX,0,bounds.maxX,0) : ctx.createLinearGradient(0,bounds.minY,0,bounds.maxY);
+  g.addColorStop(0, pal.shallow); g.addColorStop(0.4, pal.mid); g.addColorStop(1, pal.deep);
+  ctx.fillStyle = g;
+  ctx.fillRect(bounds.minX, bounds.minY, w, h);
+
+  if(shelf){
+    ctx.beginPath();
+    shelf.quad.forEach((q,i)=> i ? ctx.lineTo(q.x,q.y) : ctx.moveTo(q.x,q.y));
+    ctx.closePath();
+    ctx.fillStyle = pal.shelf;
+    ctx.fill();
+  }
+
+  // Caustics, then a soft darkening along the walls for depth.
+  const caus = getCausticPattern(ctx, scalePxPerFt);
+  if(caus){
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = caus;
+    ctx.fillRect(bounds.minX, bounds.minY, w, h);
+    ctx.globalAlpha = 1;
+  }
+  // Depth: the band's blurred shadow falls inward off the walls. Shadow
+  // blur isn't affected by the canvas transform, which is fine here -- the
+  // plan and the 3D bake both draw at 1:1 pixel scale.
+  const depthW = Math.min(scalePxPerFt*2.2, Math.min(w,h)*0.22);
+  ctx.save();
+  ctx.shadowColor = 'rgba(6,45,70,0.55)';
+  ctx.shadowBlur = depthW;
+  ctx.strokeStyle = pal.tile; ctx.lineWidth = 2*(coping+tileBand);
+  ctx.stroke(outline);
+  ctx.restore();
+
+  if(shelf){
+    // Step nosing: a bright edge where the shelf drops into the pool, with
+    // a shadow falling away on the deep side.
+    const [a,b] = shelf.edge;
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = 'rgba(8,52,78,0.28)'; ctx.lineWidth = Math.max(2, scalePxPerFt*0.35);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = Math.max(1, scalePxPerFt*0.09);
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+  }
+
+  // Sun sheen across the surface.
+  const sheen = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.minX+w*0.6, bounds.minY+h*0.6);
+  sheen.addColorStop(0,'rgba(255,255,255,0.22)');
+  sheen.addColorStop(0.5,'rgba(255,255,255,0.04)');
+  sheen.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(bounds.minX, bounds.minY, w, h);
+
+  // Waterline tile band with mosaic joints.
+  ctx.strokeStyle = pal.tile; ctx.lineWidth = 2*(coping+tileBand); ctx.stroke(outline);
+  const tileSize = Math.max(2, tileBand*0.9);
+  ctx.setLineDash([Math.max(0.6, tileSize*0.12), tileSize]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.stroke(outline);
+  ctx.setLineDash([]);
+
+  // Stone coping: shadow lip, the stone itself, then paver joints.
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 2*coping + Math.max(2, coping*0.25); ctx.stroke(outline);
+  ctx.strokeStyle = '#E4DCCB'; ctx.lineWidth = 2*coping; ctx.stroke(outline);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = coping; ctx.stroke(outline);
+  const paver = Math.max(4, scalePxPerFt*2); // ~600mm pavers
+  ctx.setLineDash([Math.max(0.8, coping*0.06), paver]);
+  ctx.strokeStyle = 'rgba(90,78,60,0.55)'; ctx.lineWidth = 2*coping; ctx.stroke(outline);
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 // Deterministic pseudo-random (0..1) from a seed -- used for scattering
 // texture details that must stay put across redraws (a real Math.random()
@@ -7245,7 +7475,7 @@ function applyEdgeShading(ctx, bounds){
 // pattern features (mowed-lawn stripe width, grout lines, ...) bigger than
 // the whole capped canvas, baking what was meant to be a detailed texture
 // as a single near-flat shade instead.
-function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerFt){
+function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerFt, opts){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
   const baseColor = overrideColor || (preset ? preset.color : '#B5934C');
@@ -7376,7 +7606,7 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerF
       ctx.save();
       ctx.clip();
       const ww = bounds.maxX-bounds.minX, wh = bounds.maxY-bounds.minY;
-      ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth = Math.max(1, wh*0.012);
+      ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth = Math.max(1, Math.min(wh*0.012, scalePxPerFt*0.06));
       const rippleCount = 6;
       for(let i=1;i<=rippleCount;i++){
         const ry = bounds.minY + (wh/(rippleCount+1))*i;
@@ -7387,36 +7617,16 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerF
         }
         ctx.stroke();
       }
+      // Coping shown the way a landscape plan draws it: a second outline
+      // inset by the coping width, inside the pool's own edge.
+      const outline = (opts && opts.outline) || boundsRectPath(bounds);
+      const coping = poolCopingPx(bounds, scalePxPerFt);
+      ctx.lineJoin = 'miter';
+      ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth = coping*2+2; ctx.stroke(outline);
+      ctx.strokeStyle = BW_PAPER; ctx.lineWidth = coping*2; ctx.stroke(outline);
       ctx.restore();
     } else {
-      const grad = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
-      grad.addColorStop(0,'#6E96AF');
-      grad.addColorStop(0.55, baseColor);
-      grad.addColorStop(1,'#345670');
-      ctx.fillStyle = grad;
-      ctx.fill();
-      ctx.save();
-      ctx.clip();
-      const sheen = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.minY+(bounds.maxY-bounds.minY)*0.4);
-      sheen.addColorStop(0,'rgba(255,255,255,0.14)');
-      sheen.addColorStop(1,'rgba(255,255,255,0)');
-      ctx.fillStyle = sheen;
-      ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX-bounds.minX, bounds.maxY-bounds.minY);
-      // Soft ripple bands -- real still water always shows faint light
-      // refraction lines, not a perfectly smooth gradient.
-      const ww = bounds.maxX-bounds.minX, wh = bounds.maxY-bounds.minY;
-      ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.lineWidth=Math.max(1, wh*0.01);
-      const rippleCount = 5;
-      for(let i=1;i<=rippleCount;i++){
-        const ry = bounds.minY + (wh/(rippleCount+1))*i;
-        ctx.beginPath();
-        for(let px=bounds.minX; px<=bounds.maxX; px+=Math.max(4,ww/24)){
-          const py = ry + Math.sin((px-bounds.minX)/Math.max(ww,1)*Math.PI*2 + i)*wh*0.02;
-          if(px===bounds.minX) ctx.moveTo(px,py); else ctx.lineTo(px,py);
-        }
-        ctx.stroke();
-      }
-      ctx.restore();
+      drawRealisticPool(ctx, bounds, scalePxPerFt, baseColor, opts);
     }
   } else if(texture==='leafy'){
     const cx=(bounds.minX+bounds.maxX)/2, cy=(bounds.minY+bounds.maxY)/2;
@@ -7529,7 +7739,7 @@ function drawElement(ctx, el, selected){
   ctx.globalAlpha *= pop.alpha;
   if(pop.scale!==1) ctx.scale(pop.scale, pop.scale);
   ctx.rotate(el.rotationDeg*Math.PI/180);
-  ctx.strokeStyle = state.blackMode ? BW_INK : el.color;
+  ctx.strokeStyle = elementOutlineColor(el);
   ctx.lineWidth = 1.4;
   if(el.isCutout) ctx.setLineDash([5,4]);
   let wPx=0, hPx=0;
@@ -7553,7 +7763,7 @@ function drawElement(ctx, el, selected){
       fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color);
       ctx.beginPath();
       ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
-      applyEdgeShading(ctx, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2});
+      if(el.presetKey!=='pool') applyEdgeShading(ctx, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2});
     }
     ctx.beginPath();
     ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
@@ -7563,10 +7773,12 @@ function drawElement(ctx, el, selected){
     wPx = hPx = rPx*2;
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
-    fillMaterial(ctx, el.presetKey, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx}, el.color);
+    const circleOutline = new Path2D();
+    circleOutline.arc(0,0,rPx,0,Math.PI*2);
+    fillMaterial(ctx, el.presetKey, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx}, el.color, undefined, {outline:circleOutline});
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
-    applyEdgeShading(ctx, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx});
+    if(el.presetKey!=='pool') applyEdgeShading(ctx, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx});
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
     ctx.stroke();
@@ -7585,24 +7797,40 @@ function drawElement(ctx, el, selected){
     const pad = 4;
     ctx.strokeRect(-wPx/2-pad, -hPx/2-pad, wPx+pad*2, hPx+pad*2);
     ctx.setLineDash([]);
-    const handleDist = hPx/2 + 26;
+    const k = rotateHandleScreenScale();
+    const handleDist = hPx/2 + ROTATE_HANDLE_STALK_PX*k;
+    ctx.lineWidth = 1.5*k;
     ctx.beginPath();
     ctx.moveTo(0, -hPx/2-pad);
     ctx.lineTo(0, -handleDist);
     ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(0, -handleDist, 7, 0, Math.PI*2);
-    ctx.fillStyle = '#B5934C';
-    ctx.fill();
-    ctx.strokeStyle = '#0A1A2E';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    drawRotateKnob(ctx, 0, -handleDist);
     ctx.restore();
     if(state.dragging && state.dragging.mode==='rotate' && state.dragging.id===el.id){
       const hp = getRotationHandlePos(el);
-      drawLabelChip(ctx, hp.x, hp.y-20, Math.round(el.rotationDeg)+'°', '#B5934C');
+      drawLabelChip(ctx, hp.x, hp.y-20*k, Math.round(el.rotationDeg)+'°', '#B5934C');
     }
   }
+}
+function drawRotateKnob(ctx, x, y){
+  const k = rotateHandleScreenScale();
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.shadowColor = 'transparent';
+  ctx.beginPath();
+  ctx.arc(x, y, ROTATE_HANDLE_KNOB_PX*k, 0, Math.PI*2);
+  ctx.fillStyle = '#B5934C';
+  ctx.fill();
+  ctx.strokeStyle = '#0A1A2E';
+  ctx.lineWidth = 1.5*k;
+  ctx.stroke();
+  // A small curved arrow so it reads as "rotate", not just a dot.
+  ctx.beginPath();
+  ctx.arc(x, y, ROTATE_HANDLE_KNOB_PX*k*0.5, -Math.PI*0.9, Math.PI*0.4);
+  ctx.strokeStyle = '#0A1A2E';
+  ctx.lineWidth = 1.4*k;
+  ctx.stroke();
+  ctx.restore();
 }
 // Cut-and-move pieces store their raster as a dataURL (imgSrc); this lazily
 // decodes it into an Image once per element and re-draws once it's ready,
@@ -7619,9 +7847,31 @@ function getCutImage(el){
   }
   return img;
 }
+// The rotate handle's stalk/knob are sized in SCREEN pixels (divided by the
+// zoom), not plan pixels -- a fixed 26px stalk and 7px knob in plan pixels
+// shrank to ~2px and under 1px at a phone's fit-to-screen zoom, leaving the
+// handle effectively invisible (while its hit area, already screen-sized,
+// sat unseen just above the item).
+function rotateHandleScreenScale(){ return 1/Math.max(state.zoom, 0.01); }
+const ROTATE_HANDLE_STALK_PX = 26, ROTATE_HANDLE_KNOB_PX = 9;
+function polygonVertexCentre(points){
+  return {x: points.reduce((s,p)=>s+p.x,0)/points.length, y: points.reduce((s,p)=>s+p.y,0)/points.length};
+}
+function canRotatePolygon(el){
+  return !!(el && el.shape==='polygon' && !el.isRoom && el.points && el.points.length>=3);
+}
 function getRotationHandlePos(el){
+  const k = rotateHandleScreenScale();
+  if(el.shape==='polygon'){
+    if(state.dragging && state.dragging.mode==='rotatepoly' && state.dragging.id===el.id && state.dragging.handleX!=null){
+      const d = state.dragging;
+      return d.dispX!=null ? {x:d.dispX, y:d.dispY} : {x:d.handleX, y:d.handleY};
+    }
+    const b = polygonBounds(el.points);
+    return {x:(b.minX+b.maxX)/2, y:b.minY - ROTATE_HANDLE_STALK_PX*k};
+  }
   const halfH = (el.shape==='rect' || el.shape==='image') ? (el.hFt*state.scalePxPerFt)/2 : (el.dFt*state.scalePxPerFt)/2;
-  const handleDist = halfH + 26;
+  const handleDist = halfH + ROTATE_HANDLE_STALK_PX*k;
   const rad = el.rotationDeg*Math.PI/180;
   return { x: el.xPx + handleDist*Math.sin(rad), y: el.yPx - handleDist*Math.cos(rad) };
 }
@@ -8585,6 +8835,19 @@ function drawRoomElement(ctx, el, selected){
     ctx.restore();
   }
 }
+function polygonPath2D(points){
+  const p = new Path2D();
+  points.forEach((q,i)=> i ? p.lineTo(q.x,q.y) : p.moveTo(q.x,q.y));
+  p.closePath();
+  return p;
+}
+// A pool's own edge is its stone coping, so outline it in a darker stone
+// tone rather than a blue line drawn around the outside of the coping.
+function elementOutlineColor(el){
+  if(state.blackMode) return BW_INK;
+  if(el.presetKey==='pool' && !el.isCutout) return '#9C927E';
+  return el.color;
+}
 function drawPolygonElement(ctx, el, selected){
   if(el.points.length<3) return;
   ctx.save();
@@ -8593,7 +8856,7 @@ function drawPolygonElement(ctx, el, selected){
   ctx.moveTo(el.points[0].x, el.points[0].y);
   for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
   ctx.closePath();
-  fillMaterial(ctx, el.presetKey, polygonBounds(el.points), el.color);
+  fillMaterial(ctx, el.presetKey, polygonBounds(el.points), el.color, undefined, {outline:polygonPath2D(el.points), shelf:poolStepShelf(el)});
   // Re-establish the polygon path -- fillMaterial's texture branches (grass
   // stripes, mulch plants, ...) reset the current path with their own
   // sub-drawing, so it can't be relied on to still be the polygon outline.
@@ -8601,8 +8864,8 @@ function drawPolygonElement(ctx, el, selected){
   ctx.moveTo(el.points[0].x, el.points[0].y);
   for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
   ctx.closePath();
-  applyEdgeShading(ctx, polygonBounds(el.points));
-  ctx.strokeStyle = state.blackMode ? BW_INK : el.color;
+  if(el.presetKey!=='pool') applyEdgeShading(ctx, polygonBounds(el.points));
+  ctx.strokeStyle = elementOutlineColor(el);
   ctx.lineWidth = 1.4;
   if(el.isCutout) ctx.setLineDash([5,4]);
   strokePolyline(ctx, el.points, true);
@@ -8617,6 +8880,28 @@ function drawPolygonElement(ctx, el, selected){
     ctx.lineWidth = 1.5;
     strokePolyline(ctx, el.points, true);
     ctx.restore();
+    if(canRotatePolygon(el)){
+      // Same drag-to-rotate handle rects and circles have, above the shape.
+      const k = rotateHandleScreenScale();
+      const hp = getRotationHandlePos(el);
+      const c = polygonVertexCentre(el.points);
+      const rotating = state.dragging && state.dragging.mode==='rotatepoly' && state.dragging.id===el.id;
+      ctx.save();
+      ctx.strokeStyle = '#B5934C';
+      ctx.lineWidth = 1.5*k;
+      ctx.setLineDash(rotating ? [4*k,3*k] : []);
+      ctx.beginPath();
+      if(rotating){ ctx.moveTo(c.x, c.y); }
+      else { const b = polygonBounds(el.points); ctx.moveTo(hp.x, b.minY); }
+      ctx.lineTo(hp.x, hp.y);
+      ctx.stroke();
+      ctx.restore();
+      drawRotateKnob(ctx, hp.x, hp.y);
+      if(rotating){
+        const d = Math.round(((state.dragging.totalDeg%360)+360)%360);
+        drawLabelChip(ctx, hp.x, hp.y-20*k, d+'°', '#B5934C');
+      }
+    }
   }
 }
 
@@ -8894,8 +9179,7 @@ function uniqueLabel(base){
 }
 // Absolute canvas-point outline (in PX) for a rectangular pool with a step
 // attached to the middle of its "top" edge (in its own unrotated frame --
-// this preset has no rotate handle, same as every other traced-area
-// preset), either as a ledge added OUTWARD (the real usable step/sun-shelf
+// any rotation is applied to the finished points afterwards), either as a ledge added OUTWARD (the real usable step/sun-shelf
 // area most pools actually have -- included in the pool's own outline, so
 // it gets the same water fill and counts toward the pool's own area) or as
 // a notch cut INWARD (the original, less common "recessed step" style).
@@ -8907,6 +9191,14 @@ function uniqueLabel(base){
 // self-intersect the outline); stepD is only clamped for the inward case,
 // where it could otherwise consume the whole pool -- an outward ledge has
 // no such limit, it's just extra area sitting outside the main rectangle.
+function rotatePointsAbout(points, cx, cy, deg){
+  if(!deg) return points.map(p=>({x:p.x, y:p.y}));
+  const rad = deg*Math.PI/180, cos = Math.cos(rad), sin = Math.sin(rad);
+  return points.map(p=>{
+    const dx = p.x-cx, dy = p.y-cy;
+    return {x: cx+dx*cos-dy*sin, y: cy+dx*sin+dy*cos};
+  });
+}
 function poolWithStepPoints(cx, cy, wFt, hFt, stepWFt, stepDFt, scalePxPerFt, direction){
   const wPx = wFt*scalePxPerFt, hPx = hFt*scalePxPerFt;
   const stepWPx = Math.min(stepWFt*scalePxPerFt, wPx*0.9);
@@ -8948,7 +9240,10 @@ addElBtn.addEventListener('click', ()=>{
     if(!stepW || stepW<=0){ stepWidthInput.focus(); return; }
     const stepD = parseFloat(stepDepthInput.value);
     if(!stepD || stepD<=0){ stepDepthInput.focus(); return; }
-    el.points = poolWithStepPoints(cx, cy, toFt(w,state.unit), toFt(h,state.unit), toFt(stepW,state.unit), toFt(stepD,state.unit), state.scalePxPerFt, poolStepDirectionSelect.value);
+    el.points = rotatePointsAbout(
+      poolWithStepPoints(cx, cy, toFt(w,state.unit), toFt(h,state.unit), toFt(stepW,state.unit), toFt(stepD,state.unit), state.scalePxPerFt, poolStepDirectionSelect.value),
+      cx, cy, el.rotationDeg);
+    delete el.rotationDeg; // a polygon's points ARE its orientation
   } else if(preset.quick==='rect'){
     const w = parseFloat(widthInput.value), h = parseFloat(heightInput.value);
     if(!w || !h || w<=0 || h<=0){ widthInput.focus(); return; }
@@ -9560,13 +9855,8 @@ function renderElementsList(){
         const rotatePolyBy = (deltaDeg) => {
           if(!deltaDeg) return;
           pushUndo();
-          const pts = el.points;
-          const cx = pts.reduce((s,p)=>s+p.x,0)/pts.length, cy = pts.reduce((s,p)=>s+p.y,0)/pts.length;
-          const rad = deltaDeg*Math.PI/180, cos=Math.cos(rad), sin=Math.sin(rad);
-          el.points = pts.map(p=>{
-            const dx=p.x-cx, dy=p.y-cy;
-            return { x: cx+dx*cos-dy*sin, y: cy+dx*sin+dy*cos };
-          });
+          const c = polygonVertexCentre(el.points);
+          el.points = rotatePointsAbout(el.points, c.x, c.y, deltaDeg);
           drawOverlay(); renderElementsList();
         };
         const rotWrap = document.createElement('span');
@@ -10464,9 +10754,11 @@ function ftPos3D(el, groundWFt, groundHFt){
 // Renders the element's own material (the same fillMaterial() used on the
 // 2D canvas) onto a small offscreen canvas and returns it as a texture --
 // the ground-level 3D faces literally reuse the 2D texture work.
-function materialTextureFor3D(presetKey, color, pxW, pxH){
+function materialTextureFor3D(presetKey, color, pxW, pxH, shape){
   const canvas = document.createElement('canvas');
-  const res = 128;
+  // Pools carry fine detail (coping joints, waterline tiles, caustics) that
+  // the default 128px budget smears into mush -- give them more pixels.
+  const res = presetKey==='pool' ? 512 : 128;
   const aspect = pxW>0 && pxH>0 ? pxW/pxH : 1;
   canvas.width = aspect>=1 ? res : Math.max(16, Math.round(res*aspect));
   canvas.height = aspect>=1 ? Math.max(16, Math.round(res/aspect)) : res;
@@ -10485,7 +10777,15 @@ function materialTextureFor3D(presetKey, color, pxW, pxH){
   const effectiveScalePxPerFt = pxW>0 ? canvas.width*40/pxW : 40;
   ctx.save();
   ctx.beginPath(); ctx.rect(0,0,canvas.width,canvas.height);
-  fillMaterial(ctx, presetKey, bounds, color, effectiveScalePxPerFt);
+  let opts;
+  if(shape==='circle'){
+    // A cylinder's cap samples the inscribed circle of this square texture,
+    // so the pool's coping has to follow that circle, not the square edge.
+    const outline = new Path2D();
+    outline.ellipse(canvas.width/2, canvas.height/2, canvas.width/2, canvas.height/2, 0, 0, Math.PI*2);
+    opts = {outline};
+  }
+  fillMaterial(ctx, presetKey, bounds, color, effectiveScalePxPerFt, opts);
   ctx.restore();
   const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
@@ -11264,6 +11564,35 @@ function computeWallCollisionRects(groundWFt, groundHFt){
   });
   return rects;
 }
+function polygonPoolTexture3D(el, baseColor){
+  const s = state.scalePxPerFt;
+  const b = polygonBounds(el.points);
+  const wFt = (b.maxX-b.minX)/s, hFt = (b.maxY-b.minY)/s;
+  if(!(wFt>0 && hFt>0)) return null;
+  const res = 512;
+  const k = res/Math.max(wFt, hFt); // canvas px per ft
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(16, Math.round(wFt*k));
+  canvas.height = Math.max(16, Math.round(hFt*k));
+  const ctx = canvas.getContext('2d');
+  const toCanvas = p=>({x:(p.x-b.minX)/s*k, y:(p.y-b.minY)/s*k});
+  const pts = el.points.map(toCanvas);
+  const shelf = poolStepShelf(el);
+  const opts = {
+    outline: polygonPath2D(pts),
+    shelf: shelf ? {quad: shelf.quad.map(toCanvas), edge: shelf.edge.map(toCanvas)} : null,
+  };
+  fillMaterial(ctx, 'pool', {minX:0, minY:0, maxX:canvas.width, maxY:canvas.height}, baseColor, k, opts);
+  const tex = new THREE.CanvasTexture(canvas);
+  // Cap UV = shape coords in ft, relative to the vertex centre, with y
+  // flipped (see build3DAreaMesh). Map u,v so the texture spans the bounds.
+  const c = polygonVertexCentre(el.points);
+  const minU = (b.minX-c.x)/s, minV = -(b.maxY-c.y)/s;
+  tex.repeat.set(1/wFt, 1/hFt);
+  tex.offset.set(-minU/wFt, -minV/hFt);
+  tex.needsUpdate = true;
+  return tex;
+}
 function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   const baseColor = el.color || preset.color || '#B5934C';
   const isRoof = ROOF_PRESETS_3D.has(el.presetKey);
@@ -11292,14 +11621,21 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
     const floorLook = el.isRoom ? FLOOR_TEXTURE_3D_LOOK[ROOM_TYPE_FLOOR_TEXTURE[el.roomType]] : null;
     const roughness = floorLook ? floorLook.roughness : (AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.9);
     const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(floorLook ? floorLook.color : baseColor), roughness});
-    const mesh = new THREE.Mesh(geo, mat);
+    // A pool traced or built as a polygon (e.g. a pool with a step) gets the
+    // same realistic top texture as a rect pool. ExtrudeGeometry's cap UVs
+    // are the shape's own coordinates in feet, so the texture is mapped
+    // with repeat/offset to span exactly the polygon's bounds.
+    const poolTex = el.presetKey==='pool' ? polygonPoolTexture3D(el, baseColor) : null;
+    const mesh = new THREE.Mesh(geo, poolTex
+      ? [new THREE.MeshStandardMaterial({map:poolTex, roughness}), new THREE.MeshStandardMaterial({color:new THREE.Color('#D9D1BF'), roughness:0.9})]
+      : mat);
     mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, baseY, cy/state.scalePxPerFt - groundHFt/2);
     return mesh;
   }
 
   let wFt, hFt, geo, faceMats;
   const texTop = materialTextureFor3D(el.presetKey, baseColor,
-    (el.shape==='circle' ? el.dFt : el.wFt)*40, (el.shape==='circle' ? el.dFt : el.hFt)*40);
+    (el.shape==='circle' ? el.dFt : el.wFt)*40, (el.shape==='circle' ? el.dFt : el.hFt)*40, el.shape);
   const topRoughness = AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.85;
   const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.9});
   const topMat = new THREE.MeshStandardMaterial({map:texTop, roughness:topRoughness});
