@@ -1146,8 +1146,34 @@ const PRESETS = {
   // any light surface texture underneath it. Existing saved fences keep
   // whatever colour they already have; this only changes the starting
   // colour for newly-added ones (still user-editable via the swatch either way).
-  fence:     {label:'Fence / line',    color:'#8A93A0', texture:null,       quick:'none'},
+  // fenceStyle picks 2D line/post styling (drawPathElement) and 3D panel
+  // look (build3DPathMesh) -- see FENCE_STYLE_3D_LOOK and
+  // FENCE_TYPE_DEFAULT_HEIGHT_FT. 'fence' (plain timber paling) keeps its
+  // exact original key/colour for backward compatibility with every
+  // already-saved plan; the other styles are new.
+  fence:           {label:'Fence — Timber paling',    color:'#8A93A0', texture:null, quick:'none', fenceStyle:'paling'},
+  fence_glass:     {label:'Fence — Glass (pool safety)', color:'#8FAFC0', texture:null, quick:'none', fenceStyle:'glass'},
+  fence_colorbond: {label:'Fence — Colorbond / metal', color:'#5B5E60', texture:null, quick:'none', fenceStyle:'colorbond'},
+  fence_picket:    {label:'Fence — Picket',            color:'#E8E4D8', texture:null, quick:'none', fenceStyle:'picket'},
+  fence_chainlink: {label:'Fence — Chain-link / mesh', color:'#8B9096', texture:null, quick:'none', fenceStyle:'chainlink'},
+  // A gate is placed like a piece of furniture (drop it, drag/rotate to
+  // line up with a fence run) rather than traced -- build3DPathMesh's fence
+  // branch geometrically detects any gate sitting on a given segment (by
+  // position, not a stored host id) and cuts a real gap there, the same
+  // idea walls already use for doors, just derived from geometry instead
+  // of hostWallId+offsetFt since a hand-traced fence can be a long
+  // multi-segment run, not one fixed 2-point element like a wall.
+  gate:            {label:'Gate', color:'#7A828C', texture:'gate', quick:'rect', wM:1.0, hM:0.05},
   dimension: {label:'Dimension (measure distance)', color:'#3E7CB1', texture:null, quick:'none'},
+};
+// Real-world default height per fence style, real feet -- used only to
+// seed el.fenceHeightFt for a NEWLY-CREATED fence (never a render-time
+// fallback -- see build3DPathMesh, which keeps the exact original 3.0ft
+// fallback for any already-saved fence with no fenceHeightFt of its own).
+// A pool safety fence's 1.2m matches the standard AU minimum code height;
+// the others are ordinary real boundary/front-yard heights.
+const FENCE_TYPE_DEFAULT_HEIGHT_FT = {
+  fence: 5.91, fence_glass: 3.94, fence_colorbond: 5.91, fence_picket: 3.28, fence_chainlink: 5.91,
 };
 
 // Standard architectural default wall height (8ft / ~2.44m, a typical
@@ -1173,7 +1199,7 @@ PRESETS.wall_exterior = {label:'Wall — Exterior', color:WALL_COLOR_EXTERIOR, t
 // syncOpeningTransform() derives its actual position/rotation/depth from the
 // host wall every time that wall changes, so an opening can never end up
 // floating disconnected from the wall it was cut into.
-const OPENING_COLOR_DOOR = '#F1EEE6';
+const OPENING_COLOR_DOOR = '#FFFFFF';
 const OPENING_COLOR_WINDOW = '#BFD8E8';
 PRESETS.door_hinged = {label:'Door — Hinged', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'hinged', widthM:0.82, heightM:2.04};
 PRESETS.door_sliding = {label:'Door — Sliding', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'sliding', widthM:1.8, heightM:2.04};
@@ -1203,18 +1229,32 @@ const ROOM_TYPES = [
   {key:'pantry', label:'Pantry / scullery'},
   {key:'garage', label:'Garage'},
   {key:'alfresco', label:'Alfresco'},
+  {key:'corridor', label:'Corridor / Hallway'},
 ];
 // Which floor material each room type gets in the 2D plan (and, as a
 // representative flat colour, the 3D floor slab -- see FLOOR_TEXTURE_3D_LOOK
 // near build3DAreaMesh) -- ordinary project-home convention: wet/utility
 // areas tiled, bedrooms/living areas carpeted, a garage left bare concrete,
-// alfresco paved. 'other'/unmapped stays the original flat ROOM_FILL_COLOR
-// wash -- no assumption made for an unspecified room.
+// alfresco paved, a corridor timber. 'other'/unmapped stays the original
+// flat ROOM_FILL_COLOR wash -- no assumption made for an unspecified room.
+// This is only ever the DEFAULT -- see roomFloorTexture() below, which lets
+// any individual room override it by hand (a bedroom with tile instead of
+// carpet, say).
 const ROOM_TYPE_FLOOR_TEXTURE = {
   kitchen:'floortile', ensuite:'floortile', laundry:'floortile', pantry:'floortile',
   living:'carpet', family:'carpet', bedroom:'carpet', wir:'carpet',
-  garage:'concrete', alfresco:'paver',
+  garage:'concrete', alfresco:'paver', corridor:'wood',
 };
+// Real houses don't always follow the ROOM_TYPE_FLOOR_TEXTURE convention --
+// a bedroom with floorboards instead of carpet, a hallway tiled instead of
+// timber, ... -- so el.floorOverride (one of 'carpet'/'wood'/'floortile',
+// or unset/null to keep the roomType default) lets any individual room's
+// floor be picked by hand. The single choke point every 2D/3D render path
+// and the sidebar's own tile-size-control gating all go through, so a
+// manual choice can never drift out of sync between them.
+function roomFloorTexture(el){
+  return el.floorOverride || ROOM_TYPE_FLOOR_TEXTURE[el.roomType];
+}
 
 // Standard real-world furniture footprints (inches, width x depth as seen from
 // directly above -- these are TOP-VIEW/plan-view footprints, matching what a
@@ -3223,7 +3263,8 @@ const TYPE_GROUPS = [
   {label:'Cladding', keys:['clad_stone']},
   {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS).filter(k=>k!=='power_point')]},
   {label:'Electrical', keys:['power_point']},
-  {label:'Lines & measurement', keys:['fence','dimension']},
+  {label:'Fencing', keys:['fence','fence_glass','fence_colorbond','fence_picket','fence_chainlink','gate']},
+  {label:'Lines & measurement', keys:['dimension']},
 ];
 // Flat-material ground areas an element can be switched between after the
 // fact (see appendMaterialControl) -- the same "Site & landscaping" group
@@ -4038,6 +4079,11 @@ function finishDrawing(){
       points: pts,
       _bornAt: performance.now(),
     };
+    // Seed a real, type-appropriate default height for a brand new fence
+    // -- never touches an already-saved fence (which has no fenceHeightFt
+    // field at all and keeps rendering at build3DPathMesh's own unchanged
+    // 3.0ft fallback).
+    if(FENCE_TYPE_DEFAULT_HEIGHT_FT[el.presetKey] != null) el.fenceHeightFt = FENCE_TYPE_DEFAULT_HEIGHT_FT[el.presetKey];
     state.elements.push(el);
   }
   state.selectedId = el.id;
@@ -7624,6 +7670,29 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerF
       ctx.fillRect(bounds.minX,bounds.minY,bounds.maxX-bounds.minX,bounds.maxY-bounds.minY);
       ctx.restore();
     }
+  } else if(texture==='gate'){
+    // A gate reads as a deliberate break in the fence line it sits inside
+    // (see gateGapsForFenceSegment/splitPolylineAtGateGaps -- the fence
+    // itself is genuinely cut open here, not just covered up), so its own
+    // footprint gets the standard site-plan opening convention -- a
+    // diagonal hatch across a plain panel -- instead of one more solid
+    // flat-colour block that would just look like an unrelated object
+    // rather than a controlled gap in the boundary.
+    ctx.fillStyle = state.blackMode ? BW_PAPER : shadeColor(baseColor,0.12);
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    const gh = bounds.maxY-bounds.minY;
+    const step = Math.max(gh*1.8, 5);
+    ctx.strokeStyle = state.blackMode ? BW_INK : shadeColor(baseColor,-0.5);
+    ctx.lineWidth = Math.max(0.8, gh*0.32);
+    for(let hx=bounds.minX-gh; hx<bounds.maxX+gh; hx+=step){
+      ctx.beginPath();
+      ctx.moveTo(hx, bounds.maxY);
+      ctx.lineTo(hx+gh, bounds.minY);
+      ctx.stroke();
+    }
+    ctx.restore();
   } else {
     ctx.fillStyle = state.blackMode ? BW_PAPER : fallbackColor;
     ctx.fill();
@@ -8093,6 +8162,14 @@ function drawHedgeElement(ctx, el, selected){
 // still reads clearly as a fence instead of one thin, easy-to-miss line
 // with a mark only at each end.
 const FENCE_POST_SPACING_FT = 6;
+// Per-style detail spacing (real feet, walked the same way as posts --
+// see fencePostPositions) -- glass panel stanchions and colorbond panel
+// seams are both genuinely narrower than a 6ft timber post bay; the
+// chain-link mesh motif just needs to repeat often enough to read as a
+// woven texture without drawing every real diamond of the weave.
+const GLASS_FENCE_STANCHION_SPACING_FT = 4;
+const COLORBOND_RIB_SPACING_FT = 2.3;
+const CHAINLINK_MESH_SPACING_FT = 1.6;
 function fencePostPositions(points, spacingPx){
   const posts = [];
   let totalDist = 0, nextMarkerAt = 0;
@@ -8628,15 +8705,64 @@ function drawWallElement(ctx, el, selected){
     });
   }
 }
+// A gate cuts a real gap in the 2D fence line too, not just in 3D --
+// splits a fence's polyline into however many contiguous "solid" pieces
+// remain once every gate sitting on it (gateGapsForFenceSegment, defined
+// with the 3D builders below but a plain hoisted function declaration like
+// every other top-level function here, so calling it from earlier in the
+// file is fine) is cut out. Deliberately mirrors build3DPathMesh's own
+// gap-cutting exactly, so the 2D plan and the 3D preview never disagree
+// about where a fence actually has an opening.
+function splitPolylineAtGateGaps(points){
+  if(!points || points.length<2) return [points];
+  const scale = state.scalePxPerFt||40;
+  const pieces = [];
+  let current = [points[0]];
+  for(let i=0;i<points.length-1;i++){
+    const a=points[i], b=points[i+1];
+    const dx=b.x-a.x, dy=b.y-a.y, segLenPx=Math.hypot(dx,dy);
+    if(segLenPx<0.01) continue;
+    const ux=dx/segLenPx, uy=dy/segLenPx;
+    const gaps = gateGapsForFenceSegment(a.x,a.y,b.x,b.y)
+      .map(g=>({startPx: Math.max(0, g.offsetFt*scale - (g.wFt*scale)/2), endPx: Math.min(segLenPx, g.offsetFt*scale + (g.wFt*scale)/2)}))
+      .filter(g=>g.endPx>g.startPx)
+      .sort((g1,g2)=>g1.startPx-g2.startPx);
+    gaps.forEach(g=>{
+      if(g.startPx>0.01) current.push({x:a.x+ux*g.startPx, y:a.y+uy*g.startPx});
+      pieces.push(current);
+      current = [{x:a.x+ux*g.endPx, y:a.y+uy*g.endPx}];
+    });
+    current.push(b);
+  }
+  pieces.push(current);
+  return pieces.filter(p=>p.length>=2);
+}
+// Which 2D line/post treatment a fence preset gets -- see drawPathElement.
+// 'paling' is the original, unchanged fence look (kept as the fallback for
+// any fence preset that doesn't set its own fenceStyle, e.g. a custom or
+// legacy save). Every other style is genuinely distinct: glass is thin and
+// translucent with square aluminium-look stanchions and closer panel
+// spacing, colorbond is a thick opaque sheet with ribbed seam ticks and no
+// visible posts, picket is a light dashed rail with slim posts, chain-link
+// is a thin grey line with a small diamond mesh motif repeated along it.
 function drawPathElement(ctx, el, selected){
   if(el.points.length<2) return;
   if(el.isDimension){ drawDimensionElement(ctx, el, selected); return; }
   if(el.isWall){ drawWallElement(ctx, el, selected); return; }
   if(el.presetKey==='hedge'){ drawHedgeElement(ctx, el, selected); return; }
+  const preset = PRESETS[el.presetKey];
+  const fenceStyle = (preset && preset.fenceStyle) || 'paling';
+  // A gate sitting on this fence (see gateGapsForFenceSegment, shared with
+  // the identical 3D gap-cutting in build3DPathMesh) splits it into
+  // however many solid pieces remain once each gate's span is removed --
+  // every branch below just draws each piece exactly like it already drew
+  // the whole polyline, so a plan-view fence genuinely shows a break at a
+  // gate instead of a continuous line running straight through it, and a
+  // post/stanchion naturally lands at the edge of the opening on each side.
+  const polylinePieces = splitPolylineAtGateGaps(el.points);
   ctx.save();
   ctx.globalAlpha *= getPopState(el).alpha;
   const bwFence = state.blackMode;
-  ctx.strokeStyle = bwFence ? BW_INK : el.color;
   // Zoom here is a pure CSS scale on the canvas element (see
   // applyZoomAndLayout), not a ctx transform -- so a FIXED canvas-space
   // line width looks fine at 100% but shrinks toward a sub-pixel hairline
@@ -8645,31 +8771,154 @@ function drawPathElement(ctx, el, selected){
   // a minimum ON-SCREEN weight at any zoom, the same 1/state.zoom trick the
   // wall endpoint grip handles already use elsewhere in this file.
   const zoomFloor = Math.max(state.zoom, 0.05);
-  ctx.lineWidth = Math.max(selected ? 3.2 : 2.4, (selected ? 4.6 : 3.4)/zoomFloor);
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  strokePolyline(ctx, el.points, false);
-  const spacingPx = Math.max(10, FENCE_POST_SPACING_FT*(state.scalePxPerFt||40));
-  const posts = fencePostPositions(el.points, spacingPx);
+  const baseLineW = Math.max(selected ? 3.2 : 2.4, (selected ? 4.6 : 3.4)/zoomFloor);
   const postR = Math.max(3.4, 5/zoomFloor);
+  polylinePieces.forEach(pts=>{
   if(bwFence){
+    ctx.strokeStyle = BW_INK;
+    ctx.lineWidth = baseLineW;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    // A dashed line for picket (visible gaps between boards) and a
+    // thinner, undashed line for glass/chain-link (both read as "not a
+    // solid barrier") is enough distinction for a line-drawing view --
+    // paling/colorbond both stay a plain solid line either way.
+    if(fenceStyle==='picket') ctx.setLineDash([baseLineW*2.4, baseLineW*1.8]);
+    else if(fenceStyle==='glass' || fenceStyle==='chainlink') ctx.lineWidth = Math.max(1, baseLineW*0.6);
+    strokePolyline(ctx, pts, false);
+    ctx.setLineDash([]);
     // Fence-post ticks: a short perpendicular mark at each post -- the
     // standard architectural fence-line convention, instead of a plain dot.
-    ctx.strokeStyle = BW_INK;
-    ctx.lineWidth = Math.max(1.4, 2/zoomFloor);
-    const tick = postR*1.4;
-    posts.forEach(p=>{
+    // Colorbond gets no post ticks at all (its posts are internal, not a
+    // visible plan feature); everything else keeps the original spacing.
+    if(fenceStyle!=='colorbond'){
+      ctx.lineWidth = Math.max(1.4, 2/zoomFloor);
+      const spacingPx = Math.max(10, FENCE_POST_SPACING_FT*(state.scalePxPerFt||40));
+      const tick = postR*1.4;
+      fencePostPositions(pts, spacingPx).forEach(p=>{
+        ctx.beginPath();
+        ctx.moveTo(p.x-p.nx*tick, p.y-p.ny*tick);
+        ctx.lineTo(p.x+p.nx*tick, p.y+p.ny*tick);
+        ctx.stroke();
+      });
+    }
+  } else if(fenceStyle==='glass'){
+    // Thin, semi-transparent line (frameless/semi-framed glass reads as
+    // "barely there" from above, not an opaque barrier) with square
+    // aluminium-look stanchions at closer spacing than a timber fence's
+    // posts -- real glass pool-fence panels are usually ~1.2-1.5m wide,
+    // narrower than a 6ft timber post bay.
+    ctx.save();
+    ctx.globalAlpha *= 0.6;
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = Math.max(1.6, baseLineW*0.65);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    strokePolyline(ctx, pts, false);
+    ctx.restore();
+    const stanchionSpacingPx = Math.max(8, GLASS_FENCE_STANCHION_SPACING_FT*(state.scalePxPerFt||40));
+    const stanchionR = Math.max(2.6, 4/zoomFloor);
+    fencePostPositions(pts, stanchionSpacingPx).forEach(p=>{
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(Math.atan2(p.ny, p.nx));
+      ctx.fillStyle = 'rgba(5,9,14,0.24)';
+      ctx.fillRect(-stanchionR+0.6, -stanchionR+0.9, stanchionR*2, stanchionR*2);
+      ctx.fillStyle = '#B9C2C9';
+      ctx.fillRect(-stanchionR, -stanchionR, stanchionR*2, stanchionR*2);
+      ctx.strokeStyle = '#6E767C';
+      ctx.lineWidth = Math.max(0.8, 1.2/zoomFloor);
+      ctx.strokeRect(-stanchionR, -stanchionR, stanchionR*2, stanchionR*2);
+      ctx.restore();
+    });
+  } else if(fenceStyle==='colorbond'){
+    // A thick, fully opaque sheet -- the boldest, most solid-reading of any
+    // fence style, matching real Colorbond's flat steel panels -- with
+    // periodic short rib ticks (not posts; the posts are internal/hidden
+    // behind the sheet) suggesting panel-to-panel seams every ~0.7m, the
+    // real width of a standard Colorbond sheet.
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = Math.max(4.2, baseLineW*1.5);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    strokePolyline(ctx, pts, false);
+    ctx.strokeStyle = shadeColor(el.color, 0.18);
+    ctx.lineWidth = Math.max(1, baseLineW*0.35);
+    strokePolyline(ctx, pts, false);
+    const ribSpacingPx = Math.max(6, COLORBOND_RIB_SPACING_FT*(state.scalePxPerFt||40));
+    const ribLen = Math.max(2.6, baseLineW*0.9);
+    ctx.strokeStyle = shadeColor(el.color, -0.35);
+    ctx.lineWidth = Math.max(0.8, 1.1/zoomFloor);
+    fencePostPositions(pts, ribSpacingPx).forEach(p=>{
       ctx.beginPath();
-      ctx.moveTo(p.x-p.nx*tick, p.y-p.ny*tick);
-      ctx.lineTo(p.x+p.nx*tick, p.y+p.ny*tick);
+      ctx.moveTo(p.x-p.nx*ribLen, p.y-p.ny*ribLen);
+      ctx.lineTo(p.x+p.nx*ribLen, p.y+p.ny*ribLen);
       ctx.stroke();
     });
+  } else if(fenceStyle==='picket'){
+    // A light, dashed rail -- the dash gaps stand in for the real gaps a
+    // picket fence always has between individual boards, unlike a solid
+    // paling fence's continuous line -- with slim posts at the standard
+    // spacing.
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = Math.max(2.2, baseLineW*0.85);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+    const dashLen = Math.max(4, (state.scalePxPerFt||40)*0.18);
+    ctx.setLineDash([dashLen, dashLen*0.55]);
+    strokePolyline(ctx, pts, false);
+    ctx.setLineDash([]);
+    const spacingPx = Math.max(10, FENCE_POST_SPACING_FT*(state.scalePxPerFt||40));
+    fencePostPositions(pts, spacingPx).forEach(p=>{
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(2.2, postR*0.7), 0, Math.PI*2);
+      ctx.fillStyle = shadeColor(el.color, -0.15);
+      ctx.fill();
+      ctx.strokeStyle = shadeColor(el.color, -0.5);
+      ctx.lineWidth = Math.max(0.8, 1.1/zoomFloor);
+      ctx.stroke();
+    });
+  } else if(fenceStyle==='chainlink'){
+    // A thin grey line (mesh reads as "barely a barrier" the same way
+    // glass does, just a different material) with a small diamond motif
+    // repeated along it -- the standard architectural shorthand for wire
+    // mesh, instead of drawing every actual diamond of a real chain-link
+    // weave.
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = Math.max(1.4, baseLineW*0.55);
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    strokePolyline(ctx, pts, false);
+    const meshSpacingPx = Math.max(6, CHAINLINK_MESH_SPACING_FT*(state.scalePxPerFt||40));
+    const diamondR = Math.max(2.2, 3.2/zoomFloor);
+    ctx.strokeStyle = shadeColor(el.color, -0.3);
+    ctx.lineWidth = Math.max(0.7, 1/zoomFloor);
+    fencePostPositions(pts, meshSpacingPx).forEach(p=>{
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(Math.atan2(p.ny, p.nx));
+      ctx.beginPath();
+      ctx.moveTo(0,-diamondR); ctx.lineTo(diamondR*0.6,0); ctx.lineTo(0,diamondR); ctx.lineTo(-diamondR*0.6,0);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    });
+    const postSpacingPx = Math.max(10, FENCE_POST_SPACING_FT*(state.scalePxPerFt||40));
+    fencePostPositions(pts, postSpacingPx).forEach(p=>{
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(1.8, postR*0.55), 0, Math.PI*2);
+      ctx.fillStyle = shadeColor(el.color, -0.25);
+      ctx.fill();
+    });
   } else {
+    // Original paling (timber) look, unchanged.
+    ctx.strokeStyle = el.color;
+    ctx.lineWidth = baseLineW;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    strokePolyline(ctx, pts, false);
+    const spacingPx = Math.max(10, FENCE_POST_SPACING_FT*(state.scalePxPerFt||40));
     // Small post caps, not flat dots -- a soft ground shadow then a shaded,
     // outlined circle reads as an actual post standing on the line, the
     // same "paint a shadow, then the object" language every other icon in
     // the app already uses, just scaled down to fit a thin fence line.
-    posts.forEach(p=>{
+    fencePostPositions(pts, spacingPx).forEach(p=>{
       ctx.beginPath();
       ctx.arc(p.x+0.6, p.y+0.9, postR, 0, Math.PI*2);
       ctx.fillStyle = 'rgba(5,9,14,0.28)';
@@ -8683,6 +8932,7 @@ function drawPathElement(ctx, el, selected){
       ctx.stroke();
     });
   }
+  });
   ctx.restore();
   drawElementLabel(ctx, el, '#E7ECF2', selected);
   if(selected){
@@ -8692,7 +8942,7 @@ function drawPathElement(ctx, el, selected){
     ctx.setLineDash([6,4]);
     ctx.strokeStyle = '#B5934C';
     ctx.lineWidth = 1.5;
-    strokePolyline(ctx, el.points, false);
+    polylinePieces.forEach(pts=>strokePolyline(ctx, pts, false));
     ctx.restore();
   }
 }
@@ -8712,7 +8962,7 @@ function drawRoomElement(ctx, el, selected){
     ctx.moveTo(el.points[0].x, el.points[0].y);
     for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
     ctx.closePath();
-    const floorTexture = ROOM_TYPE_FLOOR_TEXTURE[el.roomType];
+    const floorTexture = roomFloorTexture(el);
     const pat = floorTexture ? getTilePattern(ctx, floorTexture, state.scalePxPerFt||40, el.tileSizeFt) : null;
     ctx.fillStyle = pat || (el.color || ROOM_FILL_COLOR);
     ctx.fill();
@@ -9393,10 +9643,10 @@ function renderElementsList(){
     // floortile branches both used one fixed 1ft-per-tile module with no
     // way to match what's actually being laid. Shown for any element whose
     // ACTUAL rendered texture is one of those two, whether that comes from
-    // its own preset (a Patio) or, for a room, from its roomType
-    // (kitchen/ensuite/laundry/pantry -> floortile, alfresco -> paver).
+    // its own preset (a Patio) or, for a room, from its roomType default OR
+    // a manual floorOverride (see roomFloorTexture).
     function effectiveFloorTexture(el){
-      if(el.isRoom) return ROOM_TYPE_FLOOR_TEXTURE[el.roomType];
+      if(el.isRoom) return roomFloorTexture(el);
       const p = PRESETS[el.presetKey];
       return p ? p.texture : null;
     }
@@ -9665,6 +9915,51 @@ function renderElementsList(){
         typeBadge.textContent = el.wallType==='external' ? 'external' : 'internal';
         dims.appendChild(typeBadge);
         appendVerificationControls(dims, el);
+      } else if(PRESETS[el.presetKey] && PRESETS[el.presetKey].fenceStyle){
+        // A straight (2-point) fence gets the same editable-length input a
+        // wall gets, above -- a multi-point traced boundary run keeps the
+        // plain read-only length+point-count info instead, since "the far
+        // end slides to match" only makes sense for one single segment.
+        if(el.points.length===2){
+          const lenIn3 = document.createElement('input'); lenIn3.type='number'; lenIn3.step='0.01'; lenIn3.min='0.01';
+          lenIn3.title = 'Correct this fence\'s length -- the far end slides along the same line to match';
+          lenIn3.value = formatNum(pathLengthDisplay(el.points));
+          lenIn3.addEventListener('click', e=>e.stopPropagation());
+          lenIn3.addEventListener('change', ()=>{
+            const v = parseFloat(lenIn3.value);
+            const [p1,p2] = el.points;
+            const curPx = Math.hypot(p2.x-p1.x, p2.y-p1.y);
+            if(v>0 && curPx>0 && state.scalePxPerFt){
+              pushUndo();
+              const targetPx = toFt(v, state.unit)*state.scalePxPerFt;
+              const scale = targetPx/curPx;
+              el.points[1] = { x: p1.x+(p2.x-p1.x)*scale, y: p1.y+(p2.y-p1.y)*scale };
+              drawOverlay(); renderElementsList();
+            } else {
+              lenIn3.value = formatNum(pathLengthDisplay(el.points));
+            }
+          });
+          dims.appendChild(document.createTextNode('L')); dims.appendChild(lenIn3);
+        } else {
+          const info = document.createElement('span');
+          info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
+          dims.appendChild(info);
+        }
+
+        // Height feeds the 3D preview only (build3DPathMesh) -- the 2D top
+        // view has no use for it, the same way a wall's own height input
+        // above only ever affects the 3D extrusion, never the 2D plan.
+        const fenceHIn = document.createElement('input'); fenceHIn.type='number'; fenceHIn.step='0.05'; fenceHIn.min='0.1';
+        fenceHIn.title = 'Fence height (used by the 3D preview)';
+        fenceHIn.value = formatNum(fromFt(el.fenceHeightFt||3.0, state.unit));
+        fenceHIn.addEventListener('click', e=>e.stopPropagation());
+        fenceHIn.addEventListener('change', ()=>{
+          const v = parseFloat(fenceHIn.value);
+          if(v>0){ pushUndo(); el.fenceHeightFt = toFt(v, state.unit); drawOverlay(); renderElementsList(); }
+          else fenceHIn.value = formatNum(fromFt(el.fenceHeightFt||3.0, state.unit));
+        });
+        dims.appendChild(document.createTextNode('H')); dims.appendChild(fenceHIn);
+        dims.appendChild(document.createTextNode(unitAbbrev()));
       } else {
         const info = document.createElement('span');
         info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
@@ -9705,6 +10000,25 @@ function renderElementsList(){
         warn.textContent = '(approx.)';
         dims.appendChild(warn);
       }
+      // Real houses don't always follow the room-type convention (a
+      // bedroom with floorboards instead of carpet, a hallway tiled
+      // instead of timber, ...) -- lets any room's floor be picked by
+      // hand instead of always following ROOM_TYPE_FLOOR_TEXTURE.
+      const floorSel = document.createElement('select');
+      floorSel.style.marginLeft='4px';
+      floorSel.title = 'Override this room\'s floor material -- otherwise it follows the sensible default for its room type';
+      [['', 'Auto (room default)'], ['carpet','Carpet'], ['wood','Wood'], ['floortile','Tile']].forEach(([value,label])=>{
+        const opt = document.createElement('option'); opt.value=value; opt.textContent=label;
+        floorSel.appendChild(opt);
+      });
+      floorSel.value = el.floorOverride || '';
+      floorSel.addEventListener('click', e=>e.stopPropagation());
+      floorSel.addEventListener('change', ()=>{
+        pushUndo();
+        el.floorOverride = floorSel.value || null;
+        drawOverlay(); renderElementsList();
+      });
+      dims.appendChild(floorSel);
       appendTileSizeControl(dims, el);
     } else if(el.shape==='polygon'){
       const info = document.createElement('span');
@@ -10539,6 +10853,25 @@ const FLOOR_TEXTURE_3D_LOOK = {
   carpet:    {color:'#AFA084', roughness:0.95},
   concrete:  {color:'#A8ACAE', roughness:0.85},
   paver:     {color:'#9AA0A6', roughness:0.8},
+  wood:      {color:'#9C7A54', roughness:0.55},
+};
+// Per-fenceStyle 3D look -- build3DPathMesh used to give every single fence
+// the exact same fixed 0.15ft-wide, fully opaque timber-roughness panel no
+// matter what preset it actually was, so a glass pool fence or chain-link
+// boundary looked identical to a paling fence in 3D even after the 2D view
+// told them apart. 'paling' keeps the ORIGINAL numbers exactly (backward
+// compatible with every already-saved fence, which has no fenceStyle field
+// and falls back to it) -- glass/chain-link get transparent, thin,
+// low-roughness materials so they genuinely read as "barely a barrier" in
+// 3D the same way they already do in the 2D top view, and colorbond/glass
+// get a touch of metalness since they're manufactured sheet/glass, not
+// timber.
+const FENCE_STYLE_3D_LOOK = {
+  paling:    {widthFt:0.15, roughness:0.85},
+  glass:     {widthFt:0.05, roughness:0.1,  transparent:true, opacity:0.4, metalness:0.1},
+  colorbond: {widthFt:0.06, roughness:0.45, metalness:0.35},
+  picket:    {widthFt:0.1,  roughness:0.85},
+  chainlink: {widthFt:0.03, roughness:0.6,  transparent:true, opacity:0.45, metalness:0.4},
 };
 // Roughness-only counterpart to FLOOR_TEXTURE_3D_LOOK, for every OTHER
 // polygon-shaped area preset (deck/lawn/gravel/... -- not just rooms) and
@@ -10654,6 +10987,15 @@ const WALK_ACCEL_RESPONSIVENESS = 16;
 // real-world dimension.
 const ORBIT_FOV_DEG = 50;
 const WALK_FOV_DEG = 75;
+// Orbit always keeps the neutral white backdrop (see init3DScene) -- it's a
+// dollhouse-style external survey view, not a place with a sky overhead.
+// Walkthrough is a real human-eye-height view though, so it gets a real sky:
+// white directly under a roof/ceiling (the same neutral backdrop Orbit
+// always uses, so stepping under cover never looks like a lighting glitch),
+// a genuine light sky blue the moment you step into the open air outside
+// the building -- see isPositionIndoors3D, checked every walk-mode frame.
+const SKY_COLOR_3D_INDOOR = 0xF4F5F7;
+const SKY_COLOR_3D_OUTDOOR = 0xB9DDF2;
 const state3d = {
   renderer:null, scene:null, camera:null, animId:null,
   target:{x:0,y:0,z:0}, radius:40, theta:Math.PI/4, phi:Math.PI/3.2,
@@ -10663,6 +11005,8 @@ const state3d = {
   collisionRects:[],
   lastFrameTime:0,
   clickStartPos:null, // where the user last clicked (not dragged) on the ORBIT view's ground -- Walkthrough starts there instead of always the same default room
+  indoorsLast:null, // last known "under a roof" state in walk mode, so the sky colour only updates on a genuine indoor/outdoor transition, not every frame
+  groundWFt:0, groundHFt:0,
   _teardown:null,
 };
 
@@ -11473,20 +11817,97 @@ function build3DTreeMesh(el, groundWFt, groundHFt){
   group.add(canopy);
   return group;
 }
+// A gate has no host-fence link the way a door/window has hostWallId --
+// the wall/opening system is tied to el.isWall in too many places
+// throughout the rest of the app (drag-reposition, corner-merge, collision
+// rects, hover hints, ...) to safely generalise onto fences. Instead a
+// gate is detected purely geometrically, fresh on every 3D build: its own
+// centre (xPx/yPx, exactly like any other placed rect object -- a gate has
+// no rotation dependency here, since only ITS WIDTH and WHERE IT SITS
+// along the fence matter for cutting a gap, not which way its footprint
+// rect happens to be drawn) is projected onto this one fence segment, and
+// if it lands close enough to the line (within its own half-width plus a
+// little placement slack, so the user doesn't have to click pixel-perfect
+// on the fence), it cuts a gap there. A gate near a fence it was never
+// "meant" for still cuts a gap in that fence too -- geometrically
+// indistinguishable from being meant for it, and consistent with how nothing
+// else in this app requires an explicit link between a placed object and
+// the thing geometrically nearest it.
+// Shared core of the geometric test above: is this one gate close enough
+// to this one fence SEGMENT (ax,ay)-(bx,by), in raw plan px, to belong to
+// it? Returns its position/width along the segment (real feet, from a)
+// when it does, or null when it's nowhere near this particular segment --
+// used both to cut a gap out of a fence (gateGapsForFenceSegment, below)
+// and, in reverse, to find which fence a given gate itself belongs to so
+// its own 3D mesh can borrow that fence's height/material look
+// (findHostFenceForGate).
+function gateFenceProximity(gate, ax, ay, bx, by, scale){
+  const dx=bx-ax, dy=by-ay, segLenPx=Math.hypot(dx,dy);
+  if(segLenPx<0.01) return null;
+  const ux=dx/segLenPx, uy=dy/segLenPx;
+  const gWFt = gate.wFt||1.0;
+  const gWPx = gWFt*scale;
+  const relX = gate.xPx-ax, relY = gate.yPx-ay;
+  const alongPx = relX*ux + relY*uy;
+  const perpPx = Math.abs(relX*(-uy) + relY*ux);
+  if(alongPx < -gWPx/2 || alongPx > segLenPx+gWPx/2) return null;
+  const tolerancePx = gWPx/2 + 1.5*scale;
+  if(perpPx > tolerancePx) return null;
+  return {offsetFt: alongPx/scale, wFt: gWFt};
+}
+function gateGapsForFenceSegment(ax, ay, bx, by){
+  const scale = state.scalePxPerFt||40;
+  const gaps = [];
+  currentPageElements().filter(g=>g.presetKey==='gate' && g.xPx!=null).forEach(g=>{
+    const hit = gateFenceProximity(g, ax, ay, bx, by, scale);
+    if(hit) gaps.push(hit);
+  });
+  return gaps;
+}
+// The fence element (not just a segment) a given gate geometrically sits
+// in, or null when it isn't near any fence yet -- lets the gate's own 3D
+// mesh (build3DGateMesh) inherit that fence's real height/colour/style
+// instead of guessing, so a gate reads as a gap IN that specific fence
+// rather than a generic object that happens to be nearby.
+function findHostFenceForGate(gate){
+  const scale = state.scalePxPerFt||40;
+  const fences = currentPageElements().filter(f=>f.shape==='path' && !f.isWall && f.points && ((PRESETS[f.presetKey]||{}).fenceStyle));
+  for(const f of fences){
+    for(let i=0;i<f.points.length-1;i++){
+      const a=f.points[i], b=f.points[i+1];
+      if(gateFenceProximity(gate, a.x, a.y, b.x, b.y, scale)) return f;
+    }
+  }
+  return null;
+}
 function build3DPathMesh(el, groundWFt, groundHFt){
   const pts = el.points;
   if(!pts || pts.length<2) return null;
   const isHedge = el.presetKey==='hedge';
   const isWall = !!el.isWall;
+  // A fence's own style (from its preset, e.g. 'glass'/'colorbond') picks
+  // its FENCE_STYLE_3D_LOOK entry; an already-saved fence with no matching
+  // preset (or the plain 'fence' timber preset itself) falls back to
+  // 'paling', whose numbers are the ORIGINAL hardcoded values below --
+  // this dispatch is a pure addition, never a behaviour change for any
+  // fence that existed before fenceStyle did.
+  const fenceStyle = (!isWall && !isHedge) ? (((PRESETS[el.presetKey]||{}).fenceStyle) || 'paling') : null;
+  const fenceLook = fenceStyle ? (FENCE_STYLE_3D_LOOK[fenceStyle] || FENCE_STYLE_3D_LOOK.paling) : null;
   // A traced wall's own thickness/height (real feet, exactly what the 2D
   // plan and the properties panel already use) drives the 3D box directly
-  // -- never a separate 3D-only size. Fence/hedge keep their existing
-  // fixed look, untouched.
-  const heightFt = isWall ? (el.wallHeightFt||WALL_HEIGHT_FT_3D) : (isHedge ? 3.5 : 3.0);
-  const widthFt = isWall ? (el.thicknessFt||0.1) : (isHedge ? HEDGE_WIDTH_FT : 0.15);
+  // -- never a separate 3D-only size. A fence's own fenceHeightFt (set at
+  // creation time from FENCE_TYPE_DEFAULT_HEIGHT_FT, per its type) drives
+  // its height the same way; the 3.0 fallback is only ever hit by a fence
+  // saved before fenceHeightFt existed. Hedge keeps its existing fixed
+  // look, untouched.
+  const heightFt = isWall ? (el.wallHeightFt||WALL_HEIGHT_FT_3D) : (isHedge ? 3.5 : (el.fenceHeightFt||3.0));
+  const widthFt = isWall ? (el.thicknessFt||0.1) : (isHedge ? HEDGE_WIDTH_FT : (fenceLook ? fenceLook.widthFt : 0.15));
   const color = isWall ? (el.color || WALL_COLOR_INTERIOR) : (isHedge ? '#4A7A3E' : (el.color || '#D8DEE5'));
   const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(color), roughness: isHedge?1:0.85});
+  const matOpts = {color:new THREE.Color(color), roughness: isHedge?1:(fenceLook?fenceLook.roughness:0.85)};
+  if(fenceLook && fenceLook.transparent){ matOpts.transparent = true; matOpts.opacity = fenceLook.opacity; }
+  if(fenceLook && fenceLook.metalness!=null){ matOpts.metalness = fenceLook.metalness; }
+  const mat = new THREE.MeshStandardMaterial(matOpts);
   // Same join-extension idea as the 2D thickness-band rendering (see
   // wallJoinExtension) -- without it, two walls meeting at a corner would
   // extrude as two separate boxes that don't quite cover the join, leaving
@@ -11523,23 +11944,80 @@ function build3DPathMesh(el, groundWFt, groundHFt){
       group.add(mesh);
     }
 
-    if(!openings.length){
+    // A wall's own doors/windows and a fence's own gates are reshaped into
+    // the same {offsetFt, wFt, sill, head} cut, so one loop below cuts
+    // both -- a gate's "sill" is always 0 and its "head" is always the
+    // full fence height (a plain full-height gap), while a window keeps
+    // its real sill/header box exactly as before.
+    const cuts = isWall
+      ? openings.map(o=>{
+          const sill = o.openingKind==='window' ? (o.sillHeightFt||0) : 0;
+          return {offsetFt:o.offsetFt, wFt:o.wFt||0, sill, head: sill+(o.openingHeightFt||heightFt)};
+        })
+      : (fenceStyle
+          ? gateGapsForFenceSegment(a.x, a.y, b.x, b.y).map(g=>({offsetFt:g.offsetFt, wFt:g.wFt, sill:0, head:heightFt}))
+          : []);
+
+    if(!cuts.length){
       addBox(-sExt, segLen+eExt, 0, heightFt);
       continue;
     }
     let cursor = -sExt;
-    openings.forEach(o=>{
+    cuts.sort((c1,c2)=>c1.offsetFt-c2.offsetFt).forEach(o=>{
       const halfW = (o.wFt||0)/2;
       const oStart = o.offsetFt-halfW, oEnd = o.offsetFt+halfW;
       addBox(cursor, oStart, 0, heightFt);
-      const sill = o.openingKind==='window' ? (o.sillHeightFt||0) : 0;
-      const head = sill + (o.openingHeightFt||heightFt);
-      if(sill>0.02) addBox(oStart, oEnd, 0, sill);
-      if(head < heightFt-0.02) addBox(oStart, oEnd, head, heightFt);
+      if(o.sill>0.02) addBox(oStart, oEnd, 0, o.sill);
+      if(o.head < heightFt-0.02) addBox(oStart, oEnd, o.head, heightFt);
       cursor = Math.max(cursor, oEnd);
     });
     addBox(cursor, segLen+eExt, 0, heightFt);
   }
+  return group;
+}
+// A gate is a standalone placed rect, not something hosted on a specific
+// fence (see gateGapsForFenceSegment/findHostFenceForGate above) -- so its
+// own 3D look is borrowed from whichever real fence it geometrically sits
+// in, the same height/colour/material as that fence, so it genuinely reads
+// as the gap IN that fence rather than an unrelated object dropped nearby.
+// A gate not yet near any fence still gets a sensible plain-timber default
+// rather than an invisible/ankle-high slab. A bare panel at the fence's own
+// height would still just look like an unbroken stretch of THAT fence, so
+// it also gets a couple of dark hardware bars and a latch block -- the same
+// "a bare slab isn't a door, give it a knob" idea build3DDoorLeafMesh
+// already uses for wall-hosted doors.
+function build3DGateMesh(el, groundWFt, groundHFt){
+  const wFt = el.wFt||1.0;
+  const hostFence = findHostFenceForGate(el);
+  const fenceStyle = hostFence ? (((PRESETS[hostFence.presetKey]||{}).fenceStyle)||'paling') : 'paling';
+  const look = FENCE_STYLE_3D_LOOK[fenceStyle] || FENCE_STYLE_3D_LOOK.paling;
+  const heightFt = hostFence ? (hostFence.fenceHeightFt||3.0) : FENCE_TYPE_DEFAULT_HEIGHT_FT.fence;
+  const color = (hostFence && hostFence.color) || el.color || PRESETS.fence.color;
+  const panelThickFt = look.widthFt;
+
+  const group = new THREE.Group();
+  const matOpts = {color:new THREE.Color(color), roughness:look.roughness};
+  if(look.transparent){ matOpts.transparent = true; matOpts.opacity = look.opacity; }
+  if(look.metalness!=null) matOpts.metalness = look.metalness;
+  const mat = new THREE.MeshStandardMaterial(matOpts);
+  const panel = new THREE.Mesh(new THREE.BoxGeometry(wFt, heightFt, panelThickFt), mat);
+  panel.position.y = heightFt/2;
+  group.add(panel);
+
+  const hwMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#2A2E33'), roughness:0.5, metalness:0.4});
+  const railH = Math.max(0.08, heightFt*0.06);
+  [heightFt*0.15, heightFt*0.85].forEach(midY=>{
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(wFt*0.94, railH, panelThickFt+0.02), hwMat);
+    rail.position.y = midY;
+    group.add(rail);
+  });
+  const latch = new THREE.Mesh(new THREE.BoxGeometry(wFt*0.06, heightFt*0.18, panelThickFt+0.03), hwMat);
+  latch.position.set(wFt/2-wFt*0.06, heightFt*0.5, 0);
+  group.add(latch);
+
+  const pos = ftPos3D(el, groundWFt, groundHFt);
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
 }
 // Walkthrough collision data: one oriented rectangle (centre, half-length
@@ -11639,13 +12117,14 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
     const geo = new THREE.ExtrudeGeometry(shape, {depth:heightFt, bevelEnabled:false});
     geo.rotateX(-Math.PI/2);
     geo.translate(0, heightFt, 0);
-    // A room's own floor material (tile/carpet/concrete/paver, by roomType
-    // -- see FLOOR_TEXTURE_3D_LOOK) takes priority over its plain baseColor,
+    // A room's own floor material (tile/carpet/concrete/paver/wood, by
+    // roomType default or a manual floorOverride -- see roomFloorTexture
+    // and FLOOR_TEXTURE_3D_LOOK) takes priority over its plain baseColor,
     // same idea as the 2D fill; every other polygon-shaped preset (a
     // hand-traced deck/lawn/pool/...) keeps its own flat baseColor, but
     // still picks up a per-material roughness (AREA_MATERIAL_ROUGHNESS_3D)
     // instead of one fixed 0.9 for every material regardless of what it is.
-    const floorLook = el.isRoom ? FLOOR_TEXTURE_3D_LOOK[ROOM_TYPE_FLOOR_TEXTURE[el.roomType]] : null;
+    const floorLook = el.isRoom ? FLOOR_TEXTURE_3D_LOOK[roomFloorTexture(el)] : null;
     const roughness = floorLook ? floorLook.roughness : (AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.9);
     const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(floorLook ? floorLook.color : baseColor), roughness});
     const mesh = new THREE.Mesh(geo, mat);
@@ -11732,6 +12211,7 @@ function build3DElementMesh(el, groundWFt, groundHFt){
   if(!preset) return null;
   if(preset.icon) return build3DFurnitureMesh(el, preset, groundWFt, groundHFt);
   if(el.presetKey==='tree') return build3DTreeMesh(el, groundWFt, groundHFt);
+  if(el.presetKey==='gate') return build3DGateMesh(el, groundWFt, groundHFt);
   if(el.shape==='path') return build3DPathMesh(el, groundWFt, groundHFt);
   return build3DAreaMesh(el, preset, groundWFt, groundHFt);
 }
@@ -12093,6 +12573,25 @@ function applyDefaultShadowPolicy(obj){
   if(obj.castShadow!==false) obj.castShadow = true;
   obj.receiveShadow = true;
 }
+// "Under a roof", for the walk-mode sky colour above -- true when the
+// camera's ground position falls inside ANY room polygon (every room
+// already gets a real ceiling mesh via build3DRoomCeilingMesh, whether or
+// not the user also traced a decorative roof over it) OR inside an
+// explicit roof-preset element (a carport/alfresco roof traced over an
+// area that isn't itself a room). Reuses hitTest() -- the exact same
+// point-in-shape test the 2D plan's own click-selection already relies on
+// -- fed the camera's world (x,z) converted back into the plan's own px
+// space, the inverse of the ax=a.x/scalePxPerFt-groundWFt/2 convention
+// every 3D mesh builder in this file already uses.
+function isPositionIndoors3D(worldX, worldZ){
+  if(!state3d.groundWFt) return false;
+  const scale = state.scalePxPerFt||40;
+  const px = (worldX + state3d.groundWFt/2) * scale;
+  const py = (worldZ + state3d.groundHFt/2) * scale;
+  return currentPageElements().some(el =>
+    (el.isRoom || ROOF_PRESETS_3D.has(el.presetKey)) && hitTest(el, px, py)
+  );
+}
 function init3DScene(){
   if(state3d.renderer) teardown3DScene(); // never build a second scene/loop on top of a still-running one
   const canvas = preview3dCanvas;
@@ -12122,13 +12621,15 @@ function init3DScene(){
   // rather than a full-scale space photographed under open sky. A neutral
   // white backdrop is the standard architectural-visualisation choice for
   // exactly this reason (background and fog share one colour so there's no
-  // visible "wall" where the fog reaches its far distance).
-  const SKY_COLOR_3D = 0xF4F5F7;
-  scene.background = new THREE.Color(SKY_COLOR_3D);
+  // visible "wall" where the fog reaches its far distance). Orbit keeps
+  // this fixed white always; Walkthrough swaps it live for a real sky
+  // colour as the camera moves indoors/outdoors -- see the render loop
+  // below and set3DMode.
+  scene.background = new THREE.Color(SKY_COLOR_3D_INDOOR);
 
   const groundWFt = Math.max(20, bgCanvas.width/state.scalePxPerFt);
   const groundHFt = Math.max(20, bgCanvas.height/state.scalePxPerFt);
-  scene.fog = new THREE.Fog(SKY_COLOR_3D, Math.max(groundWFt,groundHFt)*1.2, Math.max(groundWFt,groundHFt)*5);
+  scene.fog = new THREE.Fog(SKY_COLOR_3D_INDOOR, Math.max(groundWFt,groundHFt)*1.2, Math.max(groundWFt,groundHFt)*5);
 
   const camera = new THREE.PerspectiveCamera(ORBIT_FOV_DEG, w/h, 0.1, 5000);
 
@@ -12193,6 +12694,16 @@ function init3DScene(){
     if(state3d.mode==='walk'){
       updateWalkMovement(dt);
       updateWalkCamera3D();
+      // Only touch the scene when the indoor/outdoor state actually flips
+      // -- not a fresh THREE.Color (and fog colour) every single frame for
+      // no reason.
+      const indoors = isPositionIndoors3D(state3d.walk.x, state3d.walk.z);
+      if(indoors !== state3d.indoorsLast){
+        state3d.indoorsLast = indoors;
+        const sky = indoors ? SKY_COLOR_3D_INDOOR : SKY_COLOR_3D_OUTDOOR;
+        scene.background = new THREE.Color(sky);
+        if(scene.fog) scene.fog.color = new THREE.Color(sky);
+      }
     }
     renderer.render(scene, camera);
   };
@@ -12216,11 +12727,34 @@ function set3DMode(mode){
     state3d.walk.x = start.x; state3d.walk.z = start.z;
     state3d.walk.yaw = 0; state3d.walk.pitch = 0; state3d.walk.vx = 0; state3d.walk.vz = 0;
     updateWalkCamera3D();
+    // Set the sky correctly for wherever you're dropped in immediately --
+    // otherwise it would stay whatever colour Orbit last had (always white)
+    // until the render loop's OWN indoor/outdoor check first flips it,
+    // which never happens at all if you're dropped somewhere and never
+    // cross a boundary. Guarded on state3d.scene existing at all: set3DMode
+    // is also exercised directly (against a hand-written camera stub, no
+    // real scene) by tests targeting its camera/hint-text logic in
+    // isolation, and skipping the sky update in that case is correct
+    // behaviour, not just test-friendliness -- there is no scene to colour.
+    const indoors = isPositionIndoors3D(state3d.walk.x, state3d.walk.z);
+    state3d.indoorsLast = indoors;
+    if(state3d.scene){
+      const startSky = indoors ? SKY_COLOR_3D_INDOOR : SKY_COLOR_3D_OUTDOOR;
+      state3d.scene.background = new THREE.Color(startSky);
+      if(state3d.scene.fog) state3d.scene.fog.color = new THREE.Color(startSky);
+    }
     preview3dHint.textContent = 'Click to look around · WASD or arrow keys to move';
   } else {
     // Leaving walkthrough with the cursor still locked would strand it
     // hidden over a camera mode that no longer uses mouselook at all.
     if(document.pointerLockElement===preview3dCanvas) document.exitPointerLock();
+    // Orbit always keeps the fixed neutral-white backdrop, regardless of
+    // whatever the sky last was in Walkthrough.
+    state3d.indoorsLast = null;
+    if(state3d.scene){
+      state3d.scene.background = new THREE.Color(SKY_COLOR_3D_INDOOR);
+      if(state3d.scene.fog) state3d.scene.fog.color = new THREE.Color(SKY_COLOR_3D_INDOOR);
+    }
     updateCamera3D();
     preview3dHint.textContent = 'Drag to rotate · scroll or pinch to zoom · right-drag to pan';
   }
