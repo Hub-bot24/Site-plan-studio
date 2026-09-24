@@ -10276,6 +10276,62 @@ const AREA_MATERIAL_ROUGHNESS_3D = {
   wood:0.55, paver:0.8, concrete:0.85, concrete_plain:0.85, gravel:0.95,
   grass:0.92, turf:0.85, mulch:0.95, water:0.15,
 };
+// A garden bed's usual flat-texture treatment (materialTextureFor3D baking
+// its 2D mulch-and-plants painting onto a thin slab's top face) never reads
+// as "actual plants" from an angled 3D camera, however good that painted
+// image is -- direct feedback ("garden in 3d is flat") confirmed a texture
+// fix alone can't solve this. Real raised shrub volume needs real 3D
+// geometry instead: a squashed SphereGeometry per plant (the exact
+// technique build3DTreeMesh's own canopy already uses) scattered across the
+// bed and sitting on top of its mulch base.
+const GARDEN_PLANT_COLORS_3D = ['#5C8752','#4B7A46','#6B9760','#3F6B3B'];
+// Real-world shrub spacing, deliberately independent of the plan's own
+// current 2D zoom (state.scalePxPerFt) -- unlike the 2D mulch texture's own
+// scatter (a zoom-relative drawing convention for the flat plan view), a
+// garden bed's real 3D planting density has to stay the same no matter what
+// scale the user happens to be viewing the 2D plan at.
+const GARDEN_PLANT_SPACING_FT = 2.2;
+// Candidate shrub spots across a LOCAL feet bounding box (same
+// spacing/skip/jitter shape as the 2D mulch scatter, translated to a fixed
+// real-world spacing) -- takes the box's own min/max rather than assuming
+// it's centred on the origin, since a traced bed's true bounding box isn't
+// generally centred on its centroid (where local (0,0) sits). The caller
+// filters each spot against the actual bed outline (a plain rect bounds
+// check, or pointInPolygon for a traced bed) before building a mesh for
+// it, so an irregular bed's shrubs never spill past its own edge.
+function gardenPlantSpotsFt(minXFt, minYFt, maxXFt, maxYFt){
+  const spots = [];
+  let idx = 0;
+  for(let gy=minYFt-GARDEN_PLANT_SPACING_FT; gy<maxYFt+GARDEN_PLANT_SPACING_FT; gy+=GARDEN_PLANT_SPACING_FT){
+    for(let gx=minXFt-GARDEN_PLANT_SPACING_FT; gx<maxXFt+GARDEN_PLANT_SPACING_FT; gx+=GARDEN_PLANT_SPACING_FT){
+      idx++;
+      const r1=seededRand(idx*7.13+1), r2=seededRand(idx*13.7+5), r3=seededRand(idx*3.3+9), r4=seededRand(idx*17.1+11);
+      if(r1 < 0.22) continue; // skip some spots so it isn't a rigid grid
+      const x = gx + (r2-0.5)*GARDEN_PLANT_SPACING_FT*0.7;
+      const z = gy + (r3-0.5)*GARDEN_PLANT_SPACING_FT*0.7;
+      const radiusFt = GARDEN_PLANT_SPACING_FT*0.28*(0.7+r1*0.6);
+      const heightScale = 1.3 + r4*0.5; // a real rounded shrub stands somewhat taller than a perfect sphere its own width
+      spots.push({x, z, radiusFt, heightScale, colorIdx: idx});
+    }
+  }
+  return spots;
+}
+// Adds one squashed-sphere shrub mesh per spot (filtered through
+// containsFn) to group, sitting on top of baseY. Shared by both the rect
+// and polygon branches of build3DAreaMesh below.
+function addGardenPlantMeshes(group, minXFt, minYFt, maxXFt, maxYFt, containsFn, baseY){
+  gardenPlantSpotsFt(minXFt, minYFt, maxXFt, maxYFt).forEach(spot=>{
+    if(containsFn && !containsFn(spot.x, spot.z)) return;
+    const color = GARDEN_PLANT_COLORS_3D[spot.colorIdx % GARDEN_PLANT_COLORS_3D.length];
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(spot.radiusFt, 8, 6),
+      new THREE.MeshStandardMaterial({color:new THREE.Color(color), roughness:0.95})
+    );
+    mesh.scale.y = spot.heightScale;
+    mesh.position.set(spot.x, baseY+spot.radiusFt*spot.heightScale, spot.z);
+    group.add(mesh);
+  });
+}
 const FURNITURE_HEIGHT_FT_3D = {
   bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
   table_dining_round4:2.4, table_dining_round6:2.4, table_dining_round8:2.4,
@@ -11229,6 +11285,22 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
     const roughness = floorLook ? floorLook.roughness : (AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.9);
     const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(floorLook ? floorLook.color : baseColor), roughness});
     const mesh = new THREE.Mesh(geo, mat);
+    if(el.presetKey==='gardenbed'){
+      const group = new THREE.Group();
+      group.add(mesh);
+      // World-space (x,z) footprint, NOT the shape's own y-flipped local
+      // space `shape` above was built in (that flip exists only because
+      // ExtrudeGeometry's rotateX(-90deg) un-flips it again -- ftPos3D's
+      // own pos.z = el.yPx/scale - groundHFt/2 shows the same direct,
+      // unflipped canvas-Y -> world-Z mapping every other element already
+      // uses, so spot positions and the containment check stay in that
+      // same convention here too.
+      const worldPts = el.points.map(p=>({x:(p.x-cx)/state.scalePxPerFt, y:(p.y-cy)/state.scalePxPerFt}));
+      const b = polygonBounds(worldPts);
+      addGardenPlantMeshes(group, b.minX, b.minY, b.maxX, b.maxY, (x,z)=>pointInPolygon(x,z,worldPts), heightFt);
+      group.position.set(cx/state.scalePxPerFt - groundWFt/2, baseY, cy/state.scalePxPerFt - groundHFt/2);
+      return group;
+    }
     mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, baseY, cy/state.scalePxPerFt - groundHFt/2);
     return mesh;
   }
@@ -11252,6 +11324,18 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   }
   const mesh = new THREE.Mesh(geo, faceMats);
   const pos = ftPos3D(el, groundWFt, groundHFt);
+  if(el.shape==='rect' && el.presetKey==='gardenbed'){
+    // Whole group (base slab + shrubs) shares one position/rotation, same
+    // as the plain mesh below would have -- shrubs need to move and turn
+    // together with the bed, not independently.
+    const group = new THREE.Group();
+    mesh.position.set(0, heightFt/2, 0); // local to the group; the group itself carries baseY
+    group.add(mesh);
+    addGardenPlantMeshes(group, -wFt/2, -hFt/2, wFt/2, hFt/2, (x,z)=>Math.abs(x)<=wFt/2 && Math.abs(z)<=hFt/2, heightFt);
+    group.position.set(pos.x, baseY, pos.z);
+    group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+    return group;
+  }
   mesh.position.set(pos.x, baseY+heightFt/2, pos.z);
   if(el.shape==='rect') mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return mesh;
