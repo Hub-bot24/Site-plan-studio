@@ -8443,18 +8443,27 @@ function drawPathElement(ctx, el, selected){
   ctx.globalAlpha *= getPopState(el).alpha;
   const bwFence = state.blackMode;
   ctx.strokeStyle = bwFence ? BW_INK : el.color;
-  ctx.lineWidth = selected ? 2.6 : 1.8;
+  // Zoom here is a pure CSS scale on the canvas element (see
+  // applyZoomAndLayout), not a ctx transform -- so a FIXED canvas-space
+  // line width looks fine at 100% but shrinks toward a sub-pixel hairline
+  // once the whole plan is zoomed out to fit the screen, which is the most
+  // common way a property's fence line actually gets looked at. Floored to
+  // a minimum ON-SCREEN weight at any zoom, the same 1/state.zoom trick the
+  // wall endpoint grip handles already use elsewhere in this file.
+  const zoomFloor = Math.max(state.zoom, 0.05);
+  ctx.lineWidth = Math.max(selected ? 3.2 : 2.4, (selected ? 4.6 : 3.4)/zoomFloor);
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   strokePolyline(ctx, el.points, false);
   const spacingPx = Math.max(10, FENCE_POST_SPACING_FT*(state.scalePxPerFt||40));
   const posts = fencePostPositions(el.points, spacingPx);
+  const postR = Math.max(3.4, 5/zoomFloor);
   if(bwFence){
     // Fence-post ticks: a short perpendicular mark at each post -- the
     // standard architectural fence-line convention, instead of a plain dot.
     ctx.strokeStyle = BW_INK;
-    ctx.lineWidth = 1.2;
-    const tick = 4.5;
+    ctx.lineWidth = Math.max(1.4, 2/zoomFloor);
+    const tick = postR*1.4;
     posts.forEach(p=>{
       ctx.beginPath();
       ctx.moveTo(p.x-p.nx*tick, p.y-p.ny*tick);
@@ -8468,15 +8477,15 @@ function drawPathElement(ctx, el, selected){
     // the app already uses, just scaled down to fit a thin fence line.
     posts.forEach(p=>{
       ctx.beginPath();
-      ctx.arc(p.x+0.6, p.y+0.9, 3.2, 0, Math.PI*2);
+      ctx.arc(p.x+0.6, p.y+0.9, postR, 0, Math.PI*2);
       ctx.fillStyle = 'rgba(5,9,14,0.28)';
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+      ctx.arc(p.x, p.y, postR-0.2, 0, Math.PI*2);
       ctx.fillStyle = shadeColor(el.color, -0.1);
       ctx.fill();
       ctx.strokeStyle = shadeColor(el.color, -0.5);
-      ctx.lineWidth = 1;
+      ctx.lineWidth = Math.max(1, 1.4/zoomFloor);
       ctx.stroke();
     });
   }
