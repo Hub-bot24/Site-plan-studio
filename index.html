@@ -5536,39 +5536,105 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
       ctx.restore();
     }
   } else if(icon==='sofa' || icon==='armchair'){
+    // Soft ground-contact shadow first, matching every other "object
+    // sitting on the plan" icon (vehicles, firepits, ...) -- flat shaded
+    // rectangles with no shadow at all read as a diagram, not a real piece
+    // of furniture sitting in the room.
+    ctx.save();
+    ctx.shadowColor = 'rgba(5,9,14,0.45)';
+    ctx.shadowBlur = short*0.14;
+    ctx.shadowOffsetX = short*0.03;
+    ctx.shadowOffsetY = short*0.05;
+    ctx.fillStyle = 'rgba(5,9,14,0.5)';
     roundRectPath(ctx,x,y,w,h,short*0.16);
-    const seatGrad = ctx.createLinearGradient(x,y,x,y+h);
-    seatGrad.addColorStop(0, shadeColor(baseColor,0.16));
-    seatGrad.addColorStop(1, shadeColor(baseColor,-0.02));
-    ctx.fillStyle = seatGrad;
     ctx.fill();
-    const backH = h*0.24;
-    roundRectPath(ctx,x,y,w,backH,short*0.14);
-    ctx.fillStyle = shadeColor(baseColor,-0.22);
-    ctx.fill();
-    const armW = w*(icon==='armchair'?0.22:0.12);
-    ctx.fillStyle = shadeColor(baseColor,-0.12);
-    roundRectPath(ctx,x,y,armW,h,short*0.14); ctx.fill();
-    roundRectPath(ctx,x+w-armW,y,armW,h,short*0.14); ctx.fill();
+    ctx.restore();
+
+    const armW = w*(icon==='armchair'?0.24:0.13);
+    const backH = h*0.26;
     const seats = icon==='armchair' ? 1 : (w>h*2.1 ? 3 : 2);
-    ctx.strokeStyle='rgba(0,0,0,0.16)'; ctx.lineWidth=1.2;
-    for(let i=1;i<seats;i++){
-      const lx = x+armW+(w-armW*2)*(i/seats);
-      ctx.beginPath(); ctx.moveTo(lx,y+backH); ctx.lineTo(lx,y+h-short*0.03); ctx.stroke();
-    }
+
+    // Frame -- the darkest layer, showing only as a thin margin once the
+    // arms and cushions are drawn on top (real upholstered furniture shows
+    // a bit of frame/piping around each cushion, not wall-to-wall fabric
+    // with a couple of hairline seams cut into it).
     roundRectPath(ctx,x,y,w,h,short*0.16);
-    ctx.strokeStyle=shadeColor(baseColor,-0.35); ctx.lineWidth=1.4; ctx.stroke();
+    ctx.fillStyle = shadeColor(baseColor,-0.32);
+    ctx.fill();
+
+    // Arms -- rounded, gently domed via their own top-lit gradient.
+    [x, x+w-armW].forEach(ax=>{
+      roundRectPath(ctx,ax,y,armW,h,short*0.15);
+      const ag = ctx.createLinearGradient(ax,y,ax,y+h);
+      ag.addColorStop(0, shadeColor(baseColor,0.02));
+      ag.addColorStop(0.5, shadeColor(baseColor,-0.10));
+      ag.addColorStop(1, shadeColor(baseColor,-0.22));
+      ctx.fillStyle = ag;
+      ctx.fill();
+    });
+
+    // Individual seat cushions -- real rounded, gapped cushions (each its
+    // own puffy top-lit gradient) instead of one flat seat slab cut by thin
+    // divider lines.
+    const seatY = y+backH, seatH = h-backH-short*0.03;
+    const seatSpan = w-armW*2, seatGap = short*0.025;
+    const cushionW = (seatSpan-seatGap*(seats-1))/seats;
+    for(let i=0;i<seats;i++){
+      const cx = x+armW+i*(cushionW+seatGap);
+      roundRectPath(ctx, cx, seatY, cushionW, seatH, short*0.11);
+      const cg = ctx.createLinearGradient(cx,seatY,cx,seatY+seatH);
+      cg.addColorStop(0, shadeColor(baseColor,0.20));
+      cg.addColorStop(0.55, shadeColor(baseColor,0.02));
+      cg.addColorStop(1, shadeColor(baseColor,-0.14));
+      ctx.fillStyle = cg;
+      ctx.fill();
+    }
+
+    // Back cushions -- one per seat, sitting along the top backrest band.
+    const backGap = short*0.02;
+    const backCushW = (seatSpan-backGap*(seats-1))/seats;
+    for(let i=0;i<seats;i++){
+      const bx = x+armW+i*(backCushW+backGap);
+      roundRectPath(ctx, bx, y+short*0.03, backCushW, backH-short*0.05, short*0.10);
+      const bg = ctx.createLinearGradient(bx,y,bx,y+backH);
+      bg.addColorStop(0, shadeColor(baseColor,0.10));
+      bg.addColorStop(1, shadeColor(baseColor,-0.16));
+      ctx.fillStyle = bg;
+      ctx.fill();
+    }
+
+    roundRectPath(ctx,x,y,w,h,short*0.16);
+    ctx.strokeStyle=shadeColor(baseColor,-0.4); ctx.lineWidth=1.4; ctx.stroke();
   } else if(icon==='sofa_corner'){
     // Drawn as an L in its default (unrotated) orientation -- arm along the
     // top, arm along the left, corner seat where they meet -- the same
     // rotation handle everything else uses turns it to face any corner.
+    // Same ground-contact shadow as sofa/armchair.
+    ctx.save();
+    ctx.shadowColor = 'rgba(5,9,14,0.45)';
+    ctx.shadowBlur = short*0.14;
+    ctx.shadowOffsetX = short*0.03;
+    ctx.shadowOffsetY = short*0.05;
+    ctx.fillStyle = 'rgba(5,9,14,0.5)';
+    ctx.beginPath();
+    ctx.moveTo(x,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+short*0.36); ctx.lineTo(x+short*0.36,y+short*0.36);
+    ctx.lineTo(x+short*0.36,y+h); ctx.lineTo(x,y+h); ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
     const armDepth = short*0.36;
-    ctx.fillStyle = shadeColor(baseColor,0.05);
+    const seatGrad = ctx.createLinearGradient(x,y,x+armDepth*0.7,y+armDepth*0.7);
+    seatGrad.addColorStop(0, shadeColor(baseColor,0.20));
+    seatGrad.addColorStop(1, shadeColor(baseColor,0.0));
+    ctx.fillStyle = seatGrad;
     roundRectPath(ctx,x,y,w,armDepth,short*0.06); ctx.fill();
     roundRectPath(ctx,x,y,armDepth,h,short*0.06); ctx.fill();
 
     const backT = armDepth*0.3;
-    ctx.fillStyle = shadeColor(baseColor,-0.2);
+    const backGrad = ctx.createLinearGradient(x,y,x,y+backT);
+    backGrad.addColorStop(0, shadeColor(baseColor,-0.06));
+    backGrad.addColorStop(1, shadeColor(baseColor,-0.24));
+    ctx.fillStyle = backGrad;
     ctx.fillRect(x,y,w,backT);
     ctx.fillRect(x,y,backT,h);
 
@@ -6180,16 +6246,50 @@ function drawVehicleIcon(ctx, icon, x, y, w, h, baseColor){
     roundRectPath(ctx, gx,gy,gw,gh, rad);
     ctx.stroke();
   };
-  const doorSeam = (frac)=>{
-    ctx.strokeStyle = 'rgba(0,0,0,0.20)';
-    ctx.lineWidth = Math.max(0.75, short*0.01);
-    ctx.beginPath();
-    ctx.moveTo(x+w*0.08, y+h*frac); ctx.lineTo(x+w*0.92, y+h*frac);
+  // Same gradient/sheen/stroke treatment as paintGlass, but over an
+  // arbitrary path (pathFn draws it, doesn't fill it) instead of a plain
+  // rounded rect -- needed for the tapered cabin lozenge below.
+  const paintGlassPath = (pathFn, gx, gy, gw, gh)=>{
+    pathFn();
+    const g = ctx.createLinearGradient(gx,gy,gx+gw,gy+gh);
+    g.addColorStop(0,'#84A0B0');
+    g.addColorStop(0.45,'#3C5468');
+    g.addColorStop(1,'#182028');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.save();
+    pathFn(); ctx.clip();
+    const sheen = ctx.createLinearGradient(gx,gy,gx+gw*0.5,gy+gh);
+    sheen.addColorStop(0,'rgba(255,255,255,0.40)');
+    sheen.addColorStop(0.28,'rgba(255,255,255,0.08)');
+    sheen.addColorStop(0.42,'rgba(255,255,255,0)');
+    ctx.fillStyle = sheen;
+    ctx.fillRect(gx,gy,gw,gh);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(8,13,18,0.75)';
+    ctx.lineWidth = Math.max(0.75, short*0.012);
+    pathFn();
     ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  };
+  // ONE tapered "greenhouse" cabin shape -- narrow at the windshield base
+  // and the rear glass, widest through the doors -- reads as a real car
+  // roof from directly above. Every reference photo shows the glass as one
+  // continuous lozenge, not front glass / opaque roof slab / rear glass as
+  // three stacked horizontal bands (what this drew before).
+  const pathCabin = (frontY, rearY, frontW, shoulderW, rearW, shoulderFrac)=>{
+    const cx = x+w/2;
+    const shF = frontY + (rearY-frontY)*shoulderFrac;
+    const shR = rearY - (rearY-frontY)*shoulderFrac;
     ctx.beginPath();
-    ctx.moveTo(x+w*0.08, y+h*frac+Math.max(1,short*0.008)); ctx.lineTo(x+w*0.92, y+h*frac+Math.max(1,short*0.008));
-    ctx.stroke();
+    ctx.moveTo(cx-frontW/2, frontY);
+    ctx.lineTo(cx+frontW/2, frontY);
+    ctx.lineTo(cx+shoulderW/2, shF);
+    ctx.lineTo(cx+shoulderW/2, shR);
+    ctx.lineTo(cx+rearW/2, rearY);
+    ctx.lineTo(cx-rearW/2, rearY);
+    ctx.lineTo(cx-shoulderW/2, shR);
+    ctx.lineTo(cx-shoulderW/2, shF);
+    ctx.closePath();
   };
 
   if(isUte){
@@ -6206,9 +6306,15 @@ function drawVehicleIcon(ctx, icon, x, y, w, h, baseColor){
     ctx.moveTo(x+w*0.1, y+h*0.05);
     ctx.quadraticCurveTo(x+w*0.5, y+h*0.02, x+w*0.9, y+h*0.05);
     ctx.stroke();
-    paintGlass(x+w*0.14, y+h*0.075, w*0.72, cabH*0.40, short*0.05);
-    roundRectPath(ctx, x+w*0.10, y+cabH*0.46, w*0.80, cabH*0.40, short*0.06);
-    const cabGrad = ctx.createLinearGradient(x,y+cabH*0.46,x,y+cabH*0.86);
+    const cabGlassY = y+h*0.075, cabGlassH = cabH*0.40;
+    paintGlass(x+w*0.14, cabGlassY, w*0.72, cabGlassH, short*0.05);
+    // Cab body fills from right where the glass ends down to the cab/tray
+    // split -- previously a hardcoded start (cabH*0.46) sat ABOVE the
+    // glass's own bottom edge and painted over it, leaving a jagged
+    // overlapping seam between the two shapes instead of a clean join.
+    const cabBodyY = cabGlassY+cabGlassH, cabBodyH = (y+cabH)-cabBodyY;
+    roundRectPath(ctx, x+w*0.10, cabBodyY, w*0.80, cabBodyH, short*0.06);
+    const cabGrad = ctx.createLinearGradient(x,cabBodyY,x,cabBodyY+cabBodyH);
     cabGrad.addColorStop(0, shadeColor(baseColor,0.08));
     cabGrad.addColorStop(1, shadeColor(baseColor,-0.1));
     ctx.fillStyle = cabGrad;
@@ -6268,14 +6374,12 @@ function drawVehicleIcon(ctx, icon, x, y, w, h, baseColor){
     });
     drawVehicleMirrors(ctx, x, y, w, h*0.13, short, baseColor);
   } else {
-    // Hatchback / sedan / SUV share the same three-band layout (windshield,
-    // roof, rear glass) but with proportions and extra panel lines tuned per
-    // body style so they don't all read as the same car rescaled.
+    // Hatchback / sedan / SUV each get ONE tapered cabin-glass lozenge
+    // (see pathCabin above) with proportions tuned per body style so they
+    // don't all read as the same car rescaled.
     if(isSedan){
-      paintGlass(x+w*0.15, y+h*0.085, w*0.70, h*0.16, short*0.05);
-      roundRectPath(ctx, x+w*0.13, y+h*0.26, w*0.74, h*0.30, short*0.06);
-      ctx.fillStyle = shadeColor(baseColor,-0.04); ctx.fill();
-      paintGlass(x+w*0.18, y+h*0.575, w*0.64, h*0.135, short*0.05);
+      const frontY=y+h*0.11, rearY=y+h*0.66;
+      paintGlassPath(()=>pathCabin(frontY, rearY, w*0.42, w*0.74, w*0.48, 0.30), x, frontY, w, rearY-frontY);
       // Trunk deck: a distinct flat panel behind the rear glass, with its
       // own seam and a slim bumper strip -- the "three-box" sedan profile.
       roundRectPath(ctx, x+w*0.10, y+h*0.72, w*0.80, h*0.20, short*0.05);
@@ -6289,36 +6393,29 @@ function drawVehicleIcon(ctx, icon, x, y, w, h, baseColor){
       ctx.beginPath(); ctx.moveTo(x+w*0.10, y+h*0.72); ctx.lineTo(x+w*0.90, y+h*0.72); ctx.stroke();
       ctx.fillStyle = 'rgba(0,0,0,0.26)';
       ctx.fillRect(x+short*0.07, y+h-short*0.045, w-short*0.14, short*0.03);
-      doorSeam(0.42); doorSeam(0.60);
-      drawVehicleMirrors(ctx, x, y, w, h*0.24, short, baseColor);
+      drawVehicleMirrors(ctx, x, y, w, h*0.16, short, baseColor);
     } else if(isSUV){
-      paintGlass(x+w*0.13, y+h*0.065, w*0.74, h*0.135, short*0.05);
-      roundRectPath(ctx, x+w*0.10, y+h*0.20, w*0.80, h*0.48, short*0.07);
-      ctx.fillStyle = shadeColor(baseColor,-0.02); ctx.fill();
-      paintGlass(x+w*0.14, y+h*0.685, w*0.72, h*0.20, short*0.055);
-      // Roof rails -- two thin raised lines the full length of the roof.
+      const frontY=y+h*0.085, rearY=y+h*0.85;
+      paintGlassPath(()=>pathCabin(frontY, rearY, w*0.48, w*0.80, w*0.56, 0.20), x, frontY, w, rearY-frontY);
+      // Roof rails -- two thin raised lines the full length of the glass.
       ctx.strokeStyle = shadeColor(baseColor,-0.5);
       ctx.lineWidth = Math.max(1, short*0.014);
       ctx.lineCap = 'round';
       [0.20,0.80].forEach(fx=>{
-        ctx.beginPath(); ctx.moveTo(x+w*fx, y+h*0.19); ctx.lineTo(x+w*fx, y+h*0.67); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x+w*fx, frontY+h*0.02); ctx.lineTo(x+w*fx, rearY-h*0.02); ctx.stroke();
       });
       // Rear bumper/tailgate strip.
       ctx.fillStyle = 'rgba(0,0,0,0.24)';
       ctx.fillRect(x+short*0.06, y+h-short*0.04, w-short*0.12, short*0.026);
-      doorSeam(0.50);
-      drawVehicleMirrors(ctx, x, y, w, h*0.19, short, baseColor);
+      drawVehicleMirrors(ctx, x, y, w, h*0.11, short, baseColor);
     } else {
       // Hatchback: shorter hood, roomier/rounder tail with a tall, steeply
       // raked hatch glass that runs almost to the back bumper.
-      paintGlass(x+w*0.15, y+h*0.10, w*0.70, h*0.17, short*0.05);
-      roundRectPath(ctx, x+w*0.12, y+h*0.28, w*0.76, h*0.28, short*0.06);
-      ctx.fillStyle = shadeColor(baseColor,-0.06); ctx.fill();
-      paintGlass(x+w*0.15, y+h*0.57, w*0.70, h*0.30, short*0.07);
+      const frontY=y+h*0.10, rearY=y+h*0.87;
+      paintGlassPath(()=>pathCabin(frontY, rearY, w*0.44, w*0.76, w*0.52, 0.26), x, frontY, w, rearY-frontY);
       ctx.fillStyle = 'rgba(0,0,0,0.22)';
       ctx.fillRect(x+short*0.07, y+h-short*0.04, w-short*0.14, short*0.026);
-      doorSeam(0.46);
-      drawVehicleMirrors(ctx, x, y, w, h*0.26, short, baseColor);
+      drawVehicleMirrors(ctx, x, y, w, h*0.14, short, baseColor);
     }
   }
 
@@ -7382,33 +7479,67 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerF
       }
       ctx.restore();
     } else {
+      const ww = bounds.maxX-bounds.minX, wh = bounds.maxY-bounds.minY;
+      // Deeper, richer corner-to-corner depth gradient -- lighter/more
+      // turquoise toward one corner, darker toward the other -- reads as
+      // real pool depth from directly above, not just a generic light-catch
+      // sheen on a flat colour.
       const grad = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.maxY);
-      grad.addColorStop(0,'#6E96AF');
-      grad.addColorStop(0.55, baseColor);
-      grad.addColorStop(1,'#345670');
+      grad.addColorStop(0,'#7FB4C4');
+      grad.addColorStop(0.45, baseColor);
+      grad.addColorStop(1,'#1E3A52');
       ctx.fillStyle = grad;
       ctx.fill();
       ctx.save();
       ctx.clip();
-      const sheen = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.maxX, bounds.minY+(bounds.maxY-bounds.minY)*0.4);
-      sheen.addColorStop(0,'rgba(255,255,255,0.14)');
+      // Underwater light caustics -- the dancing net of bright refracted
+      // light every real pool shows from above, and the single strongest
+      // cue that reads as "water" rather than "a flat blue rectangle" (the
+      // few evenly-spaced sine-wave lines this used to draw). Built from
+      // short soft curved streaks at random position/angle/brightness (no
+      // rigid grid), the same seeded-jitter-scatter technique already used
+      // for grass and garden-bed mottling.
+      const cell = Math.max(14, wh*0.09);
+      let cidx = 0;
+      for(let gy=bounds.minY-cell; gy<bounds.maxY+cell; gy+=cell){
+        for(let gx=bounds.minX-cell; gx<bounds.maxX+cell; gx+=cell*1.15){
+          cidx++;
+          const r1=seededRand(cidx*5.1+1), r2=seededRand(cidx*7.3+2), r3=seededRand(cidx*11.7+3), r4=seededRand(cidx*3.3+4);
+          if(r1<0.32) continue;
+          const cx = gx+(r2-0.5)*cell*1.3, cy = gy+(r3-0.5)*cell*1.3;
+          const len = cell*(0.5+r4*0.6);
+          const ang = r1*Math.PI*2;
+          const curve = (seededRand(cidx*17+5)-0.5)*len*0.5;
+          ctx.beginPath();
+          ctx.moveTo(cx-Math.cos(ang)*len/2, cy-Math.sin(ang)*len/2);
+          ctx.quadraticCurveTo(cx+Math.sin(ang)*curve*0.3, cy-Math.cos(ang)*curve*0.3, cx+Math.cos(ang)*len/2, cy+Math.sin(ang)*len/2);
+          ctx.strokeStyle = 'rgba(255,255,255,'+(0.10+r4*0.16)+')';
+          ctx.lineWidth = Math.max(1, cell*0.09);
+          ctx.lineCap = 'round';
+          ctx.stroke();
+        }
+      }
+      // A handful of larger, softer glow patches -- broader convergent
+      // light pools layered under the finer streaks, not just thin lines.
+      const glowCount = Math.max(3, Math.round((ww*wh)/(cell*cell*9)));
+      for(let i=0;i<glowCount;i++){
+        const r1=seededRand(i*13.1+9), r2=seededRand(i*19.3+11), r3=seededRand(i*23.7+13);
+        const gx = bounds.minX+r1*ww, gy = bounds.minY+r2*wh;
+        const gr = cell*(0.9+r3*0.9);
+        const gg = ctx.createRadialGradient(gx,gy,0,gx,gy,gr);
+        gg.addColorStop(0,'rgba(255,255,255,0.16)');
+        gg.addColorStop(1,'rgba(255,255,255,0)');
+        ctx.fillStyle = gg;
+        ctx.beginPath(); ctx.arc(gx,gy,gr,0,Math.PI*2); ctx.fill();
+      }
+      // A gentle broad sheen from one corner on top of everything -- real
+      // still water still catches overall ambient light beyond the finer
+      // caustic detail.
+      const sheen = ctx.createLinearGradient(bounds.minX, bounds.minY, bounds.minX+ww*0.5, bounds.minY+wh*0.4);
+      sheen.addColorStop(0,'rgba(255,255,255,0.12)');
       sheen.addColorStop(1,'rgba(255,255,255,0)');
       ctx.fillStyle = sheen;
-      ctx.fillRect(bounds.minX, bounds.minY, bounds.maxX-bounds.minX, bounds.maxY-bounds.minY);
-      // Soft ripple bands -- real still water always shows faint light
-      // refraction lines, not a perfectly smooth gradient.
-      const ww = bounds.maxX-bounds.minX, wh = bounds.maxY-bounds.minY;
-      ctx.strokeStyle='rgba(255,255,255,0.12)'; ctx.lineWidth=Math.max(1, wh*0.01);
-      const rippleCount = 5;
-      for(let i=1;i<=rippleCount;i++){
-        const ry = bounds.minY + (wh/(rippleCount+1))*i;
-        ctx.beginPath();
-        for(let px=bounds.minX; px<=bounds.maxX; px+=Math.max(4,ww/24)){
-          const py = ry + Math.sin((px-bounds.minX)/Math.max(ww,1)*Math.PI*2 + i)*wh*0.02;
-          if(px===bounds.minX) ctx.moveTo(px,py); else ctx.lineTo(px,py);
-        }
-        ctx.stroke();
-      }
+      ctx.fillRect(bounds.minX, bounds.minY, ww, wh);
       ctx.restore();
     }
   } else if(texture==='leafy'){
@@ -10709,8 +10840,8 @@ function build3DSofaMesh(el, preset, baseColor, heightFt, pos){
   const topTex = furnitureTextureFor3D(preset.icon, baseColor, el.wFt*40, el.hFt*40);
   const topMat = new THREE.MeshStandardMaterial({map:topTex, roughness:0.8});
   const seatHFt = heightFt*0.55, backHFt = heightFt, armHFt = heightFt*0.8;
-  const backDepthFt = el.hFt*0.24; // matches drawFurnitureIcon's own backH ratio
-  const armWFt = el.wFt*(preset.icon==='armchair' ? 0.22 : 0.12); // matches drawFurnitureIcon's own armW ratio
+  const backDepthFt = el.hFt*0.26; // matches drawFurnitureIcon's own backH ratio
+  const armWFt = el.wFt*(preset.icon==='armchair' ? 0.24 : 0.13); // matches drawFurnitureIcon's own armW ratio
   const seat = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, seatHFt, el.hFt), [sideMat,sideMat,topMat,sideMat,sideMat,sideMat]);
   seat.position.set(0, seatHFt/2, 0);
   group.add(seat);
