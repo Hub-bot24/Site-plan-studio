@@ -4909,9 +4909,13 @@ const BW_PAPER = '#F6F4EE';
 const BW_PAPER_DIM = '#EDEAE1';
 const BW_INK = '#1B1B1B';
 const BW_INK_SOFT = '#4A4A46';
-function getTilePattern(ctx, texture, scalePxPerFt){
+// tileSizeFt (real feet, one edge of a square tile) only matters for
+// 'paver'/'floortile' -- every other texture ignores it. Optional so every
+// existing call site (and every already-saved plan, which has no such
+// field on its elements) keeps its exact original 1ft-per-tile default.
+function getTilePattern(ctx, texture, scalePxPerFt, tileSizeFt){
   const bw = state.blackMode;
-  const key = texture+'|'+Math.round(scalePxPerFt)+'|'+(bw?'bw':'c');
+  const key = texture+'|'+Math.round(scalePxPerFt)+'|'+(bw?'bw':'c')+'|'+(tileSizeFt||'');
   if(patternCache[key]) return patternCache[key];
   const tile = document.createElement('canvas');
   const tctx = tile.getContext('2d');
@@ -4944,7 +4948,7 @@ function getTilePattern(ctx, texture, scalePxPerFt){
       // Clean joint lines on paper -- a single square module is enough; the
       // per-paver shading/bevel that makes the colour version read as "laid
       // stone" would just be noise in a line drawing.
-      const cell = Math.max(14, Math.round(scalePxPerFt*1.0));
+      const cell = Math.max(14, Math.round(scalePxPerFt*(tileSizeFt||1.0)));
       tile.width=cell; tile.height=cell;
       tctx.fillStyle = BW_PAPER; tctx.fillRect(0,0,cell,cell);
       tctx.strokeStyle = BW_INK; tctx.lineWidth = 1;
@@ -4954,7 +4958,7 @@ function getTilePattern(ctx, texture, scalePxPerFt){
       // A perfectly uniform grid of identical squares reads as a flat game
       // tile, not laid pavers -- each paver in this repeating block gets its
       // own shade plus a beveled highlight/shadow edge for real laid-stone depth.
-      const cell = Math.max(14, Math.round(scalePxPerFt*1.0));
+      const cell = Math.max(14, Math.round(scalePxPerFt*(tileSizeFt||1.0)));
       const cols=3, rows=3;
       tile.width=cell*cols; tile.height=cell*rows;
       const shades = ['#9AA0A6','#A3A9AE','#93999E','#9DA3A8','#989EA3'];
@@ -5217,7 +5221,7 @@ function getTilePattern(ctx, texture, scalePxPerFt){
       // Plain grout-line grid -- the same square module every other floor
       // pattern in this function uses for its BW variant, kept crisp and
       // simple rather than the per-tile shading the colour version gets.
-      const cell = Math.max(14, Math.round(scalePxPerFt*1.0));
+      const cell = Math.max(14, Math.round(scalePxPerFt*(tileSizeFt||1.0)));
       tile.width=cell; tile.height=cell;
       tctx.fillStyle = BW_PAPER; tctx.fillRect(0,0,cell,cell);
       tctx.strokeStyle = BW_INK_SOFT; tctx.lineWidth = 1;
@@ -5229,7 +5233,7 @@ function getTilePattern(ctx, texture, scalePxPerFt){
       // (terracotta ROOF barrel tiles, used for roofing) and from 'paver'
       // (rough, individually-shaded natural stone), since a domestic floor
       // tile is neither of those.
-      const cell = Math.max(18, Math.round(scalePxPerFt*1.0));
+      const cell = Math.max(18, Math.round(scalePxPerFt*(tileSizeFt||1.0)));
       tile.width=cell; tile.height=cell;
       tctx.fillStyle = '#E7E3D8'; tctx.fillRect(0,0,cell,cell);
       const sheen = tctx.createLinearGradient(0,0,cell,cell);
@@ -7230,7 +7234,11 @@ function applyEdgeShading(ctx, bounds){
 // pattern features (mowed-lawn stripe width, grout lines, ...) bigger than
 // the whole capped canvas, baking what was meant to be a detailed texture
 // as a single near-flat shade instead.
-function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerFt){
+// tileSizeFt (real feet, one edge of a square tile) is only ever read by
+// getTilePattern's 'paver'/'floortile' branches -- every other texture
+// ignores it, and omitting it keeps the original fixed 1ft-per-tile default
+// for every existing call site and every already-saved plan.
+function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerFt, tileSizeFt){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
   const baseColor = overrideColor || (preset ? preset.color : '#B5934C');
@@ -7241,7 +7249,7 @@ function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerF
     return;
   }
   if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='concrete_plain' || texture==='gravel' || texture==='tile' || texture==='metal' || texture==='shingle' || texture==='stone' || texture==='floortile' || texture==='carpet'){
-    const pat = getTilePattern(ctx, texture, scalePxPerFt);
+    const pat = getTilePattern(ctx, texture, scalePxPerFt, tileSizeFt);
     ctx.fillStyle = pat || fallbackColor;
     ctx.fill();
   } else if(texture==='turf'){
@@ -7535,7 +7543,7 @@ function drawElement(ctx, el, selected){
         ctx.fill();
       }
     } else {
-      fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color);
+      fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color, undefined, el.tileSizeFt);
       ctx.beginPath();
       ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
       applyEdgeShading(ctx, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2});
@@ -7548,7 +7556,7 @@ function drawElement(ctx, el, selected){
     wPx = hPx = rPx*2;
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
-    fillMaterial(ctx, el.presetKey, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx}, el.color);
+    fillMaterial(ctx, el.presetKey, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx}, el.color, undefined, el.tileSizeFt);
     ctx.beginPath();
     ctx.arc(0,0,rPx,0,Math.PI*2);
     applyEdgeShading(ctx, {minX:-rPx,maxX:rPx,minY:-rPx,maxY:rPx});
@@ -8486,18 +8494,27 @@ function drawPathElement(ctx, el, selected){
   ctx.globalAlpha *= getPopState(el).alpha;
   const bwFence = state.blackMode;
   ctx.strokeStyle = bwFence ? BW_INK : el.color;
-  ctx.lineWidth = selected ? 2.6 : 1.8;
+  // Zoom here is a pure CSS scale on the canvas element (see
+  // applyZoomAndLayout), not a ctx transform -- so a FIXED canvas-space
+  // line width looks fine at 100% but shrinks toward a sub-pixel hairline
+  // once the whole plan is zoomed out to fit the screen, which is the most
+  // common way a property's fence line actually gets looked at. Floored to
+  // a minimum ON-SCREEN weight at any zoom, the same 1/state.zoom trick the
+  // wall endpoint grip handles already use elsewhere in this file.
+  const zoomFloor = Math.max(state.zoom, 0.05);
+  ctx.lineWidth = Math.max(selected ? 3.2 : 2.4, (selected ? 4.6 : 3.4)/zoomFloor);
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   strokePolyline(ctx, el.points, false);
   const spacingPx = Math.max(10, FENCE_POST_SPACING_FT*(state.scalePxPerFt||40));
   const posts = fencePostPositions(el.points, spacingPx);
+  const postR = Math.max(3.4, 5/zoomFloor);
   if(bwFence){
     // Fence-post ticks: a short perpendicular mark at each post -- the
     // standard architectural fence-line convention, instead of a plain dot.
     ctx.strokeStyle = BW_INK;
-    ctx.lineWidth = 1.2;
-    const tick = 4.5;
+    ctx.lineWidth = Math.max(1.4, 2/zoomFloor);
+    const tick = postR*1.4;
     posts.forEach(p=>{
       ctx.beginPath();
       ctx.moveTo(p.x-p.nx*tick, p.y-p.ny*tick);
@@ -8511,15 +8528,15 @@ function drawPathElement(ctx, el, selected){
     // the app already uses, just scaled down to fit a thin fence line.
     posts.forEach(p=>{
       ctx.beginPath();
-      ctx.arc(p.x+0.6, p.y+0.9, 3.2, 0, Math.PI*2);
+      ctx.arc(p.x+0.6, p.y+0.9, postR, 0, Math.PI*2);
       ctx.fillStyle = 'rgba(5,9,14,0.28)';
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 3, 0, Math.PI*2);
+      ctx.arc(p.x, p.y, postR-0.2, 0, Math.PI*2);
       ctx.fillStyle = shadeColor(el.color, -0.1);
       ctx.fill();
       ctx.strokeStyle = shadeColor(el.color, -0.5);
-      ctx.lineWidth = 1;
+      ctx.lineWidth = Math.max(1, 1.4/zoomFloor);
       ctx.stroke();
     });
   }
@@ -8553,7 +8570,7 @@ function drawRoomElement(ctx, el, selected){
     for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
     ctx.closePath();
     const floorTexture = ROOM_TYPE_FLOOR_TEXTURE[el.roomType];
-    const pat = floorTexture ? getTilePattern(ctx, floorTexture, state.scalePxPerFt||40) : null;
+    const pat = floorTexture ? getTilePattern(ctx, floorTexture, state.scalePxPerFt||40, el.tileSizeFt) : null;
     ctx.fillStyle = pat || (el.color || ROOM_FILL_COLOR);
     ctx.fill();
     ctx.restore();
@@ -8578,7 +8595,7 @@ function drawPolygonElement(ctx, el, selected){
   ctx.moveTo(el.points[0].x, el.points[0].y);
   for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
   ctx.closePath();
-  fillMaterial(ctx, el.presetKey, polygonBounds(el.points), el.color);
+  fillMaterial(ctx, el.presetKey, polygonBounds(el.points), el.color, undefined, el.tileSizeFt);
   // Re-establish the polygon path -- fillMaterial's texture branches (grass
   // stripes, mulch plants, ...) reset the current path with their own
   // sub-drawing, so it can't be relied on to still be the polygon outline.
@@ -9196,6 +9213,32 @@ function renderElementsList(){
         dims.appendChild(parentSel);
       }
     }
+    // Real tile/paver size varies a lot in practice (300mm vs 600mm vs
+    // 100x100mm mosaic, 12in vs 24in...) -- getTilePattern's paver and
+    // floortile branches both used one fixed 1ft-per-tile module with no
+    // way to match what's actually being laid. Shown for any element whose
+    // ACTUAL rendered texture is one of those two, whether that comes from
+    // its own preset (a Patio) or, for a room, from its roomType
+    // (kitchen/ensuite/laundry/pantry -> floortile, alfresco -> paver).
+    function effectiveFloorTexture(el){
+      if(el.isRoom) return ROOM_TYPE_FLOOR_TEXTURE[el.roomType];
+      const p = PRESETS[el.presetKey];
+      return p ? p.texture : null;
+    }
+    function appendTileSizeControl(dims, el){
+      const tex = effectiveFloorTexture(el);
+      if(tex!=='paver' && tex!=='floortile') return;
+      const tIn = document.createElement('input'); tIn.type='number'; tIn.step='0.01'; tIn.min='0.05';
+      tIn.title = 'Tile size -- one edge of each square tile';
+      tIn.value = formatNum(fromFt(el.tileSizeFt||1, state.unit));
+      tIn.addEventListener('click', e=>e.stopPropagation());
+      tIn.addEventListener('change', ()=>{
+        const v = parseFloat(tIn.value);
+        if(v>0){ pushUndo(); el.tileSizeFt = toFt(v, state.unit); drawOverlay(); renderElementsList(); }
+        else tIn.value = formatNum(fromFt(el.tileSizeFt||1, state.unit));
+      });
+      dims.appendChild(document.createTextNode('Tile')); dims.appendChild(tIn); dims.appendChild(document.createTextNode(unitAbbrev()));
+    }
     // Accuracy verification, shared by dimensions and walls: an optional
     // "what the original plan says this should be" length, an automatic
     // flag when the traced result is off by more than a small tracing
@@ -9354,6 +9397,7 @@ function renderElementsList(){
       areaInfo.style.marginLeft='4px'; areaInfo.style.color='var(--ink-dim)';
       areaInfo.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
       dims.appendChild(areaInfo);
+      appendTileSizeControl(dims, el);
       appendCutoutControls(dims, el);
     } else if(el.shape==='circle'){
       const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
@@ -9484,6 +9528,7 @@ function renderElementsList(){
         warn.textContent = '(approx.)';
         dims.appendChild(warn);
       }
+      appendTileSizeControl(dims, el);
     } else if(el.shape==='polygon'){
       const info = document.createElement('span');
       info.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
@@ -9575,6 +9620,7 @@ function renderElementsList(){
         rotWrap.appendChild(document.createTextNode('by')); rotWrap.appendChild(customRotIn); rotWrap.appendChild(document.createTextNode('°'));
         dims.appendChild(rotWrap);
       }
+      appendTileSizeControl(dims, el);
       appendCutoutControls(dims, el);
     } else if(el.shape==='image'){
       const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
@@ -10327,6 +10373,62 @@ const AREA_MATERIAL_ROUGHNESS_3D = {
   wood:0.55, paver:0.8, concrete:0.85, concrete_plain:0.85, gravel:0.95,
   grass:0.92, turf:0.85, mulch:0.95, water:0.15,
 };
+// A garden bed's usual flat-texture treatment (materialTextureFor3D baking
+// its 2D mulch-and-plants painting onto a thin slab's top face) never reads
+// as "actual plants" from an angled 3D camera, however good that painted
+// image is -- direct feedback ("garden in 3d is flat") confirmed a texture
+// fix alone can't solve this. Real raised shrub volume needs real 3D
+// geometry instead: a squashed SphereGeometry per plant (the exact
+// technique build3DTreeMesh's own canopy already uses) scattered across the
+// bed and sitting on top of its mulch base.
+const GARDEN_PLANT_COLORS_3D = ['#5C8752','#4B7A46','#6B9760','#3F6B3B'];
+// Real-world shrub spacing, deliberately independent of the plan's own
+// current 2D zoom (state.scalePxPerFt) -- unlike the 2D mulch texture's own
+// scatter (a zoom-relative drawing convention for the flat plan view), a
+// garden bed's real 3D planting density has to stay the same no matter what
+// scale the user happens to be viewing the 2D plan at.
+const GARDEN_PLANT_SPACING_FT = 2.2;
+// Candidate shrub spots across a LOCAL feet bounding box (same
+// spacing/skip/jitter shape as the 2D mulch scatter, translated to a fixed
+// real-world spacing) -- takes the box's own min/max rather than assuming
+// it's centred on the origin, since a traced bed's true bounding box isn't
+// generally centred on its centroid (where local (0,0) sits). The caller
+// filters each spot against the actual bed outline (a plain rect bounds
+// check, or pointInPolygon for a traced bed) before building a mesh for
+// it, so an irregular bed's shrubs never spill past its own edge.
+function gardenPlantSpotsFt(minXFt, minYFt, maxXFt, maxYFt){
+  const spots = [];
+  let idx = 0;
+  for(let gy=minYFt-GARDEN_PLANT_SPACING_FT; gy<maxYFt+GARDEN_PLANT_SPACING_FT; gy+=GARDEN_PLANT_SPACING_FT){
+    for(let gx=minXFt-GARDEN_PLANT_SPACING_FT; gx<maxXFt+GARDEN_PLANT_SPACING_FT; gx+=GARDEN_PLANT_SPACING_FT){
+      idx++;
+      const r1=seededRand(idx*7.13+1), r2=seededRand(idx*13.7+5), r3=seededRand(idx*3.3+9), r4=seededRand(idx*17.1+11);
+      if(r1 < 0.22) continue; // skip some spots so it isn't a rigid grid
+      const x = gx + (r2-0.5)*GARDEN_PLANT_SPACING_FT*0.7;
+      const z = gy + (r3-0.5)*GARDEN_PLANT_SPACING_FT*0.7;
+      const radiusFt = GARDEN_PLANT_SPACING_FT*0.28*(0.7+r1*0.6);
+      const heightScale = 1.3 + r4*0.5; // a real rounded shrub stands somewhat taller than a perfect sphere its own width
+      spots.push({x, z, radiusFt, heightScale, colorIdx: idx});
+    }
+  }
+  return spots;
+}
+// Adds one squashed-sphere shrub mesh per spot (filtered through
+// containsFn) to group, sitting on top of baseY. Shared by both the rect
+// and polygon branches of build3DAreaMesh below.
+function addGardenPlantMeshes(group, minXFt, minYFt, maxXFt, maxYFt, containsFn, baseY){
+  gardenPlantSpotsFt(minXFt, minYFt, maxXFt, maxYFt).forEach(spot=>{
+    if(containsFn && !containsFn(spot.x, spot.z)) return;
+    const color = GARDEN_PLANT_COLORS_3D[spot.colorIdx % GARDEN_PLANT_COLORS_3D.length];
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(spot.radiusFt, 8, 6),
+      new THREE.MeshStandardMaterial({color:new THREE.Color(color), roughness:0.95})
+    );
+    mesh.scale.y = spot.heightScale;
+    mesh.position.set(spot.x, baseY+spot.radiusFt*spot.heightScale, spot.z);
+    group.add(mesh);
+  });
+}
 const FURNITURE_HEIGHT_FT_3D = {
   bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
   table_dining_round4:2.4, table_dining_round6:2.4, table_dining_round8:2.4,
@@ -10451,7 +10553,7 @@ function ftPos3D(el, groundWFt, groundHFt){
 // Renders the element's own material (the same fillMaterial() used on the
 // 2D canvas) onto a small offscreen canvas and returns it as a texture --
 // the ground-level 3D faces literally reuse the 2D texture work.
-function materialTextureFor3D(presetKey, color, pxW, pxH){
+function materialTextureFor3D(presetKey, color, pxW, pxH, tileSizeFt){
   const canvas = document.createElement('canvas');
   const res = 128;
   const aspect = pxW>0 && pxH>0 ? pxW/pxH : 1;
@@ -10472,7 +10574,7 @@ function materialTextureFor3D(presetKey, color, pxW, pxH){
   const effectiveScalePxPerFt = pxW>0 ? canvas.width*40/pxW : 40;
   ctx.save();
   ctx.beginPath(); ctx.rect(0,0,canvas.width,canvas.height);
-  fillMaterial(ctx, presetKey, bounds, color, effectiveScalePxPerFt);
+  fillMaterial(ctx, presetKey, bounds, color, effectiveScalePxPerFt, tileSizeFt);
   ctx.restore();
   const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
@@ -11280,13 +11382,29 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
     const roughness = floorLook ? floorLook.roughness : (AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.9);
     const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(floorLook ? floorLook.color : baseColor), roughness});
     const mesh = new THREE.Mesh(geo, mat);
+    if(el.presetKey==='gardenbed'){
+      const group = new THREE.Group();
+      group.add(mesh);
+      // World-space (x,z) footprint, NOT the shape's own y-flipped local
+      // space `shape` above was built in (that flip exists only because
+      // ExtrudeGeometry's rotateX(-90deg) un-flips it again -- ftPos3D's
+      // own pos.z = el.yPx/scale - groundHFt/2 shows the same direct,
+      // unflipped canvas-Y -> world-Z mapping every other element already
+      // uses, so spot positions and the containment check stay in that
+      // same convention here too.
+      const worldPts = el.points.map(p=>({x:(p.x-cx)/state.scalePxPerFt, y:(p.y-cy)/state.scalePxPerFt}));
+      const b = polygonBounds(worldPts);
+      addGardenPlantMeshes(group, b.minX, b.minY, b.maxX, b.maxY, (x,z)=>pointInPolygon(x,z,worldPts), heightFt);
+      group.position.set(cx/state.scalePxPerFt - groundWFt/2, baseY, cy/state.scalePxPerFt - groundHFt/2);
+      return group;
+    }
     mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, baseY, cy/state.scalePxPerFt - groundHFt/2);
     return mesh;
   }
 
   let wFt, hFt, geo, faceMats;
   const texTop = materialTextureFor3D(el.presetKey, baseColor,
-    (el.shape==='circle' ? el.dFt : el.wFt)*40, (el.shape==='circle' ? el.dFt : el.hFt)*40);
+    (el.shape==='circle' ? el.dFt : el.wFt)*40, (el.shape==='circle' ? el.dFt : el.hFt)*40, el.tileSizeFt);
   const topRoughness = AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.85;
   const sideMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.9});
   const topMat = new THREE.MeshStandardMaterial({map:texTop, roughness:topRoughness});
@@ -11303,6 +11421,18 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   }
   const mesh = new THREE.Mesh(geo, faceMats);
   const pos = ftPos3D(el, groundWFt, groundHFt);
+  if(el.shape==='rect' && el.presetKey==='gardenbed'){
+    // Whole group (base slab + shrubs) shares one position/rotation, same
+    // as the plain mesh below would have -- shrubs need to move and turn
+    // together with the bed, not independently.
+    const group = new THREE.Group();
+    mesh.position.set(0, heightFt/2, 0); // local to the group; the group itself carries baseY
+    group.add(mesh);
+    addGardenPlantMeshes(group, -wFt/2, -hFt/2, wFt/2, hFt/2, (x,z)=>Math.abs(x)<=wFt/2 && Math.abs(z)<=hFt/2, heightFt);
+    group.position.set(pos.x, baseY, pos.z);
+    group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+    return group;
+  }
   mesh.position.set(pos.x, baseY+heightFt/2, pos.z);
   if(el.shape==='rect') mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return mesh;
