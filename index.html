@@ -1128,6 +1128,14 @@ const PRESETS = {
   pool_step: {label:'Pool with step', color:'#4A7A9B', texture:'water', quick:'rect', hasStep:true},
   tree:      {label:'Tree',            color:'#4A6B44', texture:'leafy',    quick:'circle'},
   custom:    {label:'Custom area',     color:'#B5934C', texture:'flat',     quick:'rect'},
+  // A real vertical support post/pillar -- e.g. holding up a patio roof --
+  // not a flat ground area like everything else in this group. Routed
+  // through the SAME generic build3DAreaMesh box/cylinder path every other
+  // untextured preset already uses (see AREA_HEIGHT_FT_3D's own patio_post
+  // entry): that path already extrudes to any per-preset height, tall or
+  // thin, so no dedicated 3D builder is needed just to make it stand up
+  // roof-high instead of ankle-high.
+  patio_post: {label:'Support post / pillar', color:'#8A7B6B', texture:'flat', quick:'circle', dIn:6},
   roof_tile:    {label:'Roof — Terracotta tile',   color:'#A15A34', texture:'tile',    quick:'rect'},
   roof_metal:   {label:'Roof — Metal (Colorbond)', color:'#4A4E52', texture:'metal',   quick:'rect'},
   roof_shingle: {label:'Roof — Asphalt shingle',   color:'#5B5854', texture:'shingle', quick:'rect'},
@@ -3207,7 +3215,7 @@ function updateUnitLabels(){
 const TYPE_GROUPS = [
   {label:'Walls (trace mode)', keys:['wall_interior','wall_exterior']},
   {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','window_standard','opening_large']},
-  {label:'Site & landscaping', keys:['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','hedge','pool','tree','custom']},
+  {label:'Site & landscaping', keys:['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','hedge','pool','tree','patio_post','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
   {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom']},
@@ -3217,6 +3225,10 @@ const TYPE_GROUPS = [
   {label:'Electrical', keys:['power_point']},
   {label:'Lines & measurement', keys:['fence','dimension']},
 ];
+// Flat-material ground areas an element can be switched between after the
+// fact (see appendMaterialControl) -- the same "Site & landscaping" group
+// above, minus hedge/tree, which aren't a flat material fill.
+const AREA_MATERIAL_SWAP_KEYS = ['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','pool','custom'];
 TYPE_GROUPS.forEach(group=>{
   const optgroup = document.createElement('optgroup');
   optgroup.label = group.label;
@@ -9344,6 +9356,38 @@ function renderElementsList(){
         dims.appendChild(parentSel);
       }
     }
+    // Swap an area's material after the fact -- e.g. a pool traced as a
+    // cutout inside a patio turns out to actually just want to be plain
+    // paving there instead. Not cutout-only: any flat-material ground area
+    // (deck/patio/lawn/pool/...) can be changed this way, same as a room's
+    // own Room type dropdown already lets its floor material be changed.
+    function appendMaterialControl(dims, el){
+      if(el.isRoom || !AREA_MATERIAL_SWAP_KEYS.includes(el.presetKey)) return;
+      const sel = document.createElement('select');
+      sel.style.marginLeft='4px';
+      sel.title = 'Change this area\'s material -- e.g. swap a pool cutout for plain paving';
+      AREA_MATERIAL_SWAP_KEYS.forEach(key=>{
+        const opt = document.createElement('option'); opt.value=key; opt.textContent=PRESETS[key].label;
+        sel.appendChild(opt);
+      });
+      sel.value = el.presetKey;
+      sel.addEventListener('click', e=>e.stopPropagation());
+      sel.addEventListener('change', ()=>{
+        pushUndo();
+        const newPreset = PRESETS[sel.value];
+        // Only rename if the label still matches SOME swappable material's
+        // own default name (with or without a trailing " 2" etc from
+        // auto-numbering) -- a label the user typed by hand (e.g. "Side
+        // deck") is left alone, same convention the Room type dropdown and
+        // applySmallerPreset already use.
+        const stillDefault = AREA_MATERIAL_SWAP_KEYS.some(k=>new RegExp('^'+PRESETS[k].label.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'( \\d+)?$').test(el.label));
+        el.presetKey = sel.value;
+        el.color = newPreset.color;
+        if(stillDefault) el.label = uniqueLabel(newPreset.label);
+        drawOverlay(); renderElementsList();
+      });
+      dims.appendChild(sel);
+    }
     // Real tile/paver size varies a lot in practice (300mm vs 600mm vs
     // 100x100mm mosaic, 12in vs 24in...) -- getTilePattern's paver and
     // floortile branches both used one fixed 1ft-per-tile module with no
@@ -9529,6 +9573,7 @@ function renderElementsList(){
       areaInfo.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
       dims.appendChild(areaInfo);
       appendTileSizeControl(dims, el);
+      appendMaterialControl(dims, el);
       appendCutoutControls(dims, el);
     } else if(el.shape==='circle'){
       const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
@@ -9546,6 +9591,7 @@ function renderElementsList(){
       areaInfo.style.marginLeft='4px'; areaInfo.style.color='var(--ink-dim)';
       areaInfo.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev();
       dims.appendChild(areaInfo);
+      appendMaterialControl(dims, el);
       appendCutoutControls(dims, el);
     } else if(el.shape==='path'){
       if(el.isDimension){
@@ -9752,6 +9798,7 @@ function renderElementsList(){
         dims.appendChild(rotWrap);
       }
       appendTileSizeControl(dims, el);
+      appendMaterialControl(dims, el);
       appendCutoutControls(dims, el);
     } else if(el.shape==='image'){
       const rotIn = document.createElement('input'); rotIn.type='number'; rotIn.min='0'; rotIn.max='359'; rotIn.step='1';
@@ -10470,6 +10517,11 @@ const preview3dHint = document.getElementById('preview3dHint');
 const AREA_HEIGHT_FT_3D = {
   deck:0.3, patio:0.2, concrete:0.2, driveway:0.2, gravel:0.15, lawn:0.1, turf:0.15,
   gardenbed:0.25, pool:0.15, pool_step:0.15, custom:0.2,
+  // Tall, not thin -- a real support post needs to reach roof height
+  // (WALL_HEIGHT_FT_3D, the same height every ROOF_PRESETS_3D preset
+  // itself sits at) to actually look like it's holding anything up,
+  // not just another ankle-high ground slab.
+  patio_post: WALL_HEIGHT_FT_3D,
 };
 const ROOF_PRESETS_3D = new Set(['roof_tile','roof_metal','roof_shingle']);
 // Flat-colour/roughness stand-in for a room's floor texture in the 3D view.
@@ -10754,6 +10806,7 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   const pos = ftPos3D(el, groundWFt, groundHFt);
   if(preset.icon==='sofa_corner') return build3DCornerSofaMesh(el, baseColor, heightFt, baseY, pos);
   if(preset.icon==='sofa' || preset.icon==='armchair') return build3DSofaMesh(el, preset, baseColor, heightFt, pos);
+  if(preset.icon==='hatch' || preset.icon==='sedan' || preset.icon==='suv' || preset.icon==='ute' || preset.icon==='ute_single' || preset.icon==='van') return build3DCarMesh(el, preset, baseColor, heightFt, pos);
   if(preset.icon==='table' || preset.icon==='desk' || preset.icon==='table_dining') return build3DTableMesh(el, preset, heightFt, pos);
   if(preset.icon==='table_dining_round4') return build3DRoundTableMesh(el, preset, heightFt, pos, 4);
   if(preset.icon==='table_dining_round6') return build3DRoundTableMesh(el, preset, heightFt, pos, 6);
@@ -10853,6 +10906,70 @@ function build3DSofaMesh(el, preset, baseColor, heightFt, pos){
     arm.position.set(side*(el.wFt/2-armWFt/2), seatHFt+(armHFt-seatHFt)/2, 0);
     group.add(arm);
   });
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// Every other furniture item with a dedicated 3D builder gets real raised
+// geometry (a sofa's actual seat+back+arms, a bed's real mattress+pillows,
+// ...); cars had none, falling through to the generic box-with-baked-top-
+// texture fallback -- the elaborate 2D icon (gradient body, glass cabin,
+// mirrors, wheels) is baked onto the TOP face only, so from any angle that
+// isn't straight overhead a car was just a flat-coloured crate. Builds a
+// real lower body plus a narrower, inset "greenhouse" cabin sitting on top
+// of it (glass-tinted material) plus four visible wheels -- the cabin
+// covers only the FRONT of the footprint for a ute (matching its own 2D
+// icon's cab/open-tray split) and nearly the full length for a van
+// (matching its icon's "one big box" comment), same as every other body
+// style's own icon proportions.
+function build3DCarMesh(el, preset, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const isUte = preset.icon==='ute' || preset.icon==='ute_single';
+  const wFt = el.wFt, hFt = el.hFt;
+
+  const bodyMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.35});
+  const glassMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#2E4356'), roughness:0.15});
+  const wheelMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#14161A'), roughness:0.9});
+
+  // Lower body -- narrower than the full plan footprint so the wheels
+  // (positioned right at the true edge) actually peek out past its sides,
+  // the same way a real car's tires are visible past the body from a
+  // side-on angle instead of being entirely hidden inside it.
+  const bodyWFt = wFt*0.90, bodyHFt = heightFt*0.42;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(bodyWFt, bodyHFt, hFt), bodyMat);
+  body.position.set(0, bodyHFt/2, 0);
+  group.add(body);
+
+  // Cabin/glass -- a real raised box sitting on the body, not a texture.
+  // "Front" is local -Z here (see ftPos3D/rotation -- "front" is the
+  // icon's own top edge, the same convention build3DSofaMesh's backrest
+  // uses when it sits at -hFt/2).
+  const cabinWFt = bodyWFt*0.82, cabinHFt = heightFt-bodyHFt;
+  const cabinDFrac = isUte ? (preset.icon==='ute_single' ? 0.30 : 0.46) // matches drawVehicleIcon's own cabFrac
+    : preset.icon==='van' ? 0.82
+    : preset.icon==='suv' ? 0.68
+    : preset.icon==='sedan' ? 0.42
+    : 0.50; // hatch
+  const cabinDFt = hFt*cabinDFrac;
+  const cabinZ = isUte ? (-hFt/2 + cabinDFt/2) : 0;
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabinWFt, cabinHFt, cabinDFt), glassMat);
+  cabin.position.set(0, bodyHFt+cabinHFt/2, cabinZ);
+  group.add(cabin);
+
+  // Wheels -- real cylinders, axle along X (rotate 90deg around Z so a
+  // cylinder's own length axis, normally Y, becomes X), touching the
+  // ground and poking out past the body's own narrower width.
+  const wheelDFt = heightFt*0.30, wheelRFt = wheelDFt/2, wheelWFt = wFt*0.08;
+  const axleZFt = hFt/2 - wheelRFt*1.3;
+  [-1,1].forEach(zSide=>{
+    [-1,1].forEach(xSide=>{
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRFt, wheelRFt, wheelWFt, 16), wheelMat);
+      wheel.rotation.z = Math.PI/2;
+      wheel.position.set(xSide*(wFt/2-wheelWFt/2), wheelRFt, zSide*axleZFt);
+      group.add(wheel);
+    });
+  });
+
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
@@ -11492,6 +11609,25 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   let baseY = 0;
   if(isRoof) baseY = WALL_HEIGHT_FT_3D;
   if(isWall){ heightFt = WALL_HEIGHT_FT_3D; baseY = 0; }
+  // A cutout (a pool traced inside a patio, say) gets its own real 3D box
+  // built at the SAME footprint as its parent -- there's no hole cut into
+  // the parent's geometry (unlike the 2D canvas, which just paints the
+  // cutout's own fill on top last). If the cutout's own material is
+  // thinner than its parent's (e.g. pool=0.15ft vs patio=0.2ft, the exact
+  // combination a screenshot showed this completely hiding), the parent's
+  // taller, fully opaque slab wins every depth-test from above and the
+  // cutout is invisible from any angle, not just occluded in one view.
+  // Bumping it just above the parent's own height keeps both meshes intact
+  // (no CSG boolean subtraction, which this project has no way to verify
+  // with THREE fully stubbed in every test) while guaranteeing the cutout
+  // actually renders, poking up as a slightly raised lip around its edge.
+  if(el.isCutout && el.parentId!=null){
+    const parentEl = getElementById(el.parentId);
+    if(parentEl){
+      const parentHeightFt = AREA_HEIGHT_FT_3D[parentEl.presetKey] != null ? AREA_HEIGHT_FT_3D[parentEl.presetKey] : 0.2;
+      if(heightFt <= parentHeightFt) heightFt = parentHeightFt + 0.03;
+    }
+  }
 
   if(el.shape==='polygon'){
     if(!el.points || el.points.length<3) return null;
