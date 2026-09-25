@@ -1419,6 +1419,16 @@ PRESETS.swing_hammock = {label:'Hammock with stand (3.6 × 1.15 m)', color:SWING
 // Custom swing -- no fixed wM/hM, same idea as custom vehicle/custom fire pit.
 PRESETS.swing_custom = {label:'Custom swing seat — enter dimensions', color:SWING_COLOR, texture:'flat', quick:'rect', icon:'swing_bench2'};
 
+// Pool recliners (metres) -- same real-world-size-on-pick pattern as fire
+// pits/swings above. A single sun lounger's standard footprint, a wider
+// "double" version (two loungers' width, one shared frame -- a common
+// real product, not just a scaled-up single), and custom.
+const RECLINER_COLOR = '#E5DFD0';
+PRESETS.recliner = {label:'Pool recliner / sun lounger (0.65 × 1.95 m)', color:RECLINER_COLOR, texture:'flat', quick:'rect', name:'Pool recliner', wM:0.65, hM:1.95, icon:'recliner'};
+PRESETS.recliner_double = {label:'Double sun lounger (1.4 × 2.0 m)', color:RECLINER_COLOR, texture:'flat', quick:'rect', name:'Double sun lounger', wM:1.4, hM:2.0, icon:'recliner'};
+// Custom recliner -- no fixed wM/hM, same idea as custom fire pit/swing.
+PRESETS.recliner_custom = {label:'Custom recliner — enter dimensions', color:RECLINER_COLOR, texture:'flat', quick:'rect', icon:'recliner'};
+
 // Standard recommended clearance (inches) for common furniture -- the same
 // starting-point minimums interior designers use: room to pull a dining
 // chair out and walk behind it, a bed's walk space, a wardrobe/fridge door
@@ -3284,7 +3294,7 @@ const TYPE_GROUPS = [
   {label:'Site & landscaping', keys:['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','hedge','pool','tree','patio_post','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
-  {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom']},
+  {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom','recliner','recliner_double','recliner_custom']},
   {label:'Roofing', keys:['roof_tile','roof_metal','roof_shingle']},
   {label:'Cladding', keys:['clad_stone']},
   {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS).filter(k=>k!=='power_point')]},
@@ -5842,6 +5852,23 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     [x+short*0.05, x+w-short*0.05].forEach(sx=>{
       ctx.beginPath(); ctx.moveTo(sx,y+short*0.03); ctx.lineTo(sx,y+h-short*0.03); ctx.stroke();
     });
+  } else if(icon==='recliner'){
+    // A reclined chaise -- a fold line marking where the backrest hinges
+    // up (the far ~38% of the length, matching the real 3D mesh's own
+    // seatLenFt/backLenFt split), with slat lines across the backrest
+    // section reading as the ribbed resin/webbing most real loungers have.
+    roundRectPath(ctx,x,y,w,h,short*0.08);
+    ctx.fillStyle = shadeColor(baseColor,0.1);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1.4;
+    roundRectPath(ctx,x,y,w,h,short*0.08); ctx.stroke();
+    const foldY = y+h*0.38;
+    ctx.beginPath(); ctx.moveTo(x+short*0.03,foldY); ctx.lineTo(x+w-short*0.03,foldY); ctx.stroke();
+    ctx.strokeStyle = shadeColor(baseColor,-0.2); ctx.lineWidth=1;
+    for(let i=1;i<=4;i++){
+      const sy = y+(foldY-y)*(i/5);
+      ctx.beginPath(); ctx.moveTo(x+short*0.06,sy); ctx.lineTo(x+w-short*0.06,sy); ctx.stroke();
+    }
   } else if(icon==='shower'){
     // A glass enclosure -- translucent tinted panels, a floor drain dead
     // centre, and a shower head + control mounted on one corner's walls --
@@ -6150,6 +6177,17 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
     for(let i=1;i<tiers;i++){
       const sy = y+(h/tiers)*i;
       ctx.beginPath(); ctx.moveTo(x+short*0.04,sy); ctx.lineTo(x+w-short*0.04,sy); ctx.stroke();
+    }
+  } else if(icon==='recliner'){
+    roundRectPath(ctx,x,y,w,h,short*0.08);
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    const foldY = y+h*0.38;
+    ctx.beginPath(); ctx.moveTo(x+short*0.03,foldY); ctx.lineTo(x+w-short*0.03,foldY); ctx.stroke();
+    ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
+    for(let i=1;i<=4;i++){
+      const sy = y+(foldY-y)*(i/5);
+      ctx.beginPath(); ctx.moveTo(x+short*0.06,sy); ctx.lineTo(x+w-short*0.06,sy); ctx.stroke();
     }
   } else if(icon==='shower'){
     roundRectPath(ctx,x,y,w,h,short*0.04);
@@ -10076,6 +10114,41 @@ function renderElementsList(){
         });
         dims.appendChild(document.createTextNode('H')); dims.appendChild(fenceHIn);
         dims.appendChild(document.createTextNode(unitAbbrev()));
+
+        // Glass-only: how see-through the fence reads in the 3D preview.
+        // Was a single fixed opacity (0.12) baked into FENCE_STYLE_3D_LOOK
+        // for every glass fence -- fine as a default, but a real pool
+        // fence's actual visibility varies a lot with the glass itself
+        // (clear vs low-iron vs a frosted/tinted privacy panel), and
+        // several overlapping panel edges at a low viewing angle can read
+        // as more solid than a single pane's own opacity alone suggests,
+        // which is exactly the kind of thing a person actually looking at
+        // their own render needs to be able to tune rather than accept a
+        // fixed guess.
+        if(PRESETS[el.presetKey].fenceStyle==='glass'){
+          const opWrap = document.createElement('span');
+          opWrap.style.display = 'flex'; opWrap.style.alignItems = 'center'; opWrap.style.gap = '4px'; opWrap.style.marginLeft = '4px';
+          const opLabel = document.createTextNode('Glass ');
+          const opIn = document.createElement('input'); opIn.type = 'range'; opIn.min = '5'; opIn.max = '100'; opIn.step = '1';
+          opIn.style.width = '70px';
+          opIn.title = 'How see-through the glass reads in the 3D preview -- low is nearly invisible, high is almost solid';
+          const opPct = document.createElement('span'); opPct.style.fontSize = '11px'; opPct.style.color = 'var(--ink-dim)';
+          const defaultOpacity = FENCE_STYLE_3D_LOOK.glass.opacity;
+          const currentPct = () => Math.round((el.glassOpacity!=null ? el.glassOpacity : defaultOpacity)*100);
+          opIn.value = String(currentPct());
+          opPct.textContent = currentPct()+'%';
+          opIn.addEventListener('click', e=>e.stopPropagation());
+          let opPushed = false;
+          opIn.addEventListener('input', ()=>{
+            if(!opPushed){ pushUndo(); opPushed = true; }
+            el.glassOpacity = parseInt(opIn.value,10)/100;
+            opPct.textContent = opIn.value+'%';
+            drawOverlay();
+          });
+          opIn.addEventListener('change', ()=>{ opPushed = false; });
+          opWrap.appendChild(opLabel); opWrap.appendChild(opIn); opWrap.appendChild(opPct);
+          dims.appendChild(opWrap);
+        }
       } else {
         const info = document.createElement('span');
         info.textContent = formatNum(pathLengthDisplay(el.points))+' '+unitAbbrev()+' · '+el.points.length+' pts';
@@ -11129,6 +11202,7 @@ const FURNITURE_HEIGHT_FT_3D = {
   hatch:4.7, sedan:4.8, suv:5.7, ute:5.9, ute_single:5.9, van:6.7,
   firepit_round:1.0, firepit_square:1.0,
   swing_egg:6.6, swing_double:6.7, swing_bench2:6.6, swing_bench3:7.1, swing_hammock:5.7,
+  recliner:1.6,
 };
 const HEIGHT_OVERRIDES_FT_3D = { table_coffee:1.5, table_side:2.3 };
 function furnitureHeightFt3D(presetKey, icon){
@@ -11362,6 +11436,7 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(preset.icon==='dresser') return build3DDresserMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='fridge') return build3DFridgeMesh(el, preset, baseColor, heightFt, pos);
   if(preset.icon==='open_shelf') return build3DOpenShelfMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='recliner') return build3DReclinerMesh(el, baseColor, pos);
   if(preset.icon==='shower') return build3DShowerMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='bath_freestand') return build3DBathMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='island') return build3DKitchenIslandMesh(el, baseColor, heightFt, pos);
@@ -11914,6 +11989,52 @@ function build3DOpenShelfMesh(el, baseColor, heightFt, pos){
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
 }
+// A pool recliner's defining feature -- the reclined backrest -- is
+// completely lost on a flat box, the exact same gap the kitchen island
+// (below) and every other case-good item already had before its own
+// mesh. A low seat section, a backrest hinged at its far end and tilted
+// up at a real lounging angle, and short legs is enough to read as an
+// actual lounger, not a plain low box.
+function build3DReclinerMesh(el, baseColor, pos){
+  const group = new THREE.Group();
+  const wFt = el.wFt, hFt = el.hFt;
+  if(!wFt || !hFt) return null;
+  const frameMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.55});
+  const legMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.35)), roughness:0.5, metalness:0.3});
+  const padThickFt = 0.1;
+  const legHFt = 0.35;
+  const seatLenFt = hFt*0.62;
+  const backLenFt = hFt-seatLenFt;
+  const backAngleRad = 32*Math.PI/180; // a real chaise recline -- steep enough to read as reclined, not just a raised lip
+  const footZ = -hFt/2;
+  const hingeZ = footZ+seatLenFt;
+
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(wFt, padThickFt, seatLenFt), frameMat);
+  seat.position.set(0, legHFt+padThickFt/2, footZ+seatLenFt/2);
+  group.add(seat);
+
+  // Hinged at the seat's own top-far edge, then tilted up -- same
+  // midpoint-after-rotation placement the pitched roof panels already
+  // use (rotate first, then the centre sits at hinge + half-length
+  // projected through the same angle), not a separate ad hoc formula.
+  const back = new THREE.Mesh(new THREE.BoxGeometry(wFt, padThickFt, backLenFt), frameMat);
+  back.rotation.x = -backAngleRad;
+  back.position.set(0,
+    legHFt+padThickFt + (backLenFt/2)*Math.sin(backAngleRad),
+    hingeZ + (backLenFt/2)*Math.cos(backAngleRad));
+  group.add(back);
+
+  const legInsetFt = Math.min(0.15, wFt*0.12, seatLenFt*0.12);
+  [[-1,footZ+legInsetFt], [1,footZ+legInsetFt], [-1,hingeZ-legInsetFt], [1,hingeZ-legInsetFt]].forEach(([side,z])=>{
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.05, legHFt, 0.05), legMat);
+    leg.position.set(side*(wFt/2-legInsetFt), legHFt/2, z);
+    group.add(leg);
+  });
+
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
 // A kitchen island's defining feature -- a countertop overhanging its own
 // cabinet base -- is completely invisible on a flat box, the same "you
 // only ever see its side, never its top" gap every other case-good item
@@ -12371,7 +12492,13 @@ function build3DPathMesh(el, groundWFt, groundHFt){
   const color = isWall ? (el.color || WALL_COLOR_INTERIOR) : (isHedge ? '#4A7A3E' : (el.color || '#D8DEE5'));
   const group = new THREE.Group();
   const matOpts = {color:new THREE.Color(color), roughness: isHedge?1:(fenceLook?fenceLook.roughness:0.85)};
-  if(fenceLook && fenceLook.transparent){ matOpts.transparent = true; matOpts.opacity = fenceLook.opacity; }
+  // A glass fence's own opacity is adjustable per-fence (el.glassOpacity,
+  // the sidebar slider) -- every other transparent style (chainlink) has
+  // no such control yet, so it keeps the fixed look-table default.
+  if(fenceLook && fenceLook.transparent){
+    matOpts.transparent = true;
+    matOpts.opacity = (fenceStyle==='glass' && el.glassOpacity!=null) ? el.glassOpacity : fenceLook.opacity;
+  }
   if(fenceLook && fenceLook.metalness!=null){ matOpts.metalness = fenceLook.metalness; }
   // A Colorbond fence used to be a flat, featureless painted box -- its
   // single most recognisable real trait, the tight corrugated ribs running
@@ -13011,6 +13138,22 @@ const ROOF_OVERHANG_FT = 0.75;
 const ROOF_PANEL_THICK_FT = 0.15;
 const ROOF_RIDGE_CAP_FT = 0.3;
 const ROOF_GABLE_THICK_FT = 0.12;
+// A real eave soffit/fascia is painted a light neutral -- that's WHY it's
+// painted at all, so the underside of an overhang never reads as a dark
+// void when you can see up under it (an inside/reflex corner of an
+// L-shaped roof, or just a low viewing angle at any eave, both real,
+// common sightlines, not an edge case). Was a 40%-darkened shade of the
+// roof's own colour, which on a mid-brown tile lands close enough to
+// black under indirect-only light (the underside faces away from the
+// sun entirely) that a real screenshot read it as a hole in the roof.
+// The SAME white a room's own ceiling uses (see CEILING_COLOR_3D further
+// down) -- a room only gets its own ceiling cap once it's been through
+// Detect Rooms; anywhere that hasn't (or any area outside a detected
+// room polygon), what you're actually looking up at from inside is this
+// roof underside directly, so a genuinely different shade here would
+// read as an inconsistent, patchy ceiling rather than one plane -- the
+// literal "why is ceiling not white inside the house" this was.
+const ROOF_SOFFIT_COLOR_3D = '#F7F6F2';
 function build3DRoofMesh(el, preset, groundWFt, groundHFt){
   const wFt = el.wFt, hFt = el.hFt;
   if(!wFt || !hFt) return null;
@@ -13032,7 +13175,7 @@ function build3DRoofMesh(el, preset, groundWFt, groundHFt){
   const metalness = AREA_MATERIAL_METALNESS_3D[preset.texture] || 0;
   const texMap = materialTextureFor3D(el.presetKey, baseColor, ridgeLenFt*40, slopeLenFt*40, el.tileSizeFt);
   const roofMat = new THREE.MeshStandardMaterial({map:texMap, roughness, metalness});
-  const underMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.4)), roughness:0.95});
+  const underMat = new THREE.MeshStandardMaterial({color:new THREE.Color(ROOF_SOFFIT_COLOR_3D), roughness:0.9});
   const faceMats = [underMat, underMat, roofMat, underMat, underMat, underMat];
 
   const group = new THREE.Group();
@@ -13127,6 +13270,10 @@ function build3DFlatRoofMeshFromPieces(pieces, el, preset, groundWFt, groundHFt)
   const roughness = AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.8;
   const metalness = AREA_MATERIAL_METALNESS_3D[preset.texture] || 0;
   const eaveY = WALL_HEIGHT_FT_3D;
+  // Fixed regardless of piece size/position -- one shared material for
+  // every piece's underside instead of a fresh (but identical) object
+  // per piece.
+  const underMat = new THREE.MeshStandardMaterial({color:new THREE.Color(ROOF_SOFFIT_COLOR_3D), roughness:0.9});
   const group = new THREE.Group();
   pieces.forEach(p=>{
     // The degenerate-piece guard checks the piece's OWN true dimensions,
@@ -13144,7 +13291,6 @@ function build3DFlatRoofMeshFromPieces(pieces, el, preset, groundWFt, groundHFt)
     const hFt = p.hFt + 2*ROOF_OVERHANG_FT;
     const texMap = materialTextureFor3D(el.presetKey, baseColor, wFt*40, hFt*40, el.tileSizeFt);
     const roofMat = new THREE.MeshStandardMaterial({map:texMap, roughness, metalness});
-    const underMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.4)), roughness:0.95});
     const faceMats = [underMat, underMat, roofMat, underMat, underMat, underMat];
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(wFt, ROOF_PANEL_THICK_FT, hFt), faceMats);
     mesh.rotation.y = -p.rotationDeg*Math.PI/180;
