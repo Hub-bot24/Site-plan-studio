@@ -895,6 +895,19 @@
           </button>
           <p class="helptext" id="detectRoomsStatus" style="margin-top:6px;margin-bottom:0;display:none;"></p>
         </div>
+        <div id="wallColorBlock" style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--line);">
+          <p class="helptext" style="margin-top:0;">Recolor every interior or every exterior wall on this page at once, instead of one wall at a time.</p>
+          <div class="row2">
+            <div class="field">
+              <label>All interior walls</label>
+              <input type="color" id="bulkWallColorInteriorInput" class="colorpick" value="#D9D4C8">
+            </div>
+            <div class="field">
+              <label>All exterior walls</label>
+              <input type="color" id="bulkWallColorExteriorInput" class="colorpick" value="#8B8478">
+            </div>
+          </div>
+        </div>
         <div id="elementsList"></div>
         <div class="empty-note" id="emptyNote">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
@@ -1008,6 +1021,10 @@
       <button type="button" data-mode3d="orbit" class="active">ORBIT</button>
       <button type="button" data-mode3d="walk">WALKTHROUGH</button>
     </div>
+    <label id="roofVisibleWrap" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-dim);cursor:pointer;user-select:none;" title="Hide the roof to see inside the house from above, in Orbit or Walkthrough.">
+      <input type="checkbox" id="roofVisibleInput" checked style="width:auto;margin:0;cursor:pointer;">
+      Roof
+    </label>
     <span id="preview3dHint">Drag to rotate &middot; scroll or pinch to zoom &middot; right-drag to pan</span>
     <button type="button" id="close3dPreviewBtn" class="icnbtn" title="Close">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -1204,6 +1221,13 @@ const OPENING_COLOR_WINDOW = '#BFD8E8';
 PRESETS.door_hinged = {label:'Door — Hinged', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'hinged', widthM:0.82, heightM:2.04};
 PRESETS.door_sliding = {label:'Door — Sliding', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'sliding', widthM:1.8, heightM:2.04};
 PRESETS.door_stacker = {label:'Door — Stacker (multi-panel)', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'stacker', widthM:2.4, heightM:2.1};
+// A cavity slider is an internal door that slides INTO the wall cavity
+// (vanishes from view when open) rather than swinging on hinges -- a
+// different real product to the face-track sliding/stacker doors above
+// (those are wide glazed panels for a patio/exterior opening; a cavity
+// slider is a normal-width solid internal door, same size class as a
+// hinged door, just a different opening mechanism).
+PRESETS.door_cavity = {label:'Door — Cavity slider (slides into wall)', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'cavity', widthM:0.82, heightM:2.04};
 PRESETS.window_standard = {label:'Window', color:OPENING_COLOR_WINDOW, texture:null, quick:'opening', isOpening:true, openingKind:'window', widthM:1.2, heightM:1.2, sillM:0.9};
 PRESETS.opening_large = {label:'Large opening (no door/window fitted)', color:OPENING_COLOR_WINDOW, texture:null, quick:'opening', isOpening:true, openingKind:'opening', widthM:3.0, heightM:2.1};
 
@@ -1556,6 +1580,8 @@ const drawCancelBtn = document.getElementById('drawCancelBtn');
 
 const elementsPanel = document.getElementById('elementsPanel');
 const elementsList = document.getElementById('elementsList');
+const bulkWallColorInteriorInput = document.getElementById('bulkWallColorInteriorInput');
+const bulkWallColorExteriorInput = document.getElementById('bulkWallColorExteriorInput');
 const emptyNote = document.getElementById('emptyNote');
 const emptyNoteText = document.getElementById('emptyNoteText');
 const autoArrangeBtn = document.getElementById('autoArrangeBtn');
@@ -3254,7 +3280,7 @@ function updateUnitLabels(){
 /* ============================ Type select population ============================ */
 const TYPE_GROUPS = [
   {label:'Walls (trace mode)', keys:['wall_interior','wall_exterior']},
-  {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','window_standard','opening_large']},
+  {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','door_cavity','window_standard','opening_large']},
   {label:'Site & landscaping', keys:['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','hedge','pool','tree','patio_post','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
@@ -8623,6 +8649,27 @@ function drawOpeningSymbol(ctx, o, a, b, nx, ny, half){
       ctx.lineTo(b.x+nx*off, b.y+ny*off);
       ctx.stroke();
     }
+  } else if(o.openingKind==='door' && o.doorType==='cavity'){
+    // A cavity slider's leaf sits retracted almost entirely INSIDE the
+    // wall it slides into, unlike 'sliding' above (a face-track panel
+    // that's still mostly visible across the opening) -- shown as a short
+    // solid line near jamb `a` (the sliver of leaf still at the opening's
+    // edge) plus a dashed line continuing past that jamb along the wall's
+    // own run, the standard simplified plan symbol for "the rest of the
+    // leaf disappears into the pocket here".
+    const width = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+    const alx = (b.x-a.x)/width, aly = (b.y-a.y)/width;
+    const peekPt = {x:a.x+alx*width*0.18, y:a.y+aly*width*0.18};
+    ctx.beginPath();
+    ctx.moveTo(a.x+nx*half*0.6, a.y+ny*half*0.6);
+    ctx.lineTo(peekPt.x+nx*half*0.6, peekPt.y+ny*half*0.6);
+    ctx.stroke();
+    ctx.setLineDash([2,3]);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(a.x-alx*width*0.8, a.y-aly*width*0.8);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
   ctx.restore();
 }
@@ -10490,6 +10537,23 @@ function renderElementsList(){
   focusSidebarRow(state.selectedId);
 }
 
+// Bulk wall recolor -- applies instantly to every wall of that type on the
+// current page, mirroring the per-wall sidebar swatch's own pushUndo/
+// drawOverlay pattern (one undo step per color-picker gesture, not per
+// intermediate 'input' event while dragging inside the picker).
+function bulkSetWallColor(wallType, input){
+  let pushed = false;
+  input.addEventListener('input', ()=>{
+    if(!pushed){ pushUndo(); pushed = true; }
+    currentPageElements().forEach(e=>{ if(e.isWall && e.wallType===wallType) e.color = input.value; });
+    drawOverlay();
+    renderElementsList();
+  });
+  input.addEventListener('change', ()=>{ pushed = false; });
+}
+bulkSetWallColor('internal', bulkWallColorInteriorInput);
+bulkSetWallColor('external', bulkWallColorExteriorInput);
+
 // Re-running detection must never blow away naming/typing work already done
 // on a room that still exists -- match each newly-traced loop against
 // existing room elements by centroid containment (either direction, so a
@@ -10913,6 +10977,7 @@ const preview3dCanvas = document.getElementById('preview3dCanvas');
 const preview3dLoading = document.getElementById('preview3dLoading');
 const close3dPreviewBtn = document.getElementById('close3dPreviewBtn');
 const preview3dModeToggle = document.getElementById('preview3dModeToggle');
+const roofVisibleInput = document.getElementById('roofVisibleInput');
 const preview3dHint = document.getElementById('preview3dHint');
 
 const AREA_HEIGHT_FT_3D = {
@@ -11103,6 +11168,7 @@ const state3d = {
   renderer:null, scene:null, camera:null, animId:null,
   target:{x:0,y:0,z:0}, radius:40, theta:Math.PI/4, phi:Math.PI/3.2,
   mode:'orbit', // 'orbit' | 'walk'
+  showRoof:true, // toggled by #roofVisibleInput -- persists across preview open/close within the session
   walk:{x:0, z:0, yaw:0, pitch:0, vx:0, vz:0},
   walkKeys:new Set(),
   collisionRects:[],
@@ -13303,6 +13369,29 @@ function build3DDoorLeafMesh(o, groundWFt, groundHFt){
     return outer;
   }
 
+  if(o.doorType==='cavity'){
+    // A cavity slider's leaf, at rest, is almost entirely hidden inside
+    // the wall cavity it slides into -- shown resting flush against the
+    // SAME jamb (offsetFt-widthFt/2) the 2D pocket symbol above anchors
+    // to, occupying only a small sliver of the opening's own width so it
+    // reads as "retracted" rather than a still-mostly-visible sliding/
+    // stacker panel. A real solid internal door leaf (the same opaque
+    // material as the hinged leaf above), not glass -- a cavity slider is
+    // a solid internal door, never a glazed exterior panel like sliding/
+    // stacker are modelled as.
+    const panelFrac = 0.16;
+    const panelLenFt = widthFt*panelFrac;
+    const midFt = (o.offsetFt-widthFt/2) + panelLenFt/2;
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(panelLenFt, heightFt, leafThickFt),
+      new THREE.MeshStandardMaterial({color:new THREE.Color(o.color || OPENING_COLOR_DOOR), roughness:0.7})
+    );
+    mesh.position.set(ax+ux*midFt, heightFt/2, az+uz*midFt);
+    mesh.rotation.y = -Math.atan2(dz, dx);
+    outer.add(mesh);
+    return outer;
+  }
+
   // Sliding/stacker: a panel slid to one side, sitting IN the wall's own
   // plane like the wall itself (not swung into the room) -- a stacker's
   // narrower fraction reads as more panels folded out of the way.
@@ -13762,7 +13851,17 @@ function init3DScene(){
       return;
     }
     const mesh = build3DElementMesh(el, groundWFt, groundHFt);
-    if(mesh) group.add(mesh);
+    if(mesh){
+      // Tagged (not skipped) so the roof-visibility toggle can flip it back
+      // on live, in either Orbit or Walkthrough, without a full scene
+      // rebuild -- see roofVisibleInput below, which just traverses the
+      // scene for this tag instead of re-running init3DScene from scratch.
+      if(ROOF_PRESETS_3D.has(el.presetKey)){
+        mesh.userData.isRoof = true;
+        mesh.visible = state3d.showRoof;
+      }
+      group.add(mesh);
+    }
     if(el.isRoom){
       const ceiling = build3DRoomCeilingMesh(el, groundWFt, groundHFt);
       if(ceiling) group.add(ceiling);
@@ -13863,6 +13962,18 @@ preview3dModeToggle.addEventListener('click', (e)=>{
   const btn = e.target.closest('button[data-mode3d]');
   if(!btn || !state3d.renderer) return;
   set3DMode(btn.dataset.mode3d);
+});
+// Flips every roof mesh's own .visible flag live, in whichever mode
+// (Orbit or Walkthrough) is currently showing -- both share the exact
+// same scene graph (see set3DMode), so one traversal covers both, no
+// scene rebuild needed. Persists for the rest of the session (including
+// across close/reopen) so hiding the roof to look inside isn't undone
+// the moment you close the preview.
+roofVisibleInput.addEventListener('change', ()=>{
+  state3d.showRoof = roofVisibleInput.checked;
+  if(state3d.scene){
+    state3d.scene.traverse(obj=>{ if(obj.userData && obj.userData.isRoof) obj.visible = state3d.showRoof; });
+  }
 });
 
 preview3dBtn.addEventListener('click', open3DPreview);
