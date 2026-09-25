@@ -11299,9 +11299,33 @@ function build3DCarMesh(el, preset, baseColor, heightFt, pos){
   // body under a 58% glass cabin), reading as an oversized glass dome
   // sitting on a slab instead of a car.
   const bodyWFt = wFt*0.90, bodyHFt = heightFt*0.60;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(bodyWFt, bodyHFt, hFt), bodyMat);
+  // Wheel radius, needed early (see taperLenFt below) to guarantee the
+  // wheels always land within the WIDE middle body section, never the
+  // narrower nose/tail tips -- same formula as the "Wheels" section
+  // further down, which reuses this value rather than recomputing it.
+  const wheelRFt = (bodyHFt*0.85)/2;
+  // A single uniform box reads as a brick no matter how correct its
+  // proportions are -- a real car's body is noticeably narrower at the
+  // very front and rear (nose/tail) than across the doors. Three stacked
+  // boxes (narrow nose, full-width middle, narrow tail) give a real
+  // tapered silhouette using the same plain BoxGeometry+position technique
+  // as everything else in this file -- deliberately NOT a smooth
+  // ExtrudeGeometry taper, since this sandbox has no way to verify an
+  // extrusion's own internal rotation math the way a stack of boxes'
+  // positions can be checked directly against independently recomputed
+  // values. taperLenFt is capped well below the wheels' own back-off
+  // margin (wheelRFt*1.3, see axleZFt below) so the wheels always sit
+  // against the wide middle section, never poking out past a narrower tip.
+  const noseWFt = bodyWFt*0.62, taperLenFt = Math.min(hFt*0.10, wheelRFt*1.1);
+  const bodyMidLenFt = hFt - taperLenFt*2;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(bodyWFt, bodyHFt, bodyMidLenFt), bodyMat);
   body.position.set(0, bodyHFt/2, 0);
   group.add(body);
+  [-1, 1].forEach(zSide=>{
+    const tip = new THREE.Mesh(new THREE.BoxGeometry(noseWFt, bodyHFt, taperLenFt), bodyMat);
+    tip.position.set(0, bodyHFt/2, zSide*(bodyMidLenFt/2+taperLenFt/2));
+    group.add(tip);
+  });
 
   // Cabin -- a glass band (the window strip) capped by a slightly narrower
   // body-coloured roof shell, not one uniform glass block. A real
@@ -11333,7 +11357,7 @@ function build3DCarMesh(el, preset, baseColor, heightFt, pos){
   // fills most of the lower body, reading as a real round wheel, rather
   // than a small disc dwarfed by an oversized cabin and tucked out of
   // sight -- the "flat black smudge" look a screenshot showed this fixes.
-  const wheelDFt = bodyHFt*0.85, wheelRFt = wheelDFt/2, wheelWFt = wFt*0.10;
+  const wheelWFt = wFt*0.10;
   const axleZFt = hFt/2 - wheelRFt*1.3;
   // A flat black roughness-0.9 tire with nothing else on it has no way to
   // actually READ as round in low/indirect light (a covered carport, an
@@ -12088,6 +12112,24 @@ function build3DPathMesh(el, groundWFt, groundHFt){
   const matOpts = {color:new THREE.Color(color), roughness: isHedge?1:(fenceLook?fenceLook.roughness:0.85)};
   if(fenceLook && fenceLook.transparent){ matOpts.transparent = true; matOpts.opacity = fenceLook.opacity; }
   if(fenceLook && fenceLook.metalness!=null){ matOpts.metalness = fenceLook.metalness; }
+  // A Colorbond fence used to be a flat, featureless painted box -- its
+  // single most recognisable real trait, the tight corrugated ribs running
+  // up every sheet, was completely absent (the 2D top view already draws
+  // seam ticks for this exact style, but nothing carried into 3D at all).
+  // Reuses the SAME corrugated-rib texture roof_metal already bakes for a
+  // metal roof (materialTextureFor3D('roof_metal',...) -- fenceStyle isn't
+  // a real preset key of its own to look a texture up by, so this borrows
+  // that one deliberately), repeated along the fence's own real length so
+  // the rib density stays plausible regardless of how long any one traced
+  // segment is.
+  if(fenceStyle==='colorbond'){
+    const tex = materialTextureFor3D('roof_metal', color, heightFt*40, heightFt*40);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    const totalLenFt = pts.reduce((s,p,i)=> i<pts.length-1 ? s+Math.hypot(pts[i+1].x-p.x, pts[i+1].y-p.y)/state.scalePxPerFt : s, 0);
+    tex.repeat.set(Math.max(1, Math.round(totalLenFt/COLORBOND_RIB_SPACING_FT)), 1);
+    matOpts.map = tex;
+  }
   const mat = new THREE.MeshStandardMaterial(matOpts);
   // Same join-extension idea as the 2D thickness-band rendering (see
   // wallJoinExtension) -- without it, two walls meeting at a corner would
@@ -12352,14 +12394,50 @@ function decomposeRectilinearPolygonFt(points){
   });
   const EPS = 1.5; // px -- collapses near-duplicate vertex coords from hand-tracing/float noise
   const n = rpts.length;
-  const horizEdges = [];
+  if(n<4) return null;
+  // Real hand-traced polygons are rarely PERFECTLY rectilinear -- a mouse-
+  // drawn edge meant to be horizontal can easily be off by a pixel or two,
+  // which for a LONG edge (a 60ft roof edge, say) is a tiny angular
+  // deviation but a large absolute endpoint Y-difference -- easily beyond
+  // any small fixed epsilon, and enough to silently trip the old "not
+  // rectilinear" bail-out below on a perfectly reasonable roof trace (a
+  // real reported failure, "roof still over the pool... not like 2d",
+  // even after the exact-decomposition fix existed). Classify each edge's
+  // orientation by RATIO (whichever of dx/dy is larger -- correctly
+  // scale-invariant, not an absolute-pixel check), confirm they properly
+  // alternate horizontal/vertical around the polygon (as a true
+  // rectilinear polygon must), then snap every vertex to the shared
+  // coordinate its one horizontal and one vertical neighbour edge agree
+  // on -- turning a "close enough" hand trace into a genuinely
+  // rectilinear polygon before the exact tiling below, which needs one.
+  // Computed independently per vertex from the ORIGINAL points (never
+  // from an already-snapped neighbour), so there's no sequential drift
+  // or unclosed seam the way a left-to-right walking snap would risk.
+  const edgeIsHoriz = [];
   for(let i=0;i<n;i++){
     const a = rpts[i], b = rpts[(i+1)%n];
-    if(Math.abs(a.x-b.x)<EPS && Math.abs(a.y-b.y)<EPS) continue; // degenerate zero-length edge
-    const isHoriz = Math.abs(a.y-b.y)<EPS;
-    const isVert = Math.abs(a.x-b.x)<EPS;
-    if(!isHoriz && !isVert) return null; // a genuinely diagonal edge -- not rectilinear, bail to the fallback
-    if(isHoriz) horizEdges.push({ y:(a.y+b.y)/2, x0:Math.min(a.x,b.x), x1:Math.max(a.x,b.x) });
+    const dx = b.x-a.x, dy = b.y-a.y;
+    if(Math.abs(dx)<1e-9 && Math.abs(dy)<1e-9) return null; // a genuine duplicate/zero-length vertex -- bail rather than guess
+    edgeIsHoriz.push(Math.abs(dy) <= Math.abs(dx));
+  }
+  for(let i=0;i<n;i++){
+    if(edgeIsHoriz[i]===edgeIsHoriz[(i+1)%n]) return null; // must strictly alternate H/V around a true rectilinear polygon
+  }
+  const snapped = rpts.map(p=>({x:p.x, y:p.y}));
+  for(let k=0;k<n;k++){
+    const prevIdx = (k-1+n)%n, nextIdx = (k+1)%n;
+    if(edgeIsHoriz[prevIdx]){
+      snapped[k].y = (rpts[prevIdx].y+rpts[k].y)/2;
+      snapped[k].x = (rpts[k].x+rpts[nextIdx].x)/2; // edgeIsHoriz[k] is false (vertical) by alternation
+    } else {
+      snapped[k].x = (rpts[prevIdx].x+rpts[k].x)/2;
+      snapped[k].y = (rpts[k].y+rpts[nextIdx].y)/2; // edgeIsHoriz[k] is true by alternation
+    }
+  }
+  const horizEdges = [];
+  for(let i=0;i<n;i++){
+    const a = snapped[i], b = snapped[(i+1)%n];
+    if(edgeIsHoriz[i]) horizEdges.push({ y:a.y, x0:Math.min(a.x,b.x), x1:Math.max(a.x,b.x) });
   }
   const snap = (vals) => {
     const sorted = [...vals].sort((p,q)=>p-q);
@@ -12367,7 +12445,7 @@ function decomposeRectilinearPolygonFt(points){
     sorted.forEach(v=>{ if(!out.length || v-out[out.length-1]>EPS) out.push(v); });
     return out;
   };
-  const xs = snap(rpts.map(p=>p.x));
+  const xs = snap(snapped.map(p=>p.x));
   if(xs.length<2) return null;
 
   const slabs = []; // {x0,x1, yPairs:[[y0,y1],...]}
