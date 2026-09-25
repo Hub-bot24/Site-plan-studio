@@ -10090,6 +10090,23 @@ function renderElementsList(){
       dims.appendChild(floorSel);
       appendTileSizeControl(dims, el);
       appendFloorColorControl(dims, el);
+      // el.ceilingHeightFt (optional, unset = the standard WALL_HEIGHT_FT_3D
+      // build3DRoomCeilingMesh already fell back to) -- a real dropped/
+      // suspended ceiling sits LOWER than the walls' own height, not
+      // something every room can be forced to share one fixed height for.
+      const ceilIn = document.createElement('input'); ceilIn.type='number'; ceilIn.step='0.1'; ceilIn.min='1';
+      ceilIn.style.marginLeft='4px';
+      ceilIn.title = 'Ceiling height -- defaults to the standard wall height; set lower for a dropped ceiling';
+      ceilIn.value = formatNum(fromFt(el.ceilingHeightFt||WALL_HEIGHT_FT_3D, state.unit));
+      ceilIn.addEventListener('click', e=>e.stopPropagation());
+      ceilIn.addEventListener('change', ()=>{
+        const v = parseFloat(ceilIn.value);
+        if(v>0){ pushUndo(); el.ceilingHeightFt = toFt(v, state.unit); drawOverlay(); }
+        else ceilIn.value = formatNum(fromFt(el.ceilingHeightFt||WALL_HEIGHT_FT_3D, state.unit));
+      });
+      dims.appendChild(document.createTextNode('Ceiling'));
+      dims.appendChild(ceilIn);
+      dims.appendChild(document.createTextNode(unitAbbrev()));
     } else if(el.shape==='polygon'){
       const info = document.createElement('span');
       info.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
@@ -12700,13 +12717,6 @@ function decomposeRectilinearPolygonFt(points){
       wFt: (r.x1-r.x0)/scale,
       hFt: (r.y1-r.y0)/scale,
       rotationDeg: bestAngle*180/Math.PI,
-      // Raw position along the shared span/slope axis, in the ONE rotated
-      // frame every piece from this same call has in common (relative to
-      // this polygon's own centroid) -- exposed purely so
-      // build3DSkillionRoofMeshFromPieces can place every piece on ONE
-      // consistent slope; unused by (and harmless to) every existing caller.
-      y0Ft: r.y0/scale,
-      y1Ft: r.y1/scale,
     };
   });
 }
@@ -12725,15 +12735,13 @@ function build3DRoofMeshFromPolygon(el, preset, groundWFt, groundHFt){
     // rather than trust a broken tiling.
     if(trueAreaFt2>0 && Math.abs(piecesAreaFt2-trueAreaFt2)/trueAreaFt2 < 0.08){
       // A single piece (the polygon IS just a plain rectangle, only traced
-      // as a polygon rather than drawn as a rect) still gets a normal
-      // standalone gable -- identical to a plain rect roof, nothing to make
-      // coherent with. TWO OR MORE pieces used to each get their own
-      // independent gable here -- a real reported "roof still a joke": every
-      // piece computed its own ridge off its OWN span alone, with zero
-      // awareness of its neighbours, so the result was a bundle of separate
-      // disconnected tents instead of one roof. See
-      // build3DSkillionRoofMeshFromPieces for why a shared mono-pitch slope
-      // fixes that for good, not just for this one shape.
+      // as a polygon rather than drawn as a rect) gets a normal standalone
+      // pitched gable -- identical to a plain rect roof, and safe, since
+      // there's only the one piece. TWO OR MORE pieces get a flat slab per
+      // piece instead of a pitched one -- see build3DFlatRoofMeshFromPieces
+      // for why (two different pitched approaches each broke in a new way
+      // on a real, more complex house, and this sandbox has no way to
+      // visually verify a third).
       const group = new THREE.Group();
       if(pieces.length===1){
         const rect = pieces[0];
@@ -12741,8 +12749,8 @@ function build3DRoofMeshFromPolygon(el, preset, groundWFt, groundHFt){
         const piece = build3DRoofMesh(synthEl, preset, groundWFt, groundHFt);
         if(piece) group.add(piece);
       } else {
-        const skillion = build3DSkillionRoofMeshFromPieces(pieces, el, preset, groundWFt, groundHFt);
-        if(skillion) group.add(skillion);
+        const flat = build3DFlatRoofMeshFromPieces(pieces, el, preset, groundWFt, groundHFt);
+        if(flat) group.add(flat);
       }
       if(group.children.length) return group;
     }
@@ -12990,73 +12998,74 @@ function build3DRoofMesh(el, preset, groundWFt, groundHFt){
 // decomposeRectilinearPolygonFt), giving EACH piece its own independent
 // build3DRoofMesh gable put a separate ridge, at a height based only on
 // THAT piece's own span, on every single one -- with zero awareness of its
-// neighbours. Adjacent pieces of different widths ended up with different
-// ridge heights (sometimes different ridge DIRECTIONS), so the result read
-// as a bundle of disconnected little tents side by side, not one roof.
-// A skillion (a single mono-pitch slope, no ridge at all) fixes this for a
-// structural reason, not a cosmetic one: its height is a pure LINEAR
-// function of position along one shared slope axis. As long as every piece
-// evaluates that SAME function (not an independent one derived from its own
-// bounds), any two pieces that share a border -- whichever direction
-// they're adjacent in, however the polygon happened to be sliced -- land at
-// EXACTLY the same height all along that shared edge, because both sides of
-// the seam are just two evaluations of one linear formula at the same
-// input. That shared formula is what actually guarantees a single coherent
-// roof surface; nothing here reasons about which edges touch which.
-// Deliberately gentler than the symmetric gable's ROOF_PITCH_RAD (a 6:12,
-// atan(0.5)) because a skillion covers the FULL span in one slope instead
-// of splitting it in half from a central ridge -- the same pitch here would
-// make a roof over an ordinary building depth rise twice as high as the
-// gable does, unrealistically tall for a normal house.
-const ROOF_SKILLION_PITCH_RAD = Math.atan(0.2);
-function build3DSkillionRoofMeshFromPieces(pieces, el, preset, groundWFt, groundHFt){
+// neighbours, reading as a bundle of disconnected little tents. Replacing
+// that with a single shared mono-pitch slope (every piece computing its
+// height from one common linear formula) fixed that specific case -- but a
+// SECOND real screenshot, on a more complex actual house, showed a new
+// failure: that shared formula only guarantees two pieces meet EXACTLY
+// where they actually overlap along the shared slope axis. A real footprint
+// with a recessed wing or an inner notch commonly decomposes into pieces
+// that share NO such overlap at all -- nothing connects them then, and they
+// render as separate slopes floating at whatever height the formula gives
+// their own disjoint range, which read as the same "not one roof" problem
+// in a new shape. Getting a pitched roof right for an arbitrary rectilinear
+// footprint in general needs real roof-massing geometry (a straight-
+// skeleton/hip algorithm), which this sandbox has no way to render or
+// visually verify at all. Rather than ship a THIRD pitched variant with an
+// unknown new failure mode, a MULTI-piece roof gets a flat slab per piece
+// instead -- still built from the exact same true-footprint decomposition
+// this has always used (so it still never over-extends past the real traced
+// shape, the original "roof over the pool" fix), just without a slope. A
+// SINGLE-piece roof (a plain rectangle, whether drawn as one or traced as a
+// simple polygon) has none of this multi-piece risk and keeps its real
+// pitched gable, unchanged.
+function build3DFlatRoofMeshFromPieces(pieces, el, preset, groundWFt, groundHFt){
   if(!pieces || !pieces.length) return null;
   const baseColor = el.color || preset.color || '#A15A34';
   const roughness = AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.8;
   const metalness = AREA_MATERIAL_METALNESS_3D[preset.texture] || 0;
   const eaveY = WALL_HEIGHT_FT_3D;
-  // The single shared reference the whole roof's slope is measured against
-  // -- every piece's height comes from THIS SAME range (not its own), which
-  // is the one property that actually fixes the "bundle of tents" look.
-  const globalY1Ft = Math.max(...pieces.map(p=>p.y1Ft));
-  const heightAtY = (yFt) => eaveY + (globalY1Ft-yFt)*Math.tan(ROOF_SKILLION_PITCH_RAD);
-
   const group = new THREE.Group();
   pieces.forEach(p=>{
-    // Overhang grows the piece symmetrically on every side, so its true
-    // centre (and therefore the already-correct xPx/yPx decomposition gave
-    // it) never moves -- no separate position recompute needed for it.
+    // The degenerate-piece guard checks the piece's OWN true dimensions,
+    // BEFORE the overhang padding below is added -- a real near-zero
+    // sliver (occasionally produced by decomposeRectilinearPolygonFt's
+    // tolerance merge on a genuinely messy hand-trace) must never reach
+    // this far just because +2*ROOF_OVERHANG_FT alone would push its
+    // PADDED size back above a post-padding threshold. A prior version of
+    // this check tested the padded size, which is why a real screenshot
+    // still showed small disconnected roof fragments floating in the
+    // scene -- every sliver passed once padding alone made it look big
+    // enough, regardless of how close to zero its real size was.
+    if(p.wFt<=0.05 || p.hFt<=0.05) return;
     const wFt = p.wFt + 2*ROOF_OVERHANG_FT;
     const hFt = p.hFt + 2*ROOF_OVERHANG_FT;
-    if(wFt<=0.05 || hFt<=0.05) return;
-    const midYFt = (p.y0Ft+p.y1Ft)/2;
-    const slopeLenFt = hFt/Math.cos(ROOF_SKILLION_PITCH_RAD);
-    const texMap = materialTextureFor3D(el.presetKey, baseColor, wFt*40, slopeLenFt*40, el.tileSizeFt);
+    const texMap = materialTextureFor3D(el.presetKey, baseColor, wFt*40, hFt*40, el.tileSizeFt);
     const roofMat = new THREE.MeshStandardMaterial({map:texMap, roughness, metalness});
     const underMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.4)), roughness:0.95});
     const faceMats = [underMat, underMat, roofMat, underMat, underMat, underMat];
-    const panel = new THREE.Mesh(new THREE.BoxGeometry(wFt, ROOF_PANEL_THICK_FT, slopeLenFt), faceMats);
-    // Local X tilt first, then the piece's own world-facing Y rotation --
-    // three.js's default XYZ Euler order composes rotation.x before
-    // rotation.y on the same object, so this needs no separate parent group
-    // to get the same "tilt locally, then rotate the whole tilted panel to
-    // the polygon's real-world orientation" result build3DRoofMesh gets via
-    // group nesting.
-    panel.rotation.x = ROOF_SKILLION_PITCH_RAD;
-    panel.rotation.y = -p.rotationDeg*Math.PI/180;
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(wFt, ROOF_PANEL_THICK_FT, hFt), faceMats);
+    mesh.rotation.y = -p.rotationDeg*Math.PI/180;
     const pos = ftPos3D(p, groundWFt, groundHFt);
-    panel.position.set(pos.x, heightAtY(midYFt), pos.z);
-    group.add(panel);
+    mesh.position.set(pos.x, eaveY+ROOF_PANEL_THICK_FT/2, pos.z);
+    group.add(mesh);
   });
   return group.children.length ? group : null;
 }
-const CEILING_COLOR_3D = '#EDEAE0';
+// A real ceiling paint colour, not the warm cream (#EDEAE0) this used to
+// be -- a direct "please have a white ceiling" ask, and #EDEAE0 reads as
+// distinctly tan/cream next to an actual white, not a subtle off-white.
+const CEILING_COLOR_3D = '#F7F6F2';
 // Every traced room already has its own true interior polygon (the same one
 // its floor slab is extruded from, straight from Phase 3's room detection) --
 // capping that SAME polygon at wall height gives the room a real ceiling
 // instead of open sky above the wall line, with no separate/approximated
-// geometry. Height is WALL_HEIGHT_FT_3D, the same default every wall itself
-// falls back to when it has no explicit wallHeightFt of its own.
+// geometry. el.ceilingHeightFt (optional, editable in the sidebar) lets
+// any individual room's ceiling sit lower than the walls' own height (a
+// real, common dropped/suspended ceiling) instead of every room being
+// forced to the one fixed WALL_HEIGHT_FT_3D every wall itself falls back
+// to when it has no explicit wallHeightFt of its own -- unset keeps that
+// exact original default, so no existing saved room changes.
 function build3DRoomCeilingMesh(el, groundWFt, groundHFt){
   if(!el.points || el.points.length<3) return null;
   const cx = el.points.reduce((s,p)=>s+p.x,0)/el.points.length;
@@ -13070,7 +13079,8 @@ function build3DRoomCeilingMesh(el, groundWFt, groundHFt){
   geo.translate(0, thickness, 0);
   const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(CEILING_COLOR_3D), roughness:0.95});
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, WALL_HEIGHT_FT_3D-thickness, cy/state.scalePxPerFt - groundHFt/2);
+  const ceilingY = el.ceilingHeightFt || WALL_HEIGHT_FT_3D;
+  mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, ceilingY-thickness, cy/state.scalePxPerFt - groundHFt/2);
   return mesh;
 }
 // findClosedRoomLoops() (the same wall-loop trace the "Detect Rooms" button
@@ -13299,9 +13309,13 @@ function build3DDoorLeafMesh(o, groundWFt, groundHFt){
   const panelFrac = o.doorType==='stacker' ? 0.25 : 0.42;
   const panelLenFt = widthFt*panelFrac;
   const midFt = (o.offsetFt-widthFt/2) + panelLenFt/2;
+  // Unlike the hinged leaf above, this never read o.color at all -- a
+  // sliding/stacker door was always the same fixed glass tint no matter
+  // what colour was actually set on it, the same "colour picker does
+  // nothing" gap the hinged leaf itself already had fixed once before.
   const mesh = new THREE.Mesh(
     new THREE.BoxGeometry(panelLenFt, heightFt, leafThickFt),
-    new THREE.MeshStandardMaterial({color:new THREE.Color('#BFD8E8'), roughness:0.15, transparent:true, opacity:0.45})
+    new THREE.MeshStandardMaterial({color:new THREE.Color(o.color || '#BFD8E8'), roughness:0.15, transparent:true, opacity:0.45})
   );
   mesh.position.set(ax+ux*midFt, heightFt/2, az+uz*midFt);
   mesh.rotation.y = -Math.atan2(dz, dx);
