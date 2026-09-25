@@ -1152,7 +1152,14 @@ const PRESETS = {
   // entry): that path already extrudes to any per-preset height, tall or
   // thin, so no dedicated 3D builder is needed just to make it stand up
   // roof-high instead of ankle-high.
-  patio_post: {label:'Support post / pillar', color:'#8A7B6B', texture:'flat', quick:'circle', dIn:6},
+  patio_post: {label:'Support post / pillar — round', color:'#8A7B6B', texture:'flat', quick:'circle', dIn:6},
+  // A real post is just as often square/rectangular (timber or steel box
+  // section) as round -- same "give both a round and a rect option"
+  // precedent as the fire pits above. quick:'rect' means it already gets
+  // the same generic width/depth editing every other rect-shape area
+  // preset does, so both real footprint dimensions ("shape lengths") are
+  // independently adjustable, not just one fixed diameter.
+  patio_post_square: {label:'Support post / pillar — square', color:'#8A7B6B', texture:'flat', quick:'rect', name:'Support post — square', wIn:6, hIn:6},
   roof_tile:    {label:'Roof — Terracotta tile',   color:'#A15A34', texture:'tile',    quick:'rect'},
   roof_metal:   {label:'Roof — Metal (Colorbond)', color:'#4A4E52', texture:'metal',   quick:'rect'},
   roof_shingle: {label:'Roof — Asphalt shingle',   color:'#5B5854', texture:'shingle', quick:'rect'},
@@ -3291,7 +3298,7 @@ function updateUnitLabels(){
 const TYPE_GROUPS = [
   {label:'Walls (trace mode)', keys:['wall_interior','wall_exterior']},
   {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','door_cavity','window_standard','opening_large']},
-  {label:'Site & landscaping', keys:['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','hedge','pool','tree','patio_post','custom']},
+  {label:'Site & landscaping', keys:['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','hedge','pool','tree','patio_post','patio_post_square','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
   {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom','recliner','recliner_double','recliner_custom']},
@@ -9713,6 +9720,28 @@ function renderElementsList(){
         dims.appendChild(parentSel);
       }
     }
+    // A post's own height was hardcoded to WALL_HEIGHT_FT_3D with no way
+    // to change it at all -- unlike a wall or fence, which already have
+    // their own editable height field. Shown for either pillar preset
+    // (round or square), defaulting the displayed value to that same
+    // constant when el.postHeightFt is unset, exactly like the ceiling/
+    // fence height controls elsewhere in this panel.
+    function appendPostHeightControl(dims, el){
+      if(el.presetKey!=='patio_post' && el.presetKey!=='patio_post_square') return;
+      const hIn = document.createElement('input'); hIn.type='number'; hIn.step='0.1'; hIn.min='0.5';
+      hIn.style.marginLeft = '4px';
+      hIn.title = 'Post height -- defaults to the standard wall/eave height';
+      hIn.value = formatNum(fromFt(el.postHeightFt||WALL_HEIGHT_FT_3D, state.unit));
+      hIn.addEventListener('click', e=>e.stopPropagation());
+      hIn.addEventListener('change', ()=>{
+        const v = parseFloat(hIn.value);
+        if(v>0){ pushUndo(); el.postHeightFt = toFt(v, state.unit); drawOverlay(); }
+        else hIn.value = formatNum(fromFt(el.postHeightFt||WALL_HEIGHT_FT_3D, state.unit));
+      });
+      dims.appendChild(document.createTextNode('H'));
+      dims.appendChild(hIn);
+      dims.appendChild(document.createTextNode(unitAbbrev()));
+    }
     // Swap an area's material after the fact -- e.g. a pool traced as a
     // cutout inside a patio turns out to actually just want to be plain
     // paving there instead. Not cutout-only: any flat-material ground area
@@ -9979,6 +10008,7 @@ function renderElementsList(){
       appendTileSizeControl(dims, el);
       appendMaterialControl(dims, el);
       appendCutoutControls(dims, el);
+      appendPostHeightControl(dims, el);
     } else if(el.shape==='circle'){
       const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
       dIn.value = formatNum(fromFt(el.dFt,state.unit));
@@ -9997,6 +10027,7 @@ function renderElementsList(){
       dims.appendChild(areaInfo);
       appendMaterialControl(dims, el);
       appendCutoutControls(dims, el);
+      appendPostHeightControl(dims, el);
     } else if(el.shape==='path'){
       if(el.isDimension){
         const lenIn = document.createElement('input'); lenIn.type='number'; lenIn.step='0.01'; lenIn.min='0.01';
@@ -11068,6 +11099,7 @@ const AREA_HEIGHT_FT_3D = {
   // itself sits at) to actually look like it's holding anything up,
   // not just another ankle-high ground slab.
   patio_post: WALL_HEIGHT_FT_3D,
+  patio_post_square: WALL_HEIGHT_FT_3D,
 };
 const ROOF_PRESETS_3D = new Set(['roof_tile','roof_metal','roof_shingle']);
 // Flat-colour/roughness stand-in for a room's floor texture in the 3D view.
@@ -12999,6 +13031,12 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   }
   const isWall = el.presetKey==='clad_stone';
   let heightFt = AREA_HEIGHT_FT_3D[el.presetKey] != null ? AREA_HEIGHT_FT_3D[el.presetKey] : 0.2;
+  // A post's own height (el.postHeightFt) was never adjustable at all --
+  // every pillar was hardcoded to WALL_HEIGHT_FT_3D with no override,
+  // unlike a wall/fence's own height field. Optional, defaults to that
+  // exact same constant when unset, so every already-placed post keeps
+  // its current look.
+  if((el.presetKey==='patio_post' || el.presetKey==='patio_post_square') && el.postHeightFt!=null) heightFt = el.postHeightFt;
   let baseY = 0;
   if(isRoof) baseY = WALL_HEIGHT_FT_3D;
   if(isWall){ heightFt = WALL_HEIGHT_FT_3D; baseY = 0; }
