@@ -450,6 +450,15 @@
   .icnbtn.del:hover{border-color:var(--danger);color:var(--danger);}
   .icnbtn.active{border-color:var(--accent);color:var(--accent);}
   .icnbtn:disabled{opacity:0.35;cursor:not-allowed;}
+  /* Same visual weight as .icnbtn (a real bordered button, not plain
+     text) but auto-width for a short text label instead of one fixed-size
+     icon -- .linkbtn's underlined-text-link look all but disappeared
+     packed inline between other row text (a pool-with-step's own rotate
+     controls, sitting right between "8 pts" and "by ___ °"), which is
+     "why can i not rotate my pool with the step" even though the control
+     itself already worked -- nobody could tell it was a button at all. */
+  .rowbtn{background:transparent;border:1px solid var(--line);color:var(--ink-dim);border-radius:5px;padding:2px 6px;cursor:pointer;font-size:11px;line-height:1.4;flex-shrink:0;font-family:'Space Mono',monospace;}
+  .rowbtn:hover{border-color:var(--accent);color:var(--accent);}
   .empty-note{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;color:var(--ink-dim);font-size:12px;line-height:1.5;padding:18px 8px;}
   .empty-note svg{color:var(--ink-dim);opacity:0.5;}
   .totalline{
@@ -10329,11 +10338,12 @@ function renderElementsList(){
           drawOverlay(); renderElementsList();
         };
         const rotWrap = document.createElement('span');
-        rotWrap.style.display='inline-flex'; rotWrap.style.alignItems='center'; rotWrap.style.gap='3px';
-        const ccwBtn = document.createElement('button'); ccwBtn.type='button'; ccwBtn.className='linkbtn';
+        rotWrap.style.display='inline-flex'; rotWrap.style.alignItems='center'; rotWrap.style.gap='4px'; rotWrap.style.marginLeft='6px';
+        rotWrap.appendChild(document.createTextNode('Rotate'));
+        const ccwBtn = document.createElement('button'); ccwBtn.type='button'; ccwBtn.className='rowbtn';
         ccwBtn.textContent='⟲90°'; ccwBtn.title='Rotate 90° counter-clockwise';
         ccwBtn.addEventListener('click', e=>{ e.stopPropagation(); rotatePolyBy(-90); });
-        const cwBtn = document.createElement('button'); cwBtn.type='button'; cwBtn.className='linkbtn';
+        const cwBtn = document.createElement('button'); cwBtn.type='button'; cwBtn.className='rowbtn';
         cwBtn.textContent='90°⟳'; cwBtn.title='Rotate 90° clockwise';
         cwBtn.addEventListener('click', e=>{ e.stopPropagation(); rotatePolyBy(90); });
         const customRotIn = document.createElement('input'); customRotIn.type='number'; customRotIn.step='1'; customRotIn.placeholder='0';
