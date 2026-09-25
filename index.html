@@ -10547,9 +10547,16 @@ function bulkSetWallColor(wallType, input){
     if(!pushed){ pushUndo(); pushed = true; }
     currentPageElements().forEach(e=>{ if(e.isWall && e.wallType===wallType) e.color = input.value; });
     drawOverlay();
+  });
+  input.addEventListener('change', ()=>{
+    pushed = false;
+    // Rebuilding the whole sidebar list on every 'input' tick (a native
+    // color picker can fire many times a second while dragging) would
+    // visibly stutter on a plan with a lot of elements -- matching the
+    // existing per-wall swatch's own pattern (drawOverlay live, sidebar
+    // only once the gesture settles) instead of a new one.
     renderElementsList();
   });
-  input.addEventListener('change', ()=>{ pushed = false; });
 }
 bulkSetWallColor('internal', bulkWallColorInteriorInput);
 bulkSetWallColor('external', bulkWallColorExteriorInput);
@@ -11249,7 +11256,22 @@ function ftPos3D(el, groundWFt, groundHFt){
 // Renders the element's own material (the same fillMaterial() used on the
 // 2D canvas) onto a small offscreen canvas and returns it as a texture --
 // the ground-level 3D faces literally reuse the 2D texture work.
+// Baking a material's canvas (grout lines, speckle, wood grain, ...) is
+// real per-pixel drawing work, not a flat fill -- and init3DScene calls
+// this once per area/roof-piece/fence element, which for a real plan
+// means many near-identical calls (a multi-piece flat roof's own same-
+// size panels, several fence runs sharing one style/colour, repeated
+// floor materials across similar rooms). Caching by the exact inputs
+// that actually determine the baked pixels means those repeats reuse one
+// texture instead of re-drawing it from scratch every time. Safe to
+// share the returned object AS LONG AS no caller mutates it afterward
+// (wrapS/repeat etc.) -- the one caller that does (the Colorbond fence
+// ribbing, since each fence run needs its own repeat count) clones it
+// first specifically so it never touches this cached original.
+const materialTexture3DCache = {};
 function materialTextureFor3D(presetKey, color, pxW, pxH, tileSizeFt){
+  const cacheKey = presetKey+'|'+color+'|'+pxW+'|'+pxH+'|'+tileSizeFt;
+  if(materialTexture3DCache[cacheKey]) return materialTexture3DCache[cacheKey];
   const canvas = document.createElement('canvas');
   const res = 128;
   const aspect = pxW>0 && pxH>0 ? pxW/pxH : 1;
@@ -11274,6 +11296,7 @@ function materialTextureFor3D(presetKey, color, pxW, pxH, tileSizeFt){
   ctx.restore();
   const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
+  materialTexture3DCache[cacheKey] = tex;
   return tex;
 }
 // Same trick as materialTextureFor3D, but for furniture: bakes the item's
@@ -11283,7 +11306,13 @@ function materialTextureFor3D(presetKey, color, pxW, pxH, tileSizeFt){
 // top face, instead of a flat single colour. A plain-colour box reads as an
 // abstract placeholder; this reads as the actual piece of furniture from the
 // plan, using nothing but the icon-drawing code that already exists.
+// Same reasoning as materialTexture3DCache above -- a room full of
+// identical dining chairs, or several cars of the same model/colour,
+// would otherwise each independently re-draw the exact same icon.
+const furnitureTexture3DCache = {};
 function furnitureTextureFor3D(icon, color, pxW, pxH){
+  const cacheKey = icon+'|'+color+'|'+pxW+'|'+pxH;
+  if(furnitureTexture3DCache[cacheKey]) return furnitureTexture3DCache[cacheKey];
   const canvas = document.createElement('canvas');
   const res = 128;
   const aspect = pxW>0 && pxH>0 ? pxW/pxH : 1;
@@ -11293,6 +11322,7 @@ function furnitureTextureFor3D(icon, color, pxW, pxH){
   drawFurnitureIcon(ctx, icon, {minX:0, maxX:canvas.width, minY:0, maxY:canvas.height}, color);
   const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
+  furnitureTexture3DCache[cacheKey] = tex;
   return tex;
 }
 function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
@@ -12354,7 +12384,13 @@ function build3DPathMesh(el, groundWFt, groundHFt){
   // the rib density stays plausible regardless of how long any one traced
   // segment is.
   if(fenceStyle==='colorbond'){
-    const tex = materialTextureFor3D('roof_metal', color, heightFt*40, heightFt*40);
+    // .clone() -- NOT the direct cache hit -- because every Colorbond run
+    // needs its own .repeat (set from ITS OWN totalLenFt just below); two
+    // fences sharing the same cached base texture must never end up
+    // sharing one mutable .repeat too, or the second fence built would
+    // silently overwrite the first's rib spacing.
+    const tex = materialTextureFor3D('roof_metal', color, heightFt*40, heightFt*40).clone();
+    tex.needsUpdate = true;
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     const totalLenFt = pts.reduce((s,p,i)=> i<pts.length-1 ? s+Math.hypot(pts[i+1].x-p.x, pts[i+1].y-p.y)/state.scalePxPerFt : s, 0);
