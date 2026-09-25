@@ -8168,6 +8168,16 @@ const FENCE_POST_SPACING_FT = 6;
 // chain-link mesh motif just needs to repeat often enough to read as a
 // woven texture without drawing every real diamond of the weave.
 const GLASS_FENCE_STANCHION_SPACING_FT = 4;
+// Real frameless glass pool fencing is never one continuous sheet -- it's
+// discrete toughened-glass panels on base spigots, each panel meeting the
+// next with a small hairline gap (regulated well under 100mm/4in for pool
+// safety) and never touching the ground itself (also regulated, spigots
+// lift it a small measured amount). The 2D top view already draws a
+// stanchion mark every GLASS_FENCE_STANCHION_SPACING_FT, so the 3D walk-
+// through/dollhouse view reusing that SAME spacing as the panel pitch keeps
+// both views describing the one real fence, not two different structures.
+const GLASS_PANEL_GAP_FT = 0.08;
+const GLASS_PANEL_BOTTOM_GAP_FT = 0.1;
 const COLORBOND_RIB_SPACING_FT = 2.3;
 const CHAINLINK_MESH_SPACING_FT = 1.6;
 function fencePostPositions(points, spacingPx){
@@ -10865,10 +10875,15 @@ const FLOOR_TEXTURE_3D_LOOK = {
 // low-roughness materials so they genuinely read as "barely a barrier" in
 // 3D the same way they already do in the 2D top view, and colorbond/glass
 // get a touch of metalness since they're manufactured sheet/glass, not
-// timber.
+// timber. Glass's own opacity was originally 0.4 -- a real screenshot
+// showed this reading as a solid tinted wall, not real frameless
+// toughened pool-safety glass, which is genuinely close to see-through
+// (you look AT a pool through it, not a blue pane); 0.12 is still a real,
+// visible surface (never literally invisible/undetectable) but no longer
+// reads as solid.
 const FENCE_STYLE_3D_LOOK = {
   paling:    {widthFt:0.15, roughness:0.85},
-  glass:     {widthFt:0.05, roughness:0.1,  transparent:true, opacity:0.4, metalness:0.1},
+  glass:     {widthFt:0.05, roughness:0.1,  transparent:true, opacity:0.12, metalness:0.1},
   colorbond: {widthFt:0.06, roughness:0.45, metalness:0.35},
   picket:    {widthFt:0.1,  roughness:0.85},
   chainlink: {widthFt:0.03, roughness:0.6,  transparent:true, opacity:0.45, metalness:0.4},
@@ -11280,12 +11295,93 @@ function build3DSofaMesh(el, preset, baseColor, heightFt, pos){
 // icon's cab/open-tray split) and nearly the full length for a van
 // (matching its icon's "one big box" comment), same as every other body
 // style's own icon proportions.
+// A real car body is a smoothly rounded, continuously tapered shell, not a
+// stack of sharp-cornered boxes -- even with correct proportions and a
+// stepped 3-box taper, it still read as "three bricks, not a car" (a real
+// report, after an earlier round already tried the box-based version).
+// This builds an actual lofted surface: a rounded-rectangle (superellipse)
+// cross-section swept along the car's length, its own half-width smoothly
+// eased down toward a narrow nose and tail (a cosine ease, not an abrupt
+// step) -- genuine 3D curvature in every direction, not a silhouette
+// trick. This sandbox has no way to render the result, only to verify the
+// maths that produced it: every vertex position is independently
+// re-derived from the same superellipse/taper formulas in this fix's own
+// test file, not trusted by re-reading this function's own output back.
+// MeshStandardMaterial's side:DoubleSide (set where this is used) is a
+// deliberate hedge against a triangle-winding mistake this sandbox has no
+// way to catch visually -- worst case a normal points the "wrong" way and
+// shades a little oddly; it can never make a face invisible, which would
+// be a far worse outcome than the boxy shape this replaces.
+const CAR_BODY_RING_SEGS = 12;
+const CAR_BODY_STATIONS = 9;
+const CAR_BODY_SUPERELLIPSE_N = 4;
+const CAR_BODY_TAPER_FRAC = 0.32;
+const CAR_BODY_TIP_FRAC = 0.3;
+function carBodyWidthScaleAt(zFrac){
+  const absZ = Math.abs(zFrac);
+  const fullFrom = 1-CAR_BODY_TAPER_FRAC;
+  if(absZ<=fullFrom) return 1;
+  const t = Math.min(1, (absZ-fullFrom)/CAR_BODY_TAPER_FRAC);
+  const eased = 0.5-0.5*Math.cos(t*Math.PI);
+  return 1-eased*(1-CAR_BODY_TIP_FRAC);
+}
+function buildCarBodyGeometry(bodyWFt, bodyHFt, lenFt){
+  const hw0 = bodyWFt/2, hh0 = bodyHFt/2;
+  const positions = [];
+  const stationRingStart = [];
+  for(let i=0;i<CAR_BODY_STATIONS;i++){
+    const zFrac = -1+2*i/(CAR_BODY_STATIONS-1);
+    const z = zFrac*lenFt/2;
+    const hw = hw0*carBodyWidthScaleAt(zFrac);
+    stationRingStart.push(positions.length/3);
+    for(let j=0;j<CAR_BODY_RING_SEGS;j++){
+      const t = j/CAR_BODY_RING_SEGS*Math.PI*2;
+      const c = Math.cos(t), s = Math.sin(t);
+      const x = Math.sign(c)*Math.pow(Math.abs(c),2/CAR_BODY_SUPERELLIPSE_N)*hw;
+      const y = Math.sign(s)*Math.pow(Math.abs(s),2/CAR_BODY_SUPERELLIPSE_N)*hh0+hh0;
+      positions.push(x,y,z);
+    }
+  }
+  const frontCapIdx = positions.length/3;
+  positions.push(0, hh0, -lenFt/2);
+  const backCapIdx = positions.length/3;
+  positions.push(0, hh0, lenFt/2);
+
+  const indices = [];
+  for(let i=0;i<CAR_BODY_STATIONS-1;i++){
+    const r0 = stationRingStart[i], r1 = stationRingStart[i+1];
+    for(let j=0;j<CAR_BODY_RING_SEGS;j++){
+      const jn = (j+1)%CAR_BODY_RING_SEGS;
+      const a=r0+j, b=r0+jn, c=r1+j, d=r1+jn;
+      indices.push(a,c,b, b,c,d);
+    }
+  }
+  const r0 = stationRingStart[0];
+  for(let j=0;j<CAR_BODY_RING_SEGS;j++){
+    const jn=(j+1)%CAR_BODY_RING_SEGS;
+    indices.push(frontCapIdx, r0+jn, r0+j);
+  }
+  const rN = stationRingStart[CAR_BODY_STATIONS-1];
+  for(let j=0;j<CAR_BODY_RING_SEGS;j++){
+    const jn=(j+1)%CAR_BODY_RING_SEGS;
+    indices.push(backCapIdx, rN+j, rN+jn);
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
 function build3DCarMesh(el, preset, baseColor, heightFt, pos){
   const group = new THREE.Group();
   const isUte = preset.icon==='ute' || preset.icon==='ute_single';
   const wFt = el.wFt, hFt = el.hFt;
 
-  const bodyMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.35});
+  // side:DoubleSide is a deliberate hedge on the lofted body specifically
+  // (see buildCarBodyGeometry) -- a hand-rolled triangle winding this
+  // sandbox cannot verify visually must never be able to render invisible.
+  const bodyMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.35, side:THREE.DoubleSide});
   const glassMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#2E4356'), roughness:0.15});
   const roofMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.15)), roughness:0.35});
   const wheelMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#14161A'), roughness:0.9});
@@ -11299,33 +11395,18 @@ function build3DCarMesh(el, preset, baseColor, heightFt, pos){
   // body under a 58% glass cabin), reading as an oversized glass dome
   // sitting on a slab instead of a car.
   const bodyWFt = wFt*0.90, bodyHFt = heightFt*0.60;
-  // Wheel radius, needed early (see taperLenFt below) to guarantee the
-  // wheels always land within the WIDE middle body section, never the
-  // narrower nose/tail tips -- same formula as the "Wheels" section
-  // further down, which reuses this value rather than recomputing it.
+  // Wheel radius, needed early (see axleZFt below) to guarantee the wheels
+  // always land within the body's own FULL-WIDTH zone, never the tapered
+  // nose/tail -- same formula the "Wheels" section further down reuses
+  // rather than recomputing.
   const wheelRFt = (bodyHFt*0.85)/2;
-  // A single uniform box reads as a brick no matter how correct its
-  // proportions are -- a real car's body is noticeably narrower at the
-  // very front and rear (nose/tail) than across the doors. Three stacked
-  // boxes (narrow nose, full-width middle, narrow tail) give a real
-  // tapered silhouette using the same plain BoxGeometry+position technique
-  // as everything else in this file -- deliberately NOT a smooth
-  // ExtrudeGeometry taper, since this sandbox has no way to verify an
-  // extrusion's own internal rotation math the way a stack of boxes'
-  // positions can be checked directly against independently recomputed
-  // values. taperLenFt is capped well below the wheels' own back-off
-  // margin (wheelRFt*1.3, see axleZFt below) so the wheels always sit
-  // against the wide middle section, never poking out past a narrower tip.
-  const noseWFt = bodyWFt*0.62, taperLenFt = Math.min(hFt*0.10, wheelRFt*1.1);
-  const bodyMidLenFt = hFt - taperLenFt*2;
-  const body = new THREE.Mesh(new THREE.BoxGeometry(bodyWFt, bodyHFt, bodyMidLenFt), bodyMat);
-  body.position.set(0, bodyHFt/2, 0);
+  // A stack of boxes -- even correctly proportioned, even with a stepped
+  // taper -- still read as "bricks, not a car" (two real reports). This
+  // body is a genuine lofted, continuously curved shell (see
+  // buildCarBodyGeometry above): a rounded-rectangle cross-section swept
+  // the car's full length, smoothly narrowing toward the nose/tail.
+  const body = new THREE.Mesh(buildCarBodyGeometry(bodyWFt, bodyHFt, hFt), bodyMat);
   group.add(body);
-  [-1, 1].forEach(zSide=>{
-    const tip = new THREE.Mesh(new THREE.BoxGeometry(noseWFt, bodyHFt, taperLenFt), bodyMat);
-    tip.position.set(0, bodyHFt/2, zSide*(bodyMidLenFt/2+taperLenFt/2));
-    group.add(tip);
-  });
 
   // Cabin -- a glass band (the window strip) capped by a slightly narrower
   // body-coloured roof shell, not one uniform glass block. A real
@@ -11358,7 +11439,14 @@ function build3DCarMesh(el, preset, baseColor, heightFt, pos){
   // than a small disc dwarfed by an oversized cabin and tucked out of
   // sight -- the "flat black smudge" look a screenshot showed this fixes.
   const wheelWFt = wFt*0.10;
-  const axleZFt = hFt/2 - wheelRFt*1.3;
+  // Must sit within the body's own FULL-WIDTH zone (see
+  // carBodyWidthScaleAt/CAR_BODY_TAPER_FRAC) -- past that boundary the
+  // body has already started narrowing toward the nose/tail, and a wheel
+  // positioned there would poke out past a body section narrower than
+  // itself. Capped explicitly (not a numeric coincidence) the same way
+  // the previous box-taper version guaranteed this.
+  const fullWidthHalfLenFt = hFt/2*(1-CAR_BODY_TAPER_FRAC);
+  const axleZFt = Math.min(hFt/2 - wheelRFt*1.3, fullWidthHalfLenFt*0.95);
   // A flat black roughness-0.9 tire with nothing else on it has no way to
   // actually READ as round in low/indirect light (a covered carport, an
   // overcast walkthrough) -- it's just a dark circular silhouette, the
@@ -12131,6 +12219,12 @@ function build3DPathMesh(el, groundWFt, groundHFt){
     matOpts.map = tex;
   }
   const mat = new THREE.MeshStandardMaterial(matOpts);
+  // A glass fence's panels are held on small metal base spigots, not the
+  // glass's own colour -- a genuine second material, same idea as the
+  // colorbond rib texture above, just geometry instead of a texture map.
+  const spigotMat = (fenceStyle==='glass')
+    ? new THREE.MeshStandardMaterial({color:new THREE.Color('#B8BCC0'), roughness:0.35, metalness:0.7})
+    : null;
   // Same join-extension idea as the 2D thickness-band rendering (see
   // wallJoinExtension) -- without it, two walls meeting at a corner would
   // extrude as two separate boxes that don't quite cover the join, leaving
@@ -12160,11 +12254,55 @@ function build3DPathMesh(el, groundWFt, groundHFt){
     function addBox(startFt, endFt, yBottom, yTop){
       const boxLen = endFt-startFt, boxH = yTop-yBottom;
       if(boxLen<0.02 || boxH<0.02) return;
+      // A real glass pool fence is never one continuous sheet -- it's
+      // discrete toughened-glass panels on base spigots, hairline gaps
+      // between them, never touching the ground. Fences never produce a
+      // sill/header addBox call (a gate cut is always full-height, see
+      // `cuts` above), so every addBox reaching here for a glass fence is
+      // a full-height run and can safely become a row of panels instead.
+      if(fenceStyle==='glass'){ addGlassPanels(startFt, endFt, yTop); return; }
       const midFt = (startFt+endFt)/2;
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(boxLen, boxH, widthFt), mat);
       mesh.position.set(ax+ux*midFt, yBottom+boxH/2, az+uz*midFt);
       mesh.rotation.y = -Math.atan2(dz, dx);
       group.add(mesh);
+    }
+
+    // Splits a run into individual glass panels at the SAME pitch the 2D
+    // top view already places stanchion marks (GLASS_FENCE_STANCHION_SPACING_FT)
+    // -- so 3D shows the exact fence 2D already describes, not a different
+    // one -- each panel narrower than the full pitch by GLASS_PANEL_GAP_FT
+    // so real hairline gaps actually appear between panels, and lifted off
+    // the ground by GLASS_PANEL_BOTTOM_GAP_FT the way spigot-mounted glass
+    // really sits. A short metal spigot block marks every panel joint,
+    // including both ends of the run, so the gaps read as a real fixed
+    // fence rather than a rendering gap.
+    function addGlassPanels(startFt, endFt, topFt){
+      const runLen = endFt-startFt;
+      const pitch = GLASS_FENCE_STANCHION_SPACING_FT;
+      const panelCount = Math.max(1, Math.round(runLen/pitch));
+      const panelWFt = (runLen-(panelCount-1)*GLASS_PANEL_GAP_FT)/panelCount;
+      const panelHFt = topFt-GLASS_PANEL_BOTTOM_GAP_FT;
+      if(panelWFt<0.1 || panelHFt<0.1) return;
+      const panelLefts = [];
+      for(let k=0;k<panelCount;k++) panelLefts.push(startFt+k*(panelWFt+GLASS_PANEL_GAP_FT));
+      panelLefts.forEach(pLeft=>{
+        const midFt = pLeft+panelWFt/2;
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(panelWFt, panelHFt, widthFt), mat);
+        mesh.position.set(ax+ux*midFt, GLASS_PANEL_BOTTOM_GAP_FT+panelHFt/2, az+uz*midFt);
+        mesh.rotation.y = -Math.atan2(dz, dx);
+        group.add(mesh);
+      });
+      const spigotHFt = Math.min(0.3, panelHFt*0.12);
+      const spigotLenFt = 0.18;
+      const spigotDepthFt = Math.max(widthFt*1.6, 0.12);
+      const spigotPositions = panelLefts.concat([panelLefts[panelLefts.length-1]+panelWFt]);
+      spigotPositions.forEach(sFt=>{
+        const spigot = new THREE.Mesh(new THREE.BoxGeometry(spigotLenFt, spigotHFt, spigotDepthFt), spigotMat);
+        spigot.position.set(ax+ux*sFt, spigotHFt/2, az+uz*sFt);
+        spigot.rotation.y = -Math.atan2(dz, dx);
+        group.add(spigot);
+      });
     }
 
     // A wall's own doors/windows and a fence's own gates are reshaped into
@@ -12460,14 +12598,33 @@ function decomposeRectilinearPolygonFt(points){
     slabs.push({x0,x1,yPairs});
   }
 
-  // Merge adjacent slabs sharing an identical y-interval into one wider
-  // rectangle -- fewer pieces, fewer visible seams between them, still an
-  // exact tiling either way.
+  // Merge adjacent slabs whose y-intervals are CLOSE (not just exactly
+  // equal) into one wider rectangle. An exact-only merge sounded right
+  // for "match the true shape", but a real trace produced the opposite of
+  // a clean roof: a "washboard" of many closely-spaced parallel mini-
+  // ridges, one per few-inch jog along the length that a hand trace (or a
+  // wall layout with minor, architecturally-insignificant recesses) is
+  // full of. A real roof doesn't grow a new ridge for every such jog --
+  // it reads as one continuous plane, only breaking into a separate
+  // section for a genuinely different wing (the pool patio cut, say,
+  // which differs by many feet, not a few inches). Merging within a
+  // tolerance and taking the UNION of the y-ranges accepts a small,
+  // localised overhang right at the jog itself (nothing like the whole-
+  // pool over-coverage the exact-rect-only approach this replaced had) in
+  // exchange for a roof that actually looks like one plane. The tolerance
+  // compares against the CURRENT (already-merged) range, not just the
+  // first slab's, so a run of many small individually-insignificant jogs
+  // still merges into one section even if their total drift adds up.
+  const MERGE_TOL_FT = 2;
+  const mergeTolPx = MERGE_TOL_FT*state.scalePxPerFt;
   const rects = []; // {x0,x1,y0,y1,_openX1} in the rotated frame
   slabs.forEach(slab=>{
     slab.yPairs.forEach(([y0,y1])=>{
-      const prev = rects.find(r=>r._openX1===slab.x0 && Math.abs(r.y0-y0)<EPS && Math.abs(r.y1-y1)<EPS);
-      if(prev){ prev.x1 = slab.x1; prev._openX1 = slab.x1; }
+      const prev = rects.find(r=>r._openX1===slab.x0 && Math.abs(r.y0-y0)<mergeTolPx && Math.abs(r.y1-y1)<mergeTolPx);
+      if(prev){
+        prev.x1 = slab.x1; prev._openX1 = slab.x1;
+        prev.y0 = Math.min(prev.y0, y0); prev.y1 = Math.max(prev.y1, y1);
+      }
       else rects.push({x0:slab.x0, x1:slab.x1, y0, y1, _openX1:slab.x1});
     });
   });
@@ -12491,11 +12648,15 @@ function build3DRoofMeshFromPolygon(el, preset, groundWFt, groundHFt){
   if(pieces && pieces.length){
     const trueAreaFt2 = Math.abs(signedAreaRaw(el.points))/(state.scalePxPerFt*state.scalePxPerFt);
     const piecesAreaFt2 = pieces.reduce((s,r)=>s+r.wFt*r.hFt,0);
-    // The decomposition's own rectangles should exactly tile the polygon;
-    // if their total area doesn't match the polygon's true area, something
-    // about the shape defeated the rectilinear assumption -- fall through
-    // to the bounding-rect approximation rather than trust a broken tiling.
-    if(trueAreaFt2>0 && Math.abs(piecesAreaFt2-trueAreaFt2)/trueAreaFt2 < 0.01){
+    // The decomposition's rectangles should closely tile the polygon --
+    // "closely", not "exactly", now that the merge step above deliberately
+    // absorbs small jogs into a slightly larger union rather than growing
+    // a whole new piece for each one, so a small amount of extra area is
+    // expected and correct, not a bug. A LARGE mismatch is still a real
+    // problem (something about the shape defeated the rectilinear
+    // assumption) -- fall through to the bounding-rect approximation
+    // rather than trust a broken tiling.
+    if(trueAreaFt2>0 && Math.abs(piecesAreaFt2-trueAreaFt2)/trueAreaFt2 < 0.08){
       const group = new THREE.Group();
       pieces.forEach(rect=>{
         const synthEl = {xPx:rect.xPx, yPx:rect.yPx, wFt:rect.wFt, hFt:rect.hFt, rotationDeg:rect.rotationDeg, color:el.color, presetKey:el.presetKey, tileSizeFt:el.tileSizeFt};
@@ -12826,6 +12987,50 @@ function build3DFallbackRoomFloors(groundWFt, groundHFt){
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(pc.x/state.scalePxPerFt - groundWFt/2, 0, pc.y/state.scalePxPerFt - groundHFt/2);
     group.add(mesh);
+  });
+  return group.children.length ? group : null;
+}
+// A defensive backstop, deliberately independent of wall-loop topology
+// entirely: for EVERY roof element on the page (rect or polygon), lay a
+// flat floor slab matching its own exact footprint -- reusing the roof's
+// own raw shape directly, not a wall trace, so it can't be defeated by
+// any topology edge case (a T-junction the trace doesn't handle, a room
+// whose walls don't quite form a clean loop, a wall layout too complex
+// for findClosedRoomLoops to resolve cleanly) that the wall-loop-based
+// build3DFallbackRoomFloors above -- even after two rounds of real fixes
+// to it -- could still miss on an actual complex house. Deliberately
+// thinner than a real room floor (0.05ft vs 0.2ft) so it sits entirely
+// BELOW any real/fallback room floor's own top surface wherever one
+// exists (fully hidden, no z-fighting), and only reads as a floor in a
+// gap neither of those covers. The rule is unconditional and doesn't
+// depend on detecting anything: if there's a roof over it, there is a
+// floor under it.
+function build3DUnderRoofFloors(groundWFt, groundHFt){
+  const roofs = currentPageElements().filter(e=>ROOF_PRESETS_3D.has(e.presetKey) &&
+    (e.shape==='rect' || (e.shape==='polygon' && e.points && e.points.length>=3)));
+  if(!roofs.length) return null;
+  const heightFt = 0.05;
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(ROOM_FILL_COLOR), roughness:0.9});
+  const group = new THREE.Group();
+  roofs.forEach(el=>{
+    if(el.shape==='rect'){
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, heightFt, el.hFt), mat);
+      const pos = ftPos3D(el, groundWFt, groundHFt);
+      mesh.position.set(pos.x, heightFt/2, pos.z);
+      mesh.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+      group.add(mesh);
+    } else {
+      const pc = polygonCentroid(el.points);
+      const shape = new THREE.Shape(el.points.map(p=>new THREE.Vector2(
+        (p.x-pc.x)/state.scalePxPerFt, -(p.y-pc.y)/state.scalePxPerFt
+      )));
+      const geo = new THREE.ExtrudeGeometry(shape, {depth:heightFt, bevelEnabled:false});
+      geo.rotateX(-Math.PI/2);
+      geo.translate(0, heightFt, 0);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(pc.x/state.scalePxPerFt - groundWFt/2, 0, pc.y/state.scalePxPerFt - groundHFt/2);
+      group.add(mesh);
+    }
   });
   return group.children.length ? group : null;
 }
@@ -13377,6 +13582,8 @@ function init3DScene(){
   scene.add(ground);
 
   const group = new THREE.Group();
+  const underRoofFloors = build3DUnderRoofFloors(groundWFt, groundHFt);
+  if(underRoofFloors) group.add(underRoofFloors);
   const fallbackFloors = build3DFallbackRoomFloors(groundWFt, groundHFt);
   if(fallbackFloors) group.add(fallbackFloors);
   currentPageElements().forEach(el=>{
