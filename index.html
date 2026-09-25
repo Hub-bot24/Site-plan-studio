@@ -11287,22 +11287,31 @@ function build3DCarMesh(el, preset, baseColor, heightFt, pos){
 
   const bodyMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.35});
   const glassMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#2E4356'), roughness:0.15});
+  const roofMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.15)), roughness:0.35});
   const wheelMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#14161A'), roughness:0.9});
 
   // Lower body -- narrower than the full plan footprint so the wheels
   // (positioned right at the true edge) actually peek out past its sides,
   // the same way a real car's tires are visible past the body from a
-  // side-on angle instead of being entirely hidden inside it.
-  const bodyWFt = wFt*0.90, bodyHFt = heightFt*0.42;
+  // side-on angle instead of being entirely hidden inside it. A real car's
+  // body (ground to beltline/window-sill) is always noticeably TALLER than
+  // its greenhouse (beltline to roof) -- this used to be inverted (a 42%
+  // body under a 58% glass cabin), reading as an oversized glass dome
+  // sitting on a slab instead of a car.
+  const bodyWFt = wFt*0.90, bodyHFt = heightFt*0.60;
   const body = new THREE.Mesh(new THREE.BoxGeometry(bodyWFt, bodyHFt, hFt), bodyMat);
   body.position.set(0, bodyHFt/2, 0);
   group.add(body);
 
-  // Cabin/glass -- a real raised box sitting on the body, not a texture.
-  // "Front" is local -Z here (see ftPos3D/rotation -- "front" is the
+  // Cabin -- a glass band (the window strip) capped by a slightly narrower
+  // body-coloured roof shell, not one uniform glass block. A real
+  // greenhouse's roof/pillars are painted sheet metal, not glass; rendering
+  // the whole cabin as glassMat read as a dark glass blob with no roof at
+  // all. "Front" is local -Z here (see ftPos3D/rotation -- "front" is the
   // icon's own top edge, the same convention build3DSofaMesh's backrest
   // uses when it sits at -hFt/2).
-  const cabinWFt = bodyWFt*0.82, cabinHFt = heightFt-bodyHFt;
+  const cabinWFt = bodyWFt*0.82, cabinTotalHFt = heightFt-bodyHFt;
+  const glassHFt = cabinTotalHFt*0.55, roofHFt = cabinTotalHFt-glassHFt;
   const cabinDFrac = isUte ? (preset.icon==='ute_single' ? 0.30 : 0.46) // matches drawVehicleIcon's own cabFrac
     : preset.icon==='van' ? 0.82
     : preset.icon==='suv' ? 0.68
@@ -11310,14 +11319,21 @@ function build3DCarMesh(el, preset, baseColor, heightFt, pos){
     : 0.50; // hatch
   const cabinDFt = hFt*cabinDFrac;
   const cabinZ = isUte ? (-hFt/2 + cabinDFt/2) : 0;
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabinWFt, cabinHFt, cabinDFt), glassMat);
-  cabin.position.set(0, bodyHFt+cabinHFt/2, cabinZ);
-  group.add(cabin);
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(cabinWFt, glassHFt, cabinDFt), glassMat);
+  glass.position.set(0, bodyHFt+glassHFt/2, cabinZ);
+  group.add(glass);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(cabinWFt*0.92, roofHFt, cabinDFt*0.92), roofMat);
+  roof.position.set(0, bodyHFt+glassHFt+roofHFt/2, cabinZ);
+  group.add(roof);
 
   // Wheels -- real cylinders, axle along X (rotate 90deg around Z so a
   // cylinder's own length axis, normally Y, becomes X), touching the
-  // ground and poking out past the body's own narrower width.
-  const wheelDFt = heightFt*0.30, wheelRFt = wheelDFt/2, wheelWFt = wFt*0.08;
+  // ground and poking out past the body's own narrower width. Sized off
+  // the body's own height (not the car's total height) so a tire always
+  // fills most of the lower body, reading as a real round wheel, rather
+  // than a small disc dwarfed by an oversized cabin and tucked out of
+  // sight -- the "flat black smudge" look a screenshot showed this fixes.
+  const wheelDFt = bodyHFt*0.85, wheelRFt = wheelDFt/2, wheelWFt = wFt*0.10;
   const axleZFt = hFt/2 - wheelRFt*1.3;
   [-1,1].forEach(zSide=>{
     [-1,1].forEach(xSide=>{
@@ -12224,16 +12240,58 @@ function computeWallCollisionRects(groundWFt, groundHFt){
   });
   return rects;
 }
+// A roof traced as a polygon (an L-shaped footprint, or one shape covering
+// a house wing plus a patio) used to fall straight through to the flat-slab
+// path below -- there was genuinely no other way to trace a roof at the
+// time that path was written, but a real "roof still flat" report against
+// exactly this shape proves a polygon roof is a normal case, not an edge
+// case. Rather than a full hip/valley solver (unverifiable here, and
+// overkill for what's usually a basically-rectangular footprint with a
+// notch or wing), this fits the tightest rectangle aligned to the
+// polygon's own longest edge -- real roof footprints are almost always
+// drawn with axis-aligned or near-axis-aligned edges, so the longest
+// edge's own direction is a reliable stand-in for the roof's true ridge
+// direction -- and runs the exact same pitched-roof builder over that
+// rectangle: a real gable roof covering the full footprint (slightly
+// overhanging past any concave notch), never a flat plane.
+function polygonRoofRectFt(points){
+  let bestLen = -1, bestAngle = 0;
+  for(let i=0;i<points.length;i++){
+    const a = points[i], b = points[(i+1)%points.length];
+    const len = Math.hypot(b.x-a.x, b.y-a.y);
+    if(len>bestLen){ bestLen = len; bestAngle = Math.atan2(b.y-a.y, b.x-a.x); }
+  }
+  const cx = points.reduce((s,p)=>s+p.x,0)/points.length;
+  const cy = points.reduce((s,p)=>s+p.y,0)/points.length;
+  const cos = Math.cos(-bestAngle), sin = Math.sin(-bestAngle);
+  let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  points.forEach(p=>{
+    const dx = p.x-cx, dy = p.y-cy;
+    const rx = dx*cos - dy*sin, ry = dx*sin + dy*cos;
+    minX=Math.min(minX,rx); maxX=Math.max(maxX,rx);
+    minY=Math.min(minY,ry); maxY=Math.max(maxY,ry);
+  });
+  const midRx = (minX+maxX)/2, midRy = (minY+maxY)/2;
+  const cosB = Math.cos(bestAngle), sinB = Math.sin(bestAngle);
+  return {
+    xPx: cx + midRx*cosB - midRy*sinB,
+    yPx: cy + midRx*sinB + midRy*cosB,
+    wFt: (maxX-minX)/state.scalePxPerFt,
+    hFt: (maxY-minY)/state.scalePxPerFt,
+    rotationDeg: bestAngle*180/Math.PI,
+  };
+}
 function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   const baseColor = el.color || preset.color || '#B5934C';
   const isRoof = ROOF_PRESETS_3D.has(el.presetKey);
   // A real pitched roof (build3DRoofMesh) instead of the flat slab every
-  // other rect-shaped area preset extrudes as. Anything other than a plain
-  // rect (there's no way to trace one any other way in normal use --
-  // ROOF_PRESETS_3D isn't in AREA_MATERIAL_SWAP_KEYS, so a roof can't be
-  // material-swapped onto a hand-traced polygon either) falls through to
-  // the old flat-slab path below rather than crashing.
+  // other rect-shaped area preset extrudes as.
   if(isRoof && el.shape==='rect') return build3DRoofMesh(el, preset, groundWFt, groundHFt);
+  if(isRoof && el.shape==='polygon' && el.points && el.points.length>=3){
+    const rect = polygonRoofRectFt(el.points);
+    const synthEl = {xPx:rect.xPx, yPx:rect.yPx, wFt:rect.wFt, hFt:rect.hFt, rotationDeg:rect.rotationDeg, color:el.color, presetKey:el.presetKey, tileSizeFt:el.tileSizeFt};
+    return build3DRoofMesh(synthEl, preset, groundWFt, groundHFt);
+  }
   const isWall = el.presetKey==='clad_stone';
   let heightFt = AREA_HEIGHT_FT_3D[el.presetKey] != null ? AREA_HEIGHT_FT_3D[el.presetKey] : 0.2;
   let baseY = 0;
@@ -12477,6 +12535,48 @@ function build3DRoomCeilingMesh(el, groundWFt, groundHFt){
   mesh.position.set(cx/state.scalePxPerFt - groundWFt/2, WALL_HEIGHT_FT_3D-thickness, cy/state.scalePxPerFt - groundHFt/2);
   return mesh;
 }
+// findClosedRoomLoops() (the same wall-loop trace the "Detect Rooms" button
+// runs) finds every enclosed space on the page whether or not the user ever
+// actually clicked that button -- Detect Rooms is what turns a loop into a
+// real, nameable isRoom element (with its own type/floor-override/label),
+// but skipping that step used to be harmless in 3D: the flat navy ground
+// plane underneath looked like a plausible dark floor by accident. Now that
+// the ground plane is a real, obviously-outdoor lawn (see the Ground plane
+// build below), any enclosed room with no isRoom element floats its walls
+// directly over visible grass indoors -- a real reported bug, not a style
+// nitpick. Rather than requiring detection first, every enclosed loop gets
+// a real floor slab here regardless, skipping any loop an existing isRoom
+// element already covers (avoids double-rendering a floor the user already
+// detected) -- the exact same flat cream look an 'other'-type detected room
+// already renders (ROOM_FILL_COLOR, see PRESETS.room/build3DAreaMesh), so
+// nothing changes for anyone who already uses Detect Rooms; this only fills
+// the gap for anyone who doesn't.
+function build3DFallbackRoomFloors(groundWFt, groundHFt){
+  const loops = findClosedRoomLoops();
+  if(!loops.length) return null;
+  const existingRooms = currentPageElements().filter(e=>e.isRoom && e.shape==='polygon' && e.points && e.points.length>=3);
+  const heightFt = AREA_HEIGHT_FT_3D.room != null ? AREA_HEIGHT_FT_3D.room : 0.2;
+  const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(ROOM_FILL_COLOR), roughness:0.9});
+  const group = new THREE.Group();
+  loops.forEach(loop=>{
+    const cx = loop.points.reduce((s,p)=>s+p.x,0)/loop.points.length;
+    const cy = loop.points.reduce((s,p)=>s+p.y,0)/loop.points.length;
+    if(existingRooms.some(r=>pointInPolygon(cx, cy, r.points))) return;
+    const pts = insetRoomPolygon(loop.points, loop.edgeWallIds).points;
+    const pcx = pts.reduce((s,p)=>s+p.x,0)/pts.length;
+    const pcy = pts.reduce((s,p)=>s+p.y,0)/pts.length;
+    const shape = new THREE.Shape(pts.map(p=>new THREE.Vector2(
+      (p.x-pcx)/state.scalePxPerFt, -(p.y-pcy)/state.scalePxPerFt
+    )));
+    const geo = new THREE.ExtrudeGeometry(shape, {depth:heightFt, bevelEnabled:false});
+    geo.rotateX(-Math.PI/2);
+    geo.translate(0, heightFt, 0);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(pcx/state.scalePxPerFt - groundWFt/2, 0, pcy/state.scalePxPerFt - groundHFt/2);
+    group.add(mesh);
+  });
+  return group.children.length ? group : null;
+}
 function build3DElementMesh(el, groundWFt, groundHFt){
   const preset = PRESETS[el.presetKey];
   if(!preset) return null;
@@ -12496,6 +12596,31 @@ function build3DElementMesh(el, groundWFt, groundHFt){
 // opening clear, matching what the collision system already treats as
 // walkable -- a closed-looking door you can walk straight through would be
 // worse than no door at all.
+// Shared by both the door and window builders below: adds a real frame --
+// head rail, sill rail, two jambs -- to `group`, in the opening's own
+// LOCAL space (widthFt wide, centred on X=0, running from sillFt to headFt
+// on Y). A window's frame sits directly on its own group's transform; a
+// door's frame gets its own separate sub-group sitting flush in the
+// wall's plane, since (unlike the frame) a hinged door's LEAF swings open
+// on a completely different transform -- a real door frame never moves
+// with the leaf.
+const OPENING_FRAME_THICK_FT = 0.15;
+function addOpeningFrameMesh(group, widthFt, sillFt, headFt, frameDepthFt, frameMat){
+  const openHeightFt = headFt-sillFt;
+  const midY = (sillFt+headFt)/2;
+  [headFt-OPENING_FRAME_THICK_FT/2, sillFt+OPENING_FRAME_THICK_FT/2].forEach(railY=>{
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(widthFt, OPENING_FRAME_THICK_FT, frameDepthFt), frameMat);
+    rail.position.set(0, railY, 0);
+    rail.castShadow = false; // thin, flush-in-the-wall hardware -- the wall around it already casts a real shadow
+    group.add(rail);
+  });
+  [-1, 1].forEach(side=>{
+    const jamb = new THREE.Mesh(new THREE.BoxGeometry(OPENING_FRAME_THICK_FT, openHeightFt-OPENING_FRAME_THICK_FT*2, frameDepthFt), frameMat);
+    jamb.position.set(side*(widthFt/2-OPENING_FRAME_THICK_FT/2), midY, 0);
+    jamb.castShadow = false;
+    group.add(jamb);
+  });
+}
 function build3DDoorLeafMesh(o, groundWFt, groundHFt){
   if(o.openingKind!=='door') return null;
   const wall = getElementById(o.hostWallId);
@@ -12512,6 +12637,19 @@ function build3DDoorLeafMesh(o, groundWFt, groundHFt){
   if(widthFt<0.05) return null;
   const leafThickFt = 0.06;
 
+  // A door used to sit in a bare wall gap with nothing framing it -- real
+  // door architrave, fixed flush in the wall's own plane exactly like a
+  // window's frame (see addOpeningFrameMesh), regardless of the door type
+  // or which way a hinged leaf happens to be swung.
+  const outer = new THREE.Group();
+  const frameDepthFt = Math.max(0.06, (wall.thicknessFt||0.1)*0.95);
+  const frameMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#FFFFFF'), roughness:0.55});
+  const frameGroup = new THREE.Group();
+  addOpeningFrameMesh(frameGroup, widthFt, 0, heightFt, frameDepthFt, frameMat);
+  frameGroup.position.set(ax+ux*o.offsetFt, 0, az+uz*o.offsetFt);
+  frameGroup.rotation.y = -Math.atan2(dz, dx);
+  outer.add(frameGroup);
+
   if(o.doorType==='hinged'){
     const hingeAtA = o.swingDir!=='right'; // exact same rule as drawOpeningSymbol
     const hingeOffsetFt = hingeAtA ? o.offsetFt-widthFt/2 : o.offsetFt+widthFt/2;
@@ -12526,8 +12664,8 @@ function build3DDoorLeafMesh(o, groundWFt, groundHFt){
       new THREE.BoxGeometry(leafThickFt, heightFt, widthFt),
       new THREE.MeshStandardMaterial({color:new THREE.Color(o.color || OPENING_COLOR_DOOR), roughness:0.7})
     );
-    const group = new THREE.Group();
-    group.add(leaf);
+    const leafGroup = new THREE.Group();
+    leafGroup.add(leaf);
     // A bare slab with no hardware at all reads as a panel, not a door --
     // a real doorknob on the free (non-hinge) edge, at a real handle
     // height, on both faces so it looks right approaching from either
@@ -12539,11 +12677,12 @@ function build3DDoorLeafMesh(o, groundWFt, groundHFt){
       const knob = new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), knobMat);
       knob.position.set(side*(leafThickFt/2+0.06), knobLocalY, knobLocalZ);
       knob.castShadow = false; // tiny hardware -- the leaf itself already grounds the door
-      group.add(knob);
+      leafGroup.add(knob);
     });
-    group.position.set(hingeX+roomX*widthFt/2, heightFt/2, hingeZ+roomZ*widthFt/2);
-    group.rotation.y = Math.atan2(roomX, roomZ);
-    return group;
+    leafGroup.position.set(hingeX+roomX*widthFt/2, heightFt/2, hingeZ+roomZ*widthFt/2);
+    leafGroup.rotation.y = Math.atan2(roomX, roomZ);
+    outer.add(leafGroup);
+    return outer;
   }
 
   // Sliding/stacker: a panel slid to one side, sitting IN the wall's own
@@ -12558,16 +12697,17 @@ function build3DDoorLeafMesh(o, groundWFt, groundHFt){
   );
   mesh.position.set(ax+ux*midFt, heightFt/2, az+uz*midFt);
   mesh.rotation.y = -Math.atan2(dz, dx);
-  return mesh;
+  outer.add(mesh);
+  return outer;
 }
 // A window used to get NOTHING at all in the 3D preview -- just the bare
 // gap build3DPathMesh already cuts in its host wall, indistinguishable
 // from an open, doorway-sized hole. Real glazing: a transparent pane
 // sitting in the wall's own plane (the same "barely there" glass look the
 // sliding-door panel above already established for glass) inset inside a
-// real frame -- head, sill and two jambs, the same "panel + a few thin
-// bars" language build3DGateMesh already uses for a gate's own hardware.
-const WINDOW_FRAME_THICK_FT = 0.15;
+// real frame -- head, sill and two jambs (addOpeningFrameMesh, shared with
+// the door frame above), the same "panel + a few thin bars" language
+// build3DGateMesh already uses for a gate's own hardware.
 function build3DWindowMesh(o, groundWFt, groundHFt){
   if(o.openingKind!=='window') return null;
   const wall = getElementById(o.hostWallId);
@@ -12595,27 +12735,13 @@ function build3DWindowMesh(o, groundWFt, groundHFt){
   // leaf's own colour had until earlier this session.
   const glassMat = new THREE.MeshStandardMaterial({color:new THREE.Color(o.color||OPENING_COLOR_WINDOW), roughness:0.08, metalness:0.05, transparent:true, opacity:0.35});
 
-  const glassWFt = Math.max(0.05, widthFt-WINDOW_FRAME_THICK_FT*2);
-  const glassHFt = Math.max(0.05, openHeightFt-WINDOW_FRAME_THICK_FT*2);
+  const glassWFt = Math.max(0.05, widthFt-OPENING_FRAME_THICK_FT*2);
+  const glassHFt = Math.max(0.05, openHeightFt-OPENING_FRAME_THICK_FT*2);
   const glass = new THREE.Mesh(new THREE.BoxGeometry(glassWFt, glassHFt, frameDepthFt*0.35), glassMat);
   glass.position.set(0, midY, 0);
   group.add(glass);
 
-  // Head + sill rails run the window's full width; the two jambs run the
-  // full opening height between them -- a real frame's actual joinery,
-  // not four bars floating independently.
-  [headFt-WINDOW_FRAME_THICK_FT/2, sillFt+WINDOW_FRAME_THICK_FT/2].forEach(railY=>{
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(widthFt, WINDOW_FRAME_THICK_FT, frameDepthFt), frameMat);
-    rail.position.set(0, railY, 0);
-    rail.castShadow = false; // thin, flush-in-the-wall hardware -- the wall around it already casts a real shadow
-    group.add(rail);
-  });
-  [-1, 1].forEach(side=>{
-    const jamb = new THREE.Mesh(new THREE.BoxGeometry(WINDOW_FRAME_THICK_FT, openHeightFt-WINDOW_FRAME_THICK_FT*2, frameDepthFt), frameMat);
-    jamb.position.set(side*(widthFt/2-WINDOW_FRAME_THICK_FT/2), midY, 0);
-    jamb.castShadow = false;
-    group.add(jamb);
-  });
+  addOpeningFrameMesh(group, widthFt, sillFt, headFt, frameDepthFt, frameMat);
 
   group.position.set(ax+ux*o.offsetFt, 0, az+uz*o.offsetFt);
   group.rotation.y = -Math.atan2(dz, dx);
@@ -12999,6 +13125,8 @@ function init3DScene(){
   scene.add(ground);
 
   const group = new THREE.Group();
+  const fallbackFloors = build3DFallbackRoomFloors(groundWFt, groundHFt);
+  if(fallbackFloors) group.add(fallbackFloors);
   currentPageElements().forEach(el=>{
     if(el.isDimension || el.shape==='image') return;
     if(el.isOpening){
