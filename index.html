@@ -4971,9 +4971,21 @@ const BW_INK_SOFT = '#4A4A46';
 // 'paver'/'floortile' -- every other texture ignores it. Optional so every
 // existing call site (and every already-saved plan, which has no such
 // field on its elements) keeps its exact original 1ft-per-tile default.
-function getTilePattern(ctx, texture, scalePxPerFt, tileSizeFt){
+// colorOverride (optional, hex string) recolours a texture's own BASE fill
+// only -- the grain lines/sheen/fleck overlays that give each material its
+// actual identity stay exactly as tuned, since they're already relative
+// darken/lighten effects (a semi-transparent dark stroke, a white-to-black
+// gradient) that read fine over any base colour, not values tied to one
+// specific hue. Only wired up for wood/floortile/carpet (the THREE room-
+// floor materials the sidebar's own floor-material dropdown offers) -- every
+// other texture ignores this param entirely, so every existing call site
+// (decks, driveways, roofs, ...) keeps its exact original look with zero
+// risk of behaviour change. bw (Black Drawing) branches are untouched on
+// purpose -- that mode is a schematic line drawing, never meant to reflect
+// real material colour at all.
+function getTilePattern(ctx, texture, scalePxPerFt, tileSizeFt, colorOverride){
   const bw = state.blackMode;
-  const key = texture+'|'+Math.round(scalePxPerFt)+'|'+(bw?'bw':'c')+'|'+(tileSizeFt||'');
+  const key = texture+'|'+Math.round(scalePxPerFt)+'|'+(bw?'bw':'c')+'|'+(tileSizeFt||'')+'|'+(colorOverride||'');
   if(patternCache[key]) return patternCache[key];
   const tile = document.createElement('canvas');
   const tctx = tile.getContext('2d');
@@ -4997,7 +5009,7 @@ function getTilePattern(ctx, texture, scalePxPerFt, tileSizeFt){
       // pattern into a capped, non-repeating texture where a large real
       // deck only fits a couple of tile repeats, turning that gradient
       // into visible, ugly horizontal banding instead of natural variation.
-      tctx.fillStyle='#9C7A54'; tctx.fillRect(0,0,size,size);
+      tctx.fillStyle=colorOverride||'#9C7A54'; tctx.fillRect(0,0,size,size);
       tctx.strokeStyle='rgba(35,22,10,0.28)'; tctx.lineWidth=1;
       tctx.beginPath(); tctx.moveTo(0,size-0.5); tctx.lineTo(size,size-0.5); tctx.stroke();
     }
@@ -5293,7 +5305,7 @@ function getTilePattern(ctx, texture, scalePxPerFt, tileSizeFt){
       // tile is neither of those.
       const cell = Math.max(18, Math.round(scalePxPerFt*(tileSizeFt||1.0)));
       tile.width=cell; tile.height=cell;
-      tctx.fillStyle = '#E7E3D8'; tctx.fillRect(0,0,cell,cell);
+      tctx.fillStyle = colorOverride||'#E7E3D8'; tctx.fillRect(0,0,cell,cell);
       const sheen = tctx.createLinearGradient(0,0,cell,cell);
       sheen.addColorStop(0,'rgba(255,255,255,0.22)');
       sheen.addColorStop(0.5,'rgba(255,255,255,0)');
@@ -5322,7 +5334,7 @@ function getTilePattern(ctx, texture, scalePxPerFt, tileSizeFt){
       // texture above, since carpet has no visible module to repeat.
       size = Math.max(10, Math.round(scalePxPerFt*0.4));
       tile.width=size; tile.height=size;
-      tctx.fillStyle = '#AFA084'; tctx.fillRect(0,0,size,size);
+      tctx.fillStyle = colorOverride||'#AFA084'; tctx.fillRect(0,0,size,size);
       const flecks = Math.round(size*size/6);
       for(let i=0;i<flecks;i++){
         const r1=seededRand(i*4.1+1), r2=seededRand(i*6.7+2), r3=seededRand(i*2.3+3);
@@ -8973,7 +8985,7 @@ function drawRoomElement(ctx, el, selected){
     for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
     ctx.closePath();
     const floorTexture = roomFloorTexture(el);
-    const pat = floorTexture ? getTilePattern(ctx, floorTexture, state.scalePxPerFt||40, el.tileSizeFt) : null;
+    const pat = floorTexture ? getTilePattern(ctx, floorTexture, state.scalePxPerFt||40, el.tileSizeFt, el.floorColorOverride) : null;
     ctx.fillStyle = pat || (el.color || ROOM_FILL_COLOR);
     ctx.fill();
     ctx.restore();
@@ -9674,6 +9686,53 @@ function renderElementsList(){
       });
       dims.appendChild(document.createTextNode('Tile')); dims.appendChild(tIn); dims.appendChild(document.createTextNode(unitAbbrev()));
     }
+    // Every one of the 3 room-floor materials (carpet/wood/floortile) used
+    // to bake ONE fixed shade no matter what -- the room's own always-
+    // present colour swatch (the generic `swatch` control at the start of
+    // this row) silently had zero effect on any of them, a real "can I
+    // change the floor colour" gap. Shown only when one of those three is
+    // actually the room's real rendered texture (same gating
+    // appendTileSizeControl already uses) -- for an 'other'-type room with
+    // no texture at all, the generic swatch already works correctly (see
+    // drawRoomElement's own `pat || el.color` fallback), so a second
+    // control there would be redundant, not additive.
+    function appendFloorColorControl(dims, el){
+      const tex = effectiveFloorTexture(el);
+      if(tex!=='wood' && tex!=='floortile' && tex!=='carpet') return;
+      const defaultColor = (FLOOR_TEXTURE_3D_LOOK[tex] && FLOOR_TEXTURE_3D_LOOK[tex].color) || '#AFA084';
+      const cIn = document.createElement('input'); cIn.type='color';
+      cIn.style.marginLeft='4px';
+      cIn.title = 'Floor colour -- overrides this material\'s own default shade';
+      cIn.value = el.floorColorOverride || defaultColor;
+      cIn.addEventListener('click', e=>e.stopPropagation());
+      let colorPushed = false;
+      cIn.addEventListener('input', ()=>{
+        if(!colorPushed){ pushUndo(); colorPushed = true; }
+        el.floorColorOverride = cIn.value;
+        // A full renderElementsList() here (matching floorSel's own
+        // change-handler convention) would replace this very swatch mid-
+        // drag and interrupt the native colour picker still open on it --
+        // the reset button's enabled state is the only thing that also
+        // needs to react, so update it directly instead.
+        reset.disabled = false;
+        drawOverlay();
+      });
+      dims.appendChild(cIn);
+      const reset = document.createElement('button');
+      reset.type = 'button';
+      reset.className = 'icnbtn';
+      reset.textContent = '↺';
+      reset.title = 'Reset floor colour to this material\'s default';
+      reset.disabled = !el.floorColorOverride;
+      reset.addEventListener('click', e=>{
+        e.stopPropagation();
+        if(!el.floorColorOverride) return;
+        pushUndo();
+        el.floorColorOverride = null;
+        drawOverlay(); renderElementsList();
+      });
+      dims.appendChild(reset);
+    }
     // Accuracy verification, shared by dimensions and walls: an optional
     // "what the original plan says this should be" length, an automatic
     // flag when the traced result is off by more than a small tracing
@@ -10030,6 +10089,7 @@ function renderElementsList(){
       });
       dims.appendChild(floorSel);
       appendTileSizeControl(dims, el);
+      appendFloorColorControl(dims, el);
     } else if(el.shape==='polygon'){
       const info = document.createElement('span');
       info.textContent = formatNum(el.isCutout ? cutoutSubtractedAreaDisplay(el) : netAreaDisplay(el))+' sq '+unitAbbrev()+' · '+el.points.length+' pts';
@@ -12640,6 +12700,13 @@ function decomposeRectilinearPolygonFt(points){
       wFt: (r.x1-r.x0)/scale,
       hFt: (r.y1-r.y0)/scale,
       rotationDeg: bestAngle*180/Math.PI,
+      // Raw position along the shared span/slope axis, in the ONE rotated
+      // frame every piece from this same call has in common (relative to
+      // this polygon's own centroid) -- exposed purely so
+      // build3DSkillionRoofMeshFromPieces can place every piece on ONE
+      // consistent slope; unused by (and harmless to) every existing caller.
+      y0Ft: r.y0/scale,
+      y1Ft: r.y1/scale,
     };
   });
 }
@@ -12657,12 +12724,26 @@ function build3DRoofMeshFromPolygon(el, preset, groundWFt, groundHFt){
     // assumption) -- fall through to the bounding-rect approximation
     // rather than trust a broken tiling.
     if(trueAreaFt2>0 && Math.abs(piecesAreaFt2-trueAreaFt2)/trueAreaFt2 < 0.08){
+      // A single piece (the polygon IS just a plain rectangle, only traced
+      // as a polygon rather than drawn as a rect) still gets a normal
+      // standalone gable -- identical to a plain rect roof, nothing to make
+      // coherent with. TWO OR MORE pieces used to each get their own
+      // independent gable here -- a real reported "roof still a joke": every
+      // piece computed its own ridge off its OWN span alone, with zero
+      // awareness of its neighbours, so the result was a bundle of separate
+      // disconnected tents instead of one roof. See
+      // build3DSkillionRoofMeshFromPieces for why a shared mono-pitch slope
+      // fixes that for good, not just for this one shape.
       const group = new THREE.Group();
-      pieces.forEach(rect=>{
+      if(pieces.length===1){
+        const rect = pieces[0];
         const synthEl = {xPx:rect.xPx, yPx:rect.yPx, wFt:rect.wFt, hFt:rect.hFt, rotationDeg:rect.rotationDeg, color:el.color, presetKey:el.presetKey, tileSizeFt:el.tileSizeFt};
         const piece = build3DRoofMesh(synthEl, preset, groundWFt, groundHFt);
         if(piece) group.add(piece);
-      });
+      } else {
+        const skillion = build3DSkillionRoofMeshFromPieces(pieces, el, preset, groundWFt, groundHFt);
+        if(skillion) group.add(skillion);
+      }
       if(group.children.length) return group;
     }
   }
@@ -12723,7 +12804,12 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
     // instead of one fixed 0.9 for every material regardless of what it is.
     const floorLook = el.isRoom ? FLOOR_TEXTURE_3D_LOOK[roomFloorTexture(el)] : null;
     const roughness = floorLook ? floorLook.roughness : (AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.9);
-    const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(floorLook ? floorLook.color : baseColor), roughness});
+    // el.floorColorOverride (2D's own getTilePattern colorOverride, same
+    // field) wins over the material's own fixed look -- keeps 2D and 3D
+    // showing the one real floor colour the user actually picked, not two
+    // different ones.
+    const floorColor = (el.isRoom && el.floorColorOverride) ? el.floorColorOverride : (floorLook ? floorLook.color : baseColor);
+    const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(floorColor), roughness});
     const mesh = new THREE.Mesh(geo, mat);
     if(el.presetKey==='gardenbed'){
       const group = new THREE.Group();
@@ -12898,6 +12984,71 @@ function build3DRoofMesh(el, preset, groundWFt, groundHFt){
   group.position.z = pos.z;
   group.rotation.y += -(el.rotationDeg||0)*Math.PI/180;
   return group;
+}
+// A real reported "roof still a joke": once a hand-traced roof polygon
+// decomposes into two or more tiling rectangles (see
+// decomposeRectilinearPolygonFt), giving EACH piece its own independent
+// build3DRoofMesh gable put a separate ridge, at a height based only on
+// THAT piece's own span, on every single one -- with zero awareness of its
+// neighbours. Adjacent pieces of different widths ended up with different
+// ridge heights (sometimes different ridge DIRECTIONS), so the result read
+// as a bundle of disconnected little tents side by side, not one roof.
+// A skillion (a single mono-pitch slope, no ridge at all) fixes this for a
+// structural reason, not a cosmetic one: its height is a pure LINEAR
+// function of position along one shared slope axis. As long as every piece
+// evaluates that SAME function (not an independent one derived from its own
+// bounds), any two pieces that share a border -- whichever direction
+// they're adjacent in, however the polygon happened to be sliced -- land at
+// EXACTLY the same height all along that shared edge, because both sides of
+// the seam are just two evaluations of one linear formula at the same
+// input. That shared formula is what actually guarantees a single coherent
+// roof surface; nothing here reasons about which edges touch which.
+// Deliberately gentler than the symmetric gable's ROOF_PITCH_RAD (a 6:12,
+// atan(0.5)) because a skillion covers the FULL span in one slope instead
+// of splitting it in half from a central ridge -- the same pitch here would
+// make a roof over an ordinary building depth rise twice as high as the
+// gable does, unrealistically tall for a normal house.
+const ROOF_SKILLION_PITCH_RAD = Math.atan(0.2);
+function build3DSkillionRoofMeshFromPieces(pieces, el, preset, groundWFt, groundHFt){
+  if(!pieces || !pieces.length) return null;
+  const baseColor = el.color || preset.color || '#A15A34';
+  const roughness = AREA_MATERIAL_ROUGHNESS_3D[preset.texture] != null ? AREA_MATERIAL_ROUGHNESS_3D[preset.texture] : 0.8;
+  const metalness = AREA_MATERIAL_METALNESS_3D[preset.texture] || 0;
+  const eaveY = WALL_HEIGHT_FT_3D;
+  // The single shared reference the whole roof's slope is measured against
+  // -- every piece's height comes from THIS SAME range (not its own), which
+  // is the one property that actually fixes the "bundle of tents" look.
+  const globalY1Ft = Math.max(...pieces.map(p=>p.y1Ft));
+  const heightAtY = (yFt) => eaveY + (globalY1Ft-yFt)*Math.tan(ROOF_SKILLION_PITCH_RAD);
+
+  const group = new THREE.Group();
+  pieces.forEach(p=>{
+    // Overhang grows the piece symmetrically on every side, so its true
+    // centre (and therefore the already-correct xPx/yPx decomposition gave
+    // it) never moves -- no separate position recompute needed for it.
+    const wFt = p.wFt + 2*ROOF_OVERHANG_FT;
+    const hFt = p.hFt + 2*ROOF_OVERHANG_FT;
+    if(wFt<=0.05 || hFt<=0.05) return;
+    const midYFt = (p.y0Ft+p.y1Ft)/2;
+    const slopeLenFt = hFt/Math.cos(ROOF_SKILLION_PITCH_RAD);
+    const texMap = materialTextureFor3D(el.presetKey, baseColor, wFt*40, slopeLenFt*40, el.tileSizeFt);
+    const roofMat = new THREE.MeshStandardMaterial({map:texMap, roughness, metalness});
+    const underMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.4)), roughness:0.95});
+    const faceMats = [underMat, underMat, roofMat, underMat, underMat, underMat];
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(wFt, ROOF_PANEL_THICK_FT, slopeLenFt), faceMats);
+    // Local X tilt first, then the piece's own world-facing Y rotation --
+    // three.js's default XYZ Euler order composes rotation.x before
+    // rotation.y on the same object, so this needs no separate parent group
+    // to get the same "tilt locally, then rotate the whole tilted panel to
+    // the polygon's real-world orientation" result build3DRoofMesh gets via
+    // group nesting.
+    panel.rotation.x = ROOF_SKILLION_PITCH_RAD;
+    panel.rotation.y = -p.rotationDeg*Math.PI/180;
+    const pos = ftPos3D(p, groundWFt, groundHFt);
+    panel.position.set(pos.x, heightAtY(midYFt), pos.z);
+    group.add(panel);
+  });
+  return group.children.length ? group : null;
 }
 const CEILING_COLOR_3D = '#EDEAE0';
 // Every traced room already has its own true interior polygon (the same one
