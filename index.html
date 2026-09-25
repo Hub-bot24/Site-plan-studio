@@ -11335,13 +11335,33 @@ function build3DCarMesh(el, preset, baseColor, heightFt, pos){
   // sight -- the "flat black smudge" look a screenshot showed this fixes.
   const wheelDFt = bodyHFt*0.85, wheelRFt = wheelDFt/2, wheelWFt = wFt*0.10;
   const axleZFt = hFt/2 - wheelRFt*1.3;
+  // A flat black roughness-0.9 tire with nothing else on it has no way to
+  // actually READ as round in low/indirect light (a covered carport, an
+  // overcast walkthrough) -- it's just a dark circular silhouette, the
+  // "flat smudge" a real screenshot showed twice now. A real wheel's hub/
+  // rim is polished metal specifically because that's what actually
+  // catches and reflects light even when the tire itself sits in shadow;
+  // a small metallic disc set proud of the tire's own outer face (so it
+  // never z-fights with it) gives every wheel a highlight to read its
+  // round form by, regardless of scene lighting.
+  const rimMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#9AA0A6'), roughness:0.3, metalness:0.75});
+  const rimRFt = wheelRFt*0.55, rimWFt = wheelWFt*0.25;
+  const wheelPositions = [];
   [-1,1].forEach(zSide=>{
     [-1,1].forEach(xSide=>{
       const wheel = new THREE.Mesh(new THREE.CylinderGeometry(wheelRFt, wheelRFt, wheelWFt, 16), wheelMat);
       wheel.rotation.z = Math.PI/2;
       wheel.position.set(xSide*(wFt/2-wheelWFt/2), wheelRFt, zSide*axleZFt);
       group.add(wheel);
+      wheelPositions.push({xSide, zSide});
     });
+  });
+  wheelPositions.forEach(({xSide, zSide})=>{
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(rimRFt, rimRFt, rimWFt, 12), rimMat);
+    rim.rotation.z = Math.PI/2;
+    rim.position.set(xSide*(wFt/2+rimWFt/2), wheelRFt, zSide*axleZFt);
+    rim.castShadow = false; // tiny hub detail -- the tire behind it already grounds the wheel
+    group.add(rim);
   });
 
   group.position.set(pos.x, 0, pos.z);
@@ -12259,7 +12279,16 @@ function polygonRoofRectFt(points){
   for(let i=0;i<points.length;i++){
     const a = points[i], b = points[(i+1)%points.length];
     const len = Math.hypot(b.x-a.x, b.y-a.y);
-    if(len>bestLen){ bestLen = len; bestAngle = Math.atan2(b.y-a.y, b.x-a.x); }
+    // A strict > here is floating-point-fragile: two DIFFERENT (often
+    // perpendicular) edges can have the exact same true length -- an L
+    // whose two arms happen to span the same distance, say -- and after a
+    // rotation transform, sub-ulp rounding can make either one compute as
+    // "longer" depending on which vertex coordinates it happens to combine.
+    // Flipping the whole reference frame by 90 degrees on that kind of
+    // noise is a real, reproducible bug (verified with a rotated, tied L
+    // shape), not a hypothetical -- a small fixed epsilon keeps the choice
+    // stable, always preferring the first-encountered edge on a near-tie.
+    if(len>bestLen+1e-6){ bestLen = len; bestAngle = Math.atan2(b.y-a.y, b.x-a.x); }
   }
   const cx = points.reduce((s,p)=>s+p.x,0)/points.length;
   const cy = points.reduce((s,p)=>s+p.y,0)/points.length;
@@ -12281,6 +12310,127 @@ function polygonRoofRectFt(points){
     rotationDeg: bestAngle*180/Math.PI,
   };
 }
+// A single bounding rectangle was an honest first pass at "never flat",
+// but a real report ("3d roof should be same shape as 2d plan", against a
+// roof that visibly extended over a pool the true polygon never covered)
+// proved it's not good enough: a bounding rect of a non-convex shape is
+// ALWAYS bigger than the shape itself. Real roof footprints traced over a
+// building's walls are essentially always rectilinear (every edge either
+// horizontal or vertical relative to the shape's own dominant
+// orientation) -- an L, a T, a house-wing-plus-patio-in-one-trace -- so
+// this decomposes the polygon into the exact axis-aligned rectangles that
+// TILE it (a standard slab/scanline decomposition, working in the
+// longest-edge-aligned frame polygonRoofRectFt already establishes), each
+// becoming its own independent pitched roof section. Real multi-wing
+// roofs usually ARE built this way -- separate gables meeting at a valley
+// -- so this isn't just a rendering trick. Returns null (caller falls
+// back to the single bounding rect) if the shape isn't cleanly
+// rectilinear -- a genuinely diagonal edge, or a scanline that doesn't
+// pair up evenly -- rather than silently building a wrong roof.
+function decomposeRectilinearPolygonFt(points){
+  let bestLen = -1, bestAngle = 0;
+  for(let i=0;i<points.length;i++){
+    const a = points[i], b = points[(i+1)%points.length];
+    const len = Math.hypot(b.x-a.x, b.y-a.y);
+    // A strict > here is floating-point-fragile: two DIFFERENT (often
+    // perpendicular) edges can have the exact same true length -- an L
+    // whose two arms happen to span the same distance, say -- and after a
+    // rotation transform, sub-ulp rounding can make either one compute as
+    // "longer" depending on which vertex coordinates it happens to combine.
+    // Flipping the whole reference frame by 90 degrees on that kind of
+    // noise is a real, reproducible bug (verified with a rotated, tied L
+    // shape), not a hypothetical -- a small fixed epsilon keeps the choice
+    // stable, always preferring the first-encountered edge on a near-tie.
+    if(len>bestLen+1e-6){ bestLen = len; bestAngle = Math.atan2(b.y-a.y, b.x-a.x); }
+  }
+  const cx = points.reduce((s,p)=>s+p.x,0)/points.length;
+  const cy = points.reduce((s,p)=>s+p.y,0)/points.length;
+  const cos = Math.cos(-bestAngle), sin = Math.sin(-bestAngle);
+  const rpts = points.map(p=>{
+    const dx=p.x-cx, dy=p.y-cy;
+    return { x: dx*cos-dy*sin, y: dx*sin+dy*cos };
+  });
+  const EPS = 1.5; // px -- collapses near-duplicate vertex coords from hand-tracing/float noise
+  const n = rpts.length;
+  const horizEdges = [];
+  for(let i=0;i<n;i++){
+    const a = rpts[i], b = rpts[(i+1)%n];
+    if(Math.abs(a.x-b.x)<EPS && Math.abs(a.y-b.y)<EPS) continue; // degenerate zero-length edge
+    const isHoriz = Math.abs(a.y-b.y)<EPS;
+    const isVert = Math.abs(a.x-b.x)<EPS;
+    if(!isHoriz && !isVert) return null; // a genuinely diagonal edge -- not rectilinear, bail to the fallback
+    if(isHoriz) horizEdges.push({ y:(a.y+b.y)/2, x0:Math.min(a.x,b.x), x1:Math.max(a.x,b.x) });
+  }
+  const snap = (vals) => {
+    const sorted = [...vals].sort((p,q)=>p-q);
+    const out = [];
+    sorted.forEach(v=>{ if(!out.length || v-out[out.length-1]>EPS) out.push(v); });
+    return out;
+  };
+  const xs = snap(rpts.map(p=>p.x));
+  if(xs.length<2) return null;
+
+  const slabs = []; // {x0,x1, yPairs:[[y0,y1],...]}
+  for(let i=0;i<xs.length-1;i++){
+    const x0=xs[i], x1=xs[i+1];
+    const crossYs = [];
+    horizEdges.forEach(e=>{ if(e.x0<=x0+EPS && e.x1>=x1-EPS) crossYs.push(e.y); });
+    crossYs.sort((p,q)=>p-q);
+    if(crossYs.length%2!==0) return null; // odd crossing count -- not a clean simple rectilinear shape
+    const yPairs = [];
+    for(let k=0;k<crossYs.length;k+=2) yPairs.push([crossYs[k], crossYs[k+1]]);
+    slabs.push({x0,x1,yPairs});
+  }
+
+  // Merge adjacent slabs sharing an identical y-interval into one wider
+  // rectangle -- fewer pieces, fewer visible seams between them, still an
+  // exact tiling either way.
+  const rects = []; // {x0,x1,y0,y1,_openX1} in the rotated frame
+  slabs.forEach(slab=>{
+    slab.yPairs.forEach(([y0,y1])=>{
+      const prev = rects.find(r=>r._openX1===slab.x0 && Math.abs(r.y0-y0)<EPS && Math.abs(r.y1-y1)<EPS);
+      if(prev){ prev.x1 = slab.x1; prev._openX1 = slab.x1; }
+      else rects.push({x0:slab.x0, x1:slab.x1, y0, y1, _openX1:slab.x1});
+    });
+  });
+  if(!rects.length) return null;
+
+  const cosB = Math.cos(bestAngle), sinB = Math.sin(bestAngle);
+  const scale = state.scalePxPerFt;
+  return rects.map(r=>{
+    const midRx=(r.x0+r.x1)/2, midRy=(r.y0+r.y1)/2;
+    return {
+      xPx: cx + midRx*cosB - midRy*sinB,
+      yPx: cy + midRx*sinB + midRy*cosB,
+      wFt: (r.x1-r.x0)/scale,
+      hFt: (r.y1-r.y0)/scale,
+      rotationDeg: bestAngle*180/Math.PI,
+    };
+  });
+}
+function build3DRoofMeshFromPolygon(el, preset, groundWFt, groundHFt){
+  const pieces = decomposeRectilinearPolygonFt(el.points);
+  if(pieces && pieces.length){
+    const trueAreaFt2 = Math.abs(signedAreaRaw(el.points))/(state.scalePxPerFt*state.scalePxPerFt);
+    const piecesAreaFt2 = pieces.reduce((s,r)=>s+r.wFt*r.hFt,0);
+    // The decomposition's own rectangles should exactly tile the polygon;
+    // if their total area doesn't match the polygon's true area, something
+    // about the shape defeated the rectilinear assumption -- fall through
+    // to the bounding-rect approximation rather than trust a broken tiling.
+    if(trueAreaFt2>0 && Math.abs(piecesAreaFt2-trueAreaFt2)/trueAreaFt2 < 0.01){
+      const group = new THREE.Group();
+      pieces.forEach(rect=>{
+        const synthEl = {xPx:rect.xPx, yPx:rect.yPx, wFt:rect.wFt, hFt:rect.hFt, rotationDeg:rect.rotationDeg, color:el.color, presetKey:el.presetKey, tileSizeFt:el.tileSizeFt};
+        const piece = build3DRoofMesh(synthEl, preset, groundWFt, groundHFt);
+        if(piece) group.add(piece);
+      });
+      if(group.children.length) return group;
+    }
+  }
+  const rect = polygonRoofRectFt(el.points);
+  const synthEl = {xPx:rect.xPx, yPx:rect.yPx, wFt:rect.wFt, hFt:rect.hFt, rotationDeg:rect.rotationDeg, color:el.color, presetKey:el.presetKey, tileSizeFt:el.tileSizeFt};
+  return build3DRoofMesh(synthEl, preset, groundWFt, groundHFt);
+}
 function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   const baseColor = el.color || preset.color || '#B5934C';
   const isRoof = ROOF_PRESETS_3D.has(el.presetKey);
@@ -12288,9 +12438,7 @@ function build3DAreaMesh(el, preset, groundWFt, groundHFt){
   // other rect-shaped area preset extrudes as.
   if(isRoof && el.shape==='rect') return build3DRoofMesh(el, preset, groundWFt, groundHFt);
   if(isRoof && el.shape==='polygon' && el.points && el.points.length>=3){
-    const rect = polygonRoofRectFt(el.points);
-    const synthEl = {xPx:rect.xPx, yPx:rect.yPx, wFt:rect.wFt, hFt:rect.hFt, rotationDeg:rect.rotationDeg, color:el.color, presetKey:el.presetKey, tileSizeFt:el.tileSizeFt};
-    return build3DRoofMesh(synthEl, preset, groundWFt, groundHFt);
+    return build3DRoofMeshFromPolygon(el, preset, groundWFt, groundHFt);
   }
   const isWall = el.presetKey==='clad_stone';
   let heightFt = AREA_HEIGHT_FT_3D[el.presetKey] != null ? AREA_HEIGHT_FT_3D[el.presetKey] : 0.2;
@@ -12551,6 +12699,35 @@ function build3DRoomCeilingMesh(el, groundWFt, groundHFt){
 // already renders (ROOM_FILL_COLOR, see PRESETS.room/build3DAreaMesh), so
 // nothing changes for anyone who already uses Detect Rooms; this only fills
 // the gap for anyone who doesn't.
+// "Already covered by a detected room" used to be decided by a single
+// point-in-polygon test against a NAIVE vertex average (sum of corner
+// points / count) -- correct for a simple convex room, but a real L-shaped
+// room (a common, ordinary layout -- an open-plan living/dining nook, a
+// kitchen with an alcove) can easily have that naive average land in its
+// own concave notch, outside the room's true outline entirely. The exact
+// same trap Detect Rooms itself avoids by using polygonCentroid (the real
+// area-weighted centroid, not a raw vertex average) -- but even THAT isn't
+// bulletproof for a sufficiently hooked/thin-armed shape, so the real fix
+// is to sidestep geometry entirely: every isRoom element Detect Rooms ever
+// creates already stores boundingWallIds (see the Detect Rooms handler),
+// the exact set of walls enclosing it -- and findClosedRoomLoops() is
+// fully deterministic, so the SAME physical room always re-traces to the
+// SAME wall-id set. Comparing those sets directly is an exact match with
+// no geometry involved at all, immune to concave shapes; the old
+// point-in-polygon check (now against the proper polygonCentroid, not a
+// naive average) only remains as a fallback for a legacy isRoom element
+// saved before boundingWallIds existed.
+function roomLoopAlreadyCovered(loop, existingRooms){
+  const loopWallIds = new Set(loop.edgeWallIds.filter(x=>x!=null));
+  return existingRooms.some(r=>{
+    if(r.boundingWallIds && r.boundingWallIds.length){
+      const rIds = r.boundingWallIds;
+      return rIds.length===loopWallIds.size && rIds.every(id=>loopWallIds.has(id));
+    }
+    const c = polygonCentroid(loop.points);
+    return pointInPolygon(c.x, c.y, r.points);
+  });
+}
 function build3DFallbackRoomFloors(groundWFt, groundHFt){
   const loops = findClosedRoomLoops();
   if(!loops.length) return null;
@@ -12559,20 +12736,17 @@ function build3DFallbackRoomFloors(groundWFt, groundHFt){
   const mat = new THREE.MeshStandardMaterial({color:new THREE.Color(ROOM_FILL_COLOR), roughness:0.9});
   const group = new THREE.Group();
   loops.forEach(loop=>{
-    const cx = loop.points.reduce((s,p)=>s+p.x,0)/loop.points.length;
-    const cy = loop.points.reduce((s,p)=>s+p.y,0)/loop.points.length;
-    if(existingRooms.some(r=>pointInPolygon(cx, cy, r.points))) return;
+    if(roomLoopAlreadyCovered(loop, existingRooms)) return;
     const pts = insetRoomPolygon(loop.points, loop.edgeWallIds).points;
-    const pcx = pts.reduce((s,p)=>s+p.x,0)/pts.length;
-    const pcy = pts.reduce((s,p)=>s+p.y,0)/pts.length;
+    const pc = polygonCentroid(pts);
     const shape = new THREE.Shape(pts.map(p=>new THREE.Vector2(
-      (p.x-pcx)/state.scalePxPerFt, -(p.y-pcy)/state.scalePxPerFt
+      (p.x-pc.x)/state.scalePxPerFt, -(p.y-pc.y)/state.scalePxPerFt
     )));
     const geo = new THREE.ExtrudeGeometry(shape, {depth:heightFt, bevelEnabled:false});
     geo.rotateX(-Math.PI/2);
     geo.translate(0, heightFt, 0);
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(pcx/state.scalePxPerFt - groundWFt/2, 0, pcy/state.scalePxPerFt - groundHFt/2);
+    mesh.position.set(pc.x/state.scalePxPerFt - groundWFt/2, 0, pc.y/state.scalePxPerFt - groundHFt/2);
     group.add(mesh);
   });
   return group.children.length ? group : null;
