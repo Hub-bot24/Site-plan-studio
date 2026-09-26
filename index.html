@@ -1445,6 +1445,15 @@ PRESETS.recliner_double = {label:'Double sun lounger (1.4 × 2.0 m)', color:RECL
 // Custom recliner -- no fixed wM/hM, same idea as custom fire pit/swing.
 PRESETS.recliner_custom = {label:'Custom recliner — enter dimensions', color:RECLINER_COLOR, texture:'flat', quick:'rect', icon:'recliner'};
 
+// Cantilever pool umbrella -- an offset pole with an angled arm holding the
+// canopy from one side, not a pole straight through the canopy's own
+// center, the style almost every real poolside umbrella actually is. No
+// separate "_custom" variant needed -- every circle-shape element already
+// gets a real diameter editor in the sidebar (see renderElementsList's
+// el.shape==='circle' branch), same as firepit_round/swing_egg above.
+const POOL_UMBRELLA_COLOR = '#C7B9A0';
+PRESETS.pool_umbrella = {label:'Cantilever pool umbrella (Ø3.0 m)', color:POOL_UMBRELLA_COLOR, texture:'flat', quick:'circle', name:'Pool umbrella', dM:3.0, icon:'pool_umbrella'};
+
 // Standard recommended clearance (inches) for common furniture -- the same
 // starting-point minimums interior designers use: room to pull a dining
 // chair out and walk behind it, a bed's walk space, a wardrobe/fridge door
@@ -3310,7 +3319,7 @@ const TYPE_GROUPS = [
   {label:'Site & landscaping', keys:['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','hedge','pool','tree','patio_post','patio_post_square','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
-  {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom','recliner','recliner_double','recliner_custom']},
+  {label:'Outdoor furniture', keys:['swing_egg','swing_double','swing_bench2','swing_bench3','swing_hammock','swing_custom','recliner','recliner_double','recliner_custom','pool_umbrella']},
   {label:'Roofing', keys:['roof_tile','roof_metal','roof_shingle']},
   {label:'Cladding', keys:['clad_stone']},
   {label:'Indoor furniture', keys:['indoor', ...Object.keys(FURNITURE_ITEMS).filter(k=>k!=='power_point')]},
@@ -5885,6 +5894,25 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
       const sy = y+(foldY-y)*(i/5);
       ctx.beginPath(); ctx.moveTo(x+short*0.06,sy); ctx.lineTo(x+w-short*0.06,sy); ctx.stroke();
     }
+  } else if(icon==='pool_umbrella'){
+    // Top down: an 8-panel canopy (matches the 3D mesh's octagonal cone)
+    // with rib lines from the hub to each corner, plus the offset mast +
+    // weighted base seen from above -- a cantilever's pole is never
+    // straight through the canopy's own center.
+    const cx=x+w/2, cy=y+h/2, r=short/2;
+    const pts = [];
+    for(let i=0;i<8;i++){ const a=(i/8)*Math.PI*2 - Math.PI/8; pts.push({x:cx+Math.cos(a)*r, y:cy+Math.sin(a)*r}); }
+    ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y); for(let i=1;i<8;i++) ctx.lineTo(pts[i].x,pts[i].y); ctx.closePath();
+    ctx.fillStyle = shadeColor(baseColor,0.08); ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.35); ctx.lineWidth = Math.max(1,r*0.05); ctx.stroke();
+    ctx.strokeStyle = shadeColor(baseColor,-0.15); ctx.lineWidth=1;
+    pts.forEach(p=>{ ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(p.x,p.y); ctx.stroke(); });
+    ctx.beginPath(); ctx.arc(cx,cy,r*0.06,0,Math.PI*2); ctx.fillStyle=shadeColor(baseColor,-0.5); ctx.fill();
+    const baseCx = cx, baseCy = cy+r+r*0.22;
+    ctx.strokeStyle = 'rgba(20,20,20,0.55)'; ctx.lineWidth = Math.max(1,r*0.05);
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(baseCx,baseCy); ctx.stroke();
+    ctx.beginPath(); ctx.arc(baseCx,baseCy,r*0.18,0,Math.PI*2);
+    ctx.fillStyle = '#2E3136'; ctx.fill();
   } else if(icon==='shower'){
     // A glass enclosure -- translucent tinted panels, a floor drain dead
     // centre, and a shower head + control mounted on one corner's walls --
@@ -6057,10 +6085,10 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
   if(icon==='bed'){
     roundRectPath(ctx,x,y,w,h,short*0.07);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.011); ctx.stroke();
     const hbH = h*0.07;
     ctx.fillStyle = 'rgba(27,27,27,0.08)'; ctx.fillRect(x,y,w,hbH);
-    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.03);
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.015);
     ctx.beginPath(); ctx.moveTo(x,y+hbH); ctx.lineTo(x+w,y+hbH); ctx.stroke();
     const pillowH=h*0.22, pillowW=w*0.36, gap=w*0.06, pY=y+hbH+h*0.05;
     [x+w/2-gap/2-pillowW, x+w/2+gap/2].forEach(px=>{
@@ -6080,7 +6108,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
   } else if(icon==='table' || icon==='desk' || icon==='table_dining'){
     roundRectPath(ctx,x,y,w,h,short*0.1);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.025); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.0125); ctx.stroke();
     if(icon==='table_dining'){
       const seatSize = short*0.2;
       const seatsPerLong = w>=h ? Math.max(2, Math.round(w/(seatSize*1.8))) : 1;
@@ -6108,7 +6136,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
     const cx=x+w/2, cy=y+h/2, r=short/2;
     ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.025); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.0125); ctx.stroke();
     const seatCount = icon==='table_dining_round4' ? 4 : (icon==='table_dining_round6' ? 6 : 8);
     const seatSize = short*0.2;
     for(let i=0;i<seatCount;i++){
@@ -6124,7 +6152,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
   } else if(icon==='sofa' || icon==='armchair'){
     roundRectPath(ctx,x,y,w,h,short*0.16);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.011); ctx.stroke();
     const backH = h*0.24;
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(x,y+backH); ctx.lineTo(x+w,y+backH); ctx.stroke();
@@ -6144,7 +6172,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
     ctx.moveTo(x,y); ctx.lineTo(x+w,y); ctx.lineTo(x+w,y+armDepth); ctx.lineTo(x+armDepth,y+armDepth);
     ctx.lineTo(x+armDepth,y+h); ctx.lineTo(x,y+h); ctx.closePath();
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.011); ctx.stroke();
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
     const longArmLen = w-armDepth, longArmSeats = Math.max(2, Math.round(longArmLen/(armDepth*1.3)));
     for(let i=1;i<longArmSeats;i++){
@@ -6159,7 +6187,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
   } else if(icon==='dresser' || icon==='wardrobe'){
     roundRectPath(ctx,x,y,w,h,short*0.06);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.011); ctx.stroke();
     if(icon==='dresser'){
       const rows = w>h*2 ? 2 : 3;
       const pad = Math.max(1.5, short*0.035);
@@ -6168,7 +6196,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
         const ry = y+pad+i*(rowH+pad), rx=x+pad, rw=w-pad*2;
         roundRectPath(ctx,rx,ry,rw,rowH,short*0.03);
         ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
-        ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1.2,short*0.02); ctx.lineCap='round';
+        ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.01); ctx.lineCap='round';
         ctx.beginPath(); ctx.moveTo(x+w*0.5-w*0.09, ry+rowH*0.5); ctx.lineTo(x+w*0.5+w*0.09, ry+rowH*0.5); ctx.stroke();
       }
     } else {
@@ -6178,7 +6206,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
         roundRectPath(ctx,dx,y+pad,doorW,h-pad*2,short*0.03);
         ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
       });
-      ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1.2,short*0.02); ctx.lineCap='round';
+      ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.01); ctx.lineCap='round';
       const midX = x+w/2;
       [midX-w*0.045, midX+w*0.045].forEach(hx=>{
         ctx.beginPath(); ctx.moveTo(hx,y+h*0.42); ctx.lineTo(hx,y+h*0.58); ctx.stroke();
@@ -6187,7 +6215,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
   } else if(icon==='open_shelf'){
     roundRectPath(ctx,x,y,w,h,short*0.05);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.011); ctx.stroke();
     const tiers = 4;
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
     for(let i=1;i<tiers;i++){
@@ -6197,7 +6225,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
   } else if(icon==='recliner'){
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.011); ctx.stroke();
     const foldY = y+h*0.38;
     ctx.beginPath(); ctx.moveTo(x+short*0.03,foldY); ctx.lineTo(x+w-short*0.03,foldY); ctx.stroke();
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
@@ -6205,10 +6233,25 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
       const sy = y+(foldY-y)*(i/5);
       ctx.beginPath(); ctx.moveTo(x+short*0.06,sy); ctx.lineTo(x+w-short*0.06,sy); ctx.stroke();
     }
+  } else if(icon==='pool_umbrella'){
+    const cx=x+w/2, cy=y+h/2, r=short/2;
+    const pts = [];
+    for(let i=0;i<8;i++){ const a=(i/8)*Math.PI*2 - Math.PI/8; pts.push({x:cx+Math.cos(a)*r, y:cy+Math.sin(a)*r}); }
+    ctx.beginPath(); ctx.moveTo(pts[0].x,pts[0].y); for(let i=1;i<8;i++) ctx.lineTo(pts[i].x,pts[i].y); ctx.closePath();
+    ctx.fillStyle = BW_PAPER; ctx.fill();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,r*0.05); ctx.stroke();
+    ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
+    pts.forEach(p=>{ ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(p.x,p.y); ctx.stroke(); });
+    ctx.beginPath(); ctx.arc(cx,cy,r*0.06,0,Math.PI*2); ctx.fillStyle=BW_INK; ctx.fill();
+    const baseCx = cx, baseCy = cy+r+r*0.22;
+    ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,r*0.05);
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(baseCx,baseCy); ctx.stroke();
+    ctx.beginPath(); ctx.arc(baseCx,baseCy,r*0.18,0,Math.PI*2);
+    ctx.fillStyle = BW_INK; ctx.fill();
   } else if(icon==='shower'){
     roundRectPath(ctx,x,y,w,h,short*0.04);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.011); ctx.stroke();
     ctx.beginPath(); ctx.arc(x+w/2, y+h/2, short*0.06, 0, Math.PI*2);
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
     ctx.fillStyle = BW_INK;
@@ -6218,14 +6261,14 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
     const cx=x+w/2, cy=y+h/2, rx=w/2, ry=h/2;
     ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.025); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.0125); ctx.stroke();
     const inset = short*0.14;
     ctx.beginPath(); ctx.ellipse(cx,cy,Math.max(1,rx-inset),Math.max(1,ry-inset),0,0,Math.PI*2);
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
   } else if(icon==='fridge'){
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.011); ctx.stroke();
     const vertical = h>=w;
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
     ctx.fillStyle = BW_INK;
@@ -6245,14 +6288,14 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
   } else if(icon==='island'){
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.011); ctx.stroke();
     const sw=w*0.28, sh=h*0.4;
     roundRectPath(ctx, x+w/2-sw/2, y+h/2-sh/2, sw, sh, sh*0.2);
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
   } else if(icon==='vanity'){
     roundRectPath(ctx,x,y,w,h,short*0.1);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.022); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.011); ctx.stroke();
     const cx=x+w/2, cy=y+h/2, rx=Math.min(w*0.28,short*0.5), ry=Math.min(h*0.32,short*0.4);
     ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
@@ -6260,21 +6303,21 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
     const tankH = h*0.32;
     roundRectPath(ctx,x+w*0.1,y,w*0.8,tankH,short*0.08);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.02); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.01); ctx.stroke();
     const cx=x+w/2, cy=y+tankH+(h-tankH)/2, rx=w*0.42, ry=(h-tankH)*0.46;
     ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.02); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.01); ctx.stroke();
     ctx.beginPath(); ctx.ellipse(cx,cy,rx*0.58,ry*0.6,0,0,Math.PI*2);
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
   } else if(icon==='power'){
     roundRectPath(ctx,x,y,w,h,short*0.18);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.02); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.01); ctx.stroke();
     const cx=x+w/2, cy=y+h/2, faceR=short*0.32;
     ctx.beginPath(); ctx.arc(cx,cy,faceR,0,Math.PI*2);
     ctx.strokeStyle = BW_INK; ctx.lineWidth=1; ctx.stroke();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1.2,short*0.05); ctx.lineCap='round';
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.025); ctx.lineCap='round';
     const slotLen = faceR*0.85, slotGap = faceR*0.42;
     [-1,1].forEach(dir=>{
       ctx.beginPath();
@@ -6295,7 +6338,7 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
   } else {
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = BW_PAPER; ctx.fill();
-    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.02); ctx.stroke();
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.01); ctx.stroke();
   }
   ctx.restore();
 }
@@ -7367,7 +7410,7 @@ function drawSwingIconBW(ctx, icon, x, y, w, h, short){
       const canX = x-short*0.06, canY = y-short*0.05, canW = w+short*0.12, canH = h*0.55;
       roundRectPath(ctx, canX, canY, canW, canH, short*0.1);
       ctx.fillStyle = BW_PAPER; ctx.fill();
-      ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.022); ctx.stroke();
+      ctx.strokeStyle = BW_INK; ctx.lineWidth = Math.max(1,short*0.011); ctx.stroke();
       ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=Math.max(0.6,short*0.01);
       for(let f=0.18; f<1; f+=0.2){
         ctx.beginPath(); ctx.moveTo(canX+canW*f, canY); ctx.lineTo(canX+canW*f, canY+canH); ctx.stroke();
@@ -7960,9 +8003,20 @@ function elementLabelText(el){
     }
     return el.label+' — '+formatNum(netAreaDisplay(el))+' sq '+state.unit;
   }
-  return el.isCutout
-    ? '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit
-    : el.label;
+  if(el.isCutout) return '− '+el.label+' — '+formatNum(cutoutSubtractedAreaDisplay(el))+' sq '+state.unit;
+  // A plain rect/circle ground-material area (patio, deck, driveway, lawn,
+  // a pool that was never traced with a step, ...) is exactly as much an
+  // "area" as the SAME preset would be if traced as a polygon -- the sidebar
+  // already shows its sq footage either way (see renderElementsList's
+  // rect/circle branches). The label chip on the plan itself used to only
+  // do that for the polygon case, so a plain rectangular patio/deck/pool
+  // silently never got its area shown on the plan at all. Furniture/fixture
+  // presets (sofa, car, fire pit, umbrella, ...) are deliberately excluded --
+  // AREA_MATERIAL_SWAP_KEYS is already the established "this is a ground
+  // surface you'd cost/order by area" list, reused here rather than a
+  // second list that could drift out of sync with it.
+  if(AREA_MATERIAL_SWAP_KEYS.includes(el.presetKey)) return el.label+' — '+formatNum(netAreaDisplay(el))+' sq '+state.unit;
+  return el.label;
 }
 function elementLabelPos(el){
   const a = elementLabelAnchor(el);
@@ -9703,6 +9757,31 @@ function renderElementsList(){
         drawOverlay();
       });
       labelRow.appendChild(hideBtn);
+      // While Labels are globally ON, a dimension deliberately has no
+      // separate "hide just the value" control (see the comment above --
+      // a bare line with no number is a stray tick mark, not useful).
+      // But while Labels are globally OFF, that "value hidden, line still
+      // showing" state already exists for every dimension on the plan
+      // regardless of this control -- so unlike the global-on case, this
+      // is purely about opting one dimension's value back IN, the same
+      // forceShowLabel every other element type already gets.
+      if(!state.showLabels){
+        const showValBtn = document.createElement('button');
+        const isVisible = labelVisible(el);
+        showValBtn.className = 'icnbtn'+(isVisible ? '' : ' active');
+        showValBtn.title = el.forceShowLabel ? 'Value shown despite Labels being off — click to hide it again' : 'Show just this measurement\'s value even though Labels are off';
+        showValBtn.innerHTML = isVisible
+          ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+          : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+        showValBtn.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          pushUndo();
+          el.forceShowLabel = !el.forceShowLabel;
+          renderElementsList();
+          drawOverlay();
+        });
+        labelRow.appendChild(showValBtn);
+      }
     }
     details.appendChild(labelRow);
 
@@ -11263,6 +11342,7 @@ const FURNITURE_HEIGHT_FT_3D = {
   firepit_round:1.0, firepit_square:1.0,
   swing_egg:6.6, swing_double:6.7, swing_bench2:6.6, swing_bench3:7.1, swing_hammock:5.7,
   recliner:1.6,
+  pool_umbrella:8.6,
 };
 const HEIGHT_OVERRIDES_FT_3D = { table_coffee:1.5, table_side:2.3 };
 function furnitureHeightFt3D(presetKey, icon){
@@ -11502,6 +11582,7 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(preset.icon==='island') return build3DKitchenIslandMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='firepit_round' || preset.icon==='firepit_square') return build3DFirepitMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='swing_egg' || preset.icon==='swing_double' || preset.icon==='swing_bench2' || preset.icon==='swing_bench3' || preset.icon==='swing_hammock') return build3DSwingMesh(el, preset, baseColor, heightFt, pos);
+  if(preset.icon==='pool_umbrella') return build3DPoolUmbrellaMesh(el, baseColor, heightFt, pos);
   // Generic fallback for anything else with an icon but no dedicated 3D
   // builder (e.g. a round fire pit, the hanging egg swing) -- same
   // rect-vs-circle branch build3DAreaMesh already uses, so a circle-shape
@@ -12222,6 +12303,78 @@ function build3DSwingMesh(el, preset, baseColor, heightFt, pos){
       group.add(chain);
     });
   }
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// A real poolside umbrella almost never has its pole straight through the
+// canopy's own center -- it's a CANTILEVER: an offset mast just outside the
+// shaded footprint, topped with an angled arm that reaches up and over to
+// hold the canopy from below its center, exactly so the pole never sits in
+// the middle of the loungers it's shading. The canopy's own 8-sided cone
+// (ConeGeometry's flat panel faces, the same "let real geometry read as
+// ribbing instead of a fake texture" trick the car's wheel rim already
+// uses) is what the user actually places/resizes on the plan (el.dFt is
+// its diameter); the mast/arm/base are offset from that circle's center,
+// in the SAME single vertical plane (arm tilt is a plain rotation.x, the
+// recliner backrest's own "rotate first, then position the center at
+// hinge + half-length projected through the same angle" trick), so the
+// whole assembly rotates as one rigid piece with el.rotationDeg -- pointing
+// the arm/base wherever the pool's actual clearance needs it to go.
+function build3DPoolUmbrellaMesh(el, baseColor, heightFt, pos){
+  const group = new THREE.Group();
+  const rFt = el.dFt/2;
+  const frameMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#2E3136'), roughness:0.5, metalness:0.4});
+  const canopyMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.75, side:THREE.DoubleSide});
+
+  // Canopy: a shallow 8-panel cone, apex up, its rim (widest point) at the
+  // umbrella's clearance height -- plus a short skirt "valance" hanging
+  // from the rim, the scalloped hem every real market/cantilever umbrella
+  // canopy has.
+  const canopyUnderY = heightFt;
+  const canopyRiseFt = rFt*0.22;
+  const canopy = new THREE.Mesh(new THREE.ConeGeometry(rFt, canopyRiseFt, 8), canopyMat);
+  canopy.position.set(0, canopyUnderY+canopyRiseFt/2, 0);
+  group.add(canopy);
+  const valanceHFt = Math.max(0.15, canopyRiseFt*0.5);
+  const valance = new THREE.Mesh(new THREE.CylinderGeometry(rFt, rFt*0.92, valanceHFt, 8, 1, true), canopyMat);
+  valance.position.set(0, canopyUnderY-valanceHFt/2, 0);
+  group.add(valance);
+  const finial = new THREE.Mesh(new THREE.ConeGeometry(rFt*0.025, rFt*0.12, 8), frameMat);
+  finial.position.set(0, canopyUnderY+canopyRiseFt+rFt*0.06, 0);
+  group.add(finial);
+
+  // Hub: where the ribs/arm meet under the canopy's own center.
+  const hubRFt = Math.max(0.18, Math.min(0.35, rFt*0.06));
+  const hub = new THREE.Mesh(new THREE.SphereGeometry(hubRFt, 12, 8), frameMat);
+  hub.position.set(0, canopyUnderY, 0);
+  group.add(hub);
+
+  // Mast + angled arm, offset just outside the canopy's own edge -- never
+  // under the shade it's casting. Both mast and arm sit in the same X=0
+  // vertical plane, so the arm only ever needs a simple rotation.x tilt.
+  const mastOffsetFt = rFt+1.0;
+  const mastHFt = canopyUnderY*0.55;
+  const poleR = 0.09, armR = 0.07;
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(poleR, poleR, mastHFt, 12), frameMat);
+  mast.position.set(0, mastHFt/2, mastOffsetFt);
+  group.add(mast);
+  const armLenFt = Math.hypot(mastOffsetFt, canopyUnderY-mastHFt);
+  const armAngleRad = Math.atan2(mastOffsetFt, canopyUnderY-mastHFt);
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(armR, armR, armLenFt, 8), frameMat);
+  arm.rotation.x = armAngleRad;
+  arm.position.set(0, mastHFt+(armLenFt/2)*Math.cos(armAngleRad), mastOffsetFt-(armLenFt/2)*Math.sin(armAngleRad));
+  group.add(arm);
+
+  // Weighted round base plate -- a real cantilever needs real ballast
+  // directly under the mast, since (unlike a center-pole umbrella) nothing
+  // is holding the canopy up from underneath it.
+  const baseRFt = Math.min(1.3, Math.max(0.9, rFt*0.28));
+  const baseHFt = 0.15;
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(baseRFt, baseRFt, baseHFt, 20), frameMat);
+  base.position.set(0, baseHFt/2, mastOffsetFt);
+  group.add(base);
+
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
