@@ -4741,7 +4741,7 @@ function hitTest(el,px,py){
     // arrowheads. That makes it the single most obvious thing to click, but
     // until now clicking it didn't select anything: only the thin line
     // itself was hit-tested. Clicking the label now selects its element too.
-    if(state.showLabels && !el.hideLabel){
+    if(labelVisible(el)){
       const b = labelChipBounds(ctxOverlay, el);
       if(px>=b.x-b.w/2 && px<=b.x+b.w/2 && py>=b.y-b.h/2 && py<=b.y+b.h/2) return true;
     }
@@ -8010,8 +8010,18 @@ function labelHandlePos(ctx, el){
   const s = 1/Math.max(state.zoom, 0.01);
   return {x: b.x+b.w/2+5*s, y: b.y-b.h/2-5*s};
 }
+// Whether el's own label chip should currently be visible, folding together
+// the global Labels toggle with this element's own per-item override.
+// hideLabel only ever matters while Labels are globally ON (hide just this
+// one out of the crowd); forceShowLabel only ever matters while Labels are
+// globally OFF (call out just this one anyway). Exactly one of the two
+// flags is ever "in control" at a time, whichever the global toggle isn't
+// already doing.
+function labelVisible(el){
+  return state.showLabels ? !el.hideLabel : !!el.forceShowLabel;
+}
 function hitTestLabelHandle(ctx, el, px, py){
-  if(!state.showLabels || el.hideLabel) return false;
+  if(!labelVisible(el)) return false;
   const hp = labelHandlePos(ctx, el);
   const thresh = 9/Math.max(state.zoom, 0.01);
   return Math.hypot(px-hp.x, py-hp.y) <= thresh;
@@ -8032,7 +8042,7 @@ function hitTestWallEndpoint(el, px, py){
 // else selected would float with no clue which item it belongs to. When
 // selected, also draws the small grip handle used to drag the label.
 function drawElementLabel(ctx, el, color, selected){
-  if(!state.showLabels || el.hideLabel) return;
+  if(!labelVisible(el)) return;
   const anchor = elementLabelAnchor(el);
   const pos = elementLabelPos(el);
   if((el.labelDx||0) || (el.labelDy||0)){
@@ -9649,16 +9659,24 @@ function renderElementsList(){
     });
     labelRow.appendChild(labelEl);
     if(!el.isDimension){
+      // Same button slot either way, but which flag it drives -- and what
+      // "currently on" means -- flips with the global toggle: hideLabel
+      // while Labels are globally on (hide just this one), forceShowLabel
+      // while they're off (call this one out anyway). See labelVisible.
       const hideBtn = document.createElement('button');
-      hideBtn.className = 'icnbtn'+(el.hideLabel ? ' active' : '');
-      hideBtn.title = el.hideLabel ? 'Label hidden on the plan — click to show it again' : 'Hide just this item\'s label on the plan';
-      hideBtn.innerHTML = el.hideLabel
-        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>'
-        : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>';
+      const isVisible = labelVisible(el);
+      hideBtn.className = 'icnbtn'+(isVisible ? '' : ' active');
+      hideBtn.title = state.showLabels
+        ? (el.hideLabel ? 'Label hidden on the plan — click to show it again' : 'Hide just this item\'s label on the plan')
+        : (el.forceShowLabel ? 'Label shown despite Labels being off — click to hide it again' : 'Show just this item\'s label even though Labels are off');
+      hideBtn.innerHTML = isVisible
+        ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>'
+        : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
       hideBtn.addEventListener('click', (e)=>{
         e.stopPropagation();
         pushUndo();
-        el.hideLabel = !el.hideLabel;
+        if(state.showLabels) el.hideLabel = !el.hideLabel;
+        else el.forceShowLabel = !el.forceShowLabel;
         renderElementsList();
         drawOverlay();
       });
