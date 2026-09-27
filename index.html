@@ -3507,6 +3507,7 @@ function updateAddFieldsForType(){
     openingSwingFieldWrap.style.display = preset.doorType==='hinged' ? 'flex' : 'none';
     updateOpeningHostHint();
   }
+  const isShelfRun = typeSelect.value==='open_shelf';
   costFieldWrap.style.display = isDimension ? 'none' : 'block';
   startDrawBtn.textContent = isDimension ? 'Start measuring on plan' : (preset.isWall ? 'Start tracing walls' : (isFence ? 'Start drawing on plan' : 'Trace freeform outline'));
   pathHint.textContent = isDimension
@@ -3515,7 +3516,9 @@ function updateAddFieldsForType(){
       ? 'Tap each corner of the wall run in order (start with the outer envelope, then internal walls) — each tap snaps to existing corners, wall ends and 45° angles. Every tap after the first instantly becomes its own wall segment at this thickness/height, so joins between them line up exactly. Tap Finish (or double-tap the last point) when done.'
       : (isFence
         ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
-        : 'For an irregular '+preset.label.toLowerCase()+' — not just a rectangle — tap "Trace freeform outline", then tap each corner (it closes automatically, needs at least 3 points). Renders with a realistic, to-scale '+preset.label.toLowerCase()+' texture either way.');
+        : isShelfRun
+          ? 'Tap "Trace freeform outline", then tap a point at each corner of the shelf run — 2 points for a single straight run, 3 for an L along two walls, 4 for a U. Each straight stretch becomes its own shelf unit at a realistic depth, so a corner comes out as two real butted units meeting there, not one bent one. Tap Finish (or double-tap the last point) when done.'
+          : 'For an irregular '+preset.label.toLowerCase()+' — not just a rectangle — tap "Trace freeform outline", then tap each corner (it closes automatically, needs at least 3 points). Renders with a realistic, to-scale '+preset.label.toLowerCase()+' texture either way.');
   costUnitLabel.textContent = isFence ? '$ / '+state.unit : '$ / sq '+state.unit;
   // Jobs like a pool or a roof are usually quoted as one flat number, not
   // $/area -- default the toggle accordingly, but it's still just a toggle,
@@ -4052,10 +4055,16 @@ startDrawBtn.addEventListener('click', ()=>{
   if(state.calibrating) cancelCalibration();
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
+  // Real open shelving is sold and installed as separate straight runs, not
+  // one continuously bent unit -- so it's traced as an open polyline (like a
+  // fence/wall) rather than an auto-closed area, and finishDrawing below
+  // splits it into one ordinary rect element per straight segment instead of
+  // a single bent polygon shape.
+  const isShelfRun = typeSelect.value==='open_shelf';
   const isDimension = typeSelect.value==='dimension';
   const typedLabel = labelInput.value.trim();
   state.drawing = {
-    shape: isFence ? 'path' : 'polygon',
+    shape: (isFence || isShelfRun) ? 'path' : 'polygon',
     presetKey: typeSelect.value,
     isDimension,
     label: typedLabel || uniqueLabel(preset.label),
@@ -4131,6 +4140,44 @@ function finishDrawing(){
         wallType: state.drawing.wallType,
         thicknessFt: state.drawing.thicknessFt,
         wallHeightFt: state.drawing.wallHeightFt,
+        _bornAt: performance.now(),
+      };
+      state.elements.push(el);
+    }
+  } else if(state.drawing.presetKey==='open_shelf'){
+    // Real open shelving is sold and installed as separate straight runs
+    // butted together at a corner, not one continuously bent unit -- so
+    // (matching the wall decomposition just above) each tap-to-tap segment
+    // becomes its own ORDINARY rect open_shelf element, sized to that
+    // segment's length and rotated to match its angle, at the preset's own
+    // real-world depth. This reuses the entire existing rect-furniture
+    // pipeline (2D icon, 3D mesh, sidebar controls, save/load) with no new
+    // code, and lets each run be independently edited afterwards, exactly
+    // like two separately-placed units would be.
+    const preset = PRESETS[state.drawing.presetKey];
+    const depthFt = preset.hIn/12;
+    for(let i=0;i<pts.length-1;i++){
+      const p1=pts[i], p2=pts[i+1];
+      const dx=p2.x-p1.x, dy=p2.y-p1.y;
+      const lenFt = Math.hypot(dx,dy)/(state.scalePxPerFt||40);
+      el = {
+        id: state.nextId++,
+        page: state.currentPage,
+        shape: 'rect',
+        presetKey: state.drawing.presetKey,
+        isDimension: false,
+        label: uniqueLabel(state.drawing.label),
+        color: state.drawing.color,
+        isCutout: false,
+        parentId: null,
+        unitCost: state.drawing.unitCost || 0,
+        priceMode: state.drawing.priceMode || 'rate',
+        fixedCost: state.drawing.fixedCost || 0,
+        xPx: (p1.x+p2.x)/2,
+        yPx: (p1.y+p2.y)/2,
+        wFt: lenFt,
+        hFt: depthFt,
+        rotationDeg: ((Math.atan2(dy,dx)*180/Math.PI)%360+360)%360,
         _bornAt: performance.now(),
       };
       state.elements.push(el);
@@ -5568,11 +5615,11 @@ function roundRectPath(ctx,x,y,w,h,r){
 // tinted rectangle -- matches how real floor-plan/CAD symbols read at a
 // glance. baseColor is the element's own (user-editable) color; everything
 // else is shaded relative to it so a recolored bed still looks like a bed.
-function drawFurnitureIcon(ctx, icon, bounds, baseColor){
+function drawFurnitureIcon(ctx, icon, bounds, baseColor, opts){
   const x=bounds.minX, y=bounds.minY, w=bounds.maxX-bounds.minX, h=bounds.maxY-bounds.minY;
   const short = Math.min(w,h);
   if(state.blackMode){
-    drawFurnitureIconBW(ctx, icon, x, y, w, h, short);
+    drawFurnitureIconBW(ctx, icon, x, y, w, h, short, opts);
     return;
   }
   ctx.save();
@@ -5839,15 +5886,20 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
     ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1.4;
     roundRectPath(ctx,x,y,w,h,short*0.06); ctx.stroke();
   } else if(icon==='wardrobe'){
-    // Two paneled doors, each shaded so it catches light unevenly (like real
-    // wood/laminate), with a handle bar on each door near the meeting edge
-    // instead of a pair of plain dots.
+    // Two paneled doors (or one, when opts.doorCount===1), each shaded so it
+    // catches light unevenly (like real wood/laminate), with either a
+    // handle bar near the meeting edge (default) or a round knob
+    // (opts.handleStyle==='knob') -- both purely a hardware-style choice
+    // set per-element from the sidebar, see appendWardrobeStyleControl.
     roundRectPath(ctx,x,y,w,h,short*0.06);
     ctx.fillStyle = shadeColor(baseColor,-0.15);
     ctx.fill();
     const pad = Math.max(1.5, short*0.04);
-    const doorW = (w-pad*3)/2;
-    [x+pad, x+pad*2+doorW].forEach((dx,i)=>{
+    const oneDoor = !!(opts && opts.doorCount===1);
+    const doorW = oneDoor ? (w-pad*2) : (w-pad*3)/2;
+    const doorXs = oneDoor ? [x+pad] : [x+pad, x+pad*2+doorW];
+    const round = !!(opts && opts.handleStyle==='knob');
+    doorXs.forEach((dx,i)=>{
       roundRectPath(ctx, dx, y+pad, doorW, h-pad*2, short*0.03);
       const dg = ctx.createLinearGradient(dx,0,dx+doorW,0);
       dg.addColorStop(0, shadeColor(baseColor, i===0?0.04:0.22));
@@ -5858,10 +5910,16 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
       roundRectPath(ctx, dx, y+pad, doorW, h-pad*2, short*0.03); ctx.stroke();
     });
     ctx.strokeStyle = shadeColor(baseColor,-0.6);
+    ctx.fillStyle = shadeColor(baseColor,-0.6);
     ctx.lineWidth = Math.max(1.3, short*0.022); ctx.lineCap='round';
     const midX = x+w/2;
-    [midX-w*0.045, midX+w*0.045].forEach(hx=>{
-      ctx.beginPath(); ctx.moveTo(hx, y+h*0.42); ctx.lineTo(hx, y+h*0.58); ctx.stroke();
+    const handleXs = oneDoor ? [x+pad+doorW-w*0.06] : [midX-w*0.045, midX+w*0.045];
+    handleXs.forEach(hx=>{
+      if(round){
+        ctx.beginPath(); ctx.arc(hx, y+h*0.5, Math.max(1.5,short*0.025), 0, Math.PI*2); ctx.fill();
+      } else {
+        ctx.beginPath(); ctx.moveTo(hx, y+h*0.42); ctx.lineTo(hx, y+h*0.58); ctx.stroke();
+      }
     });
     ctx.strokeStyle = shadeColor(baseColor,-0.4); ctx.lineWidth=1.4;
     roundRectPath(ctx,x,y,w,h,short*0.06); ctx.stroke();
@@ -6092,7 +6150,7 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor){
 // (Real architectural furniture symbols -- a toilet's tank+bowl outline, a
 // GPO's slot marks -- are already conventionally drawn exactly this way, so
 // several of these translate almost directly.)
-function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
+function drawFurnitureIconBW(ctx, icon, x, y, w, h, short, opts){
   ctx.save();
   if(icon==='bed'){
     roundRectPath(ctx,x,y,w,h,short*0.07);
@@ -6213,15 +6271,23 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short){
       }
     } else {
       const pad = Math.max(1.5, short*0.04);
-      const doorW = (w-pad*3)/2;
-      [x+pad, x+pad*2+doorW].forEach(dx=>{
+      const oneDoor = !!(opts && opts.doorCount===1);
+      const doorW = oneDoor ? (w-pad*2) : (w-pad*3)/2;
+      const doorXs = oneDoor ? [x+pad] : [x+pad, x+pad*2+doorW];
+      const round = !!(opts && opts.handleStyle==='knob');
+      doorXs.forEach(dx=>{
         roundRectPath(ctx,dx,y+pad,doorW,h-pad*2,short*0.03);
         ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
       });
       ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1,short*0.01); ctx.lineCap='round';
       const midX = x+w/2;
-      [midX-w*0.045, midX+w*0.045].forEach(hx=>{
-        ctx.beginPath(); ctx.moveTo(hx,y+h*0.42); ctx.lineTo(hx,y+h*0.58); ctx.stroke();
+      const handleXs = oneDoor ? [x+pad+doorW-w*0.06] : [midX-w*0.045, midX+w*0.045];
+      handleXs.forEach(hx=>{
+        if(round){
+          ctx.beginPath(); ctx.arc(hx, y+h*0.5, Math.max(1,short*0.02), 0, Math.PI*2); ctx.stroke();
+        } else {
+          ctx.beginPath(); ctx.moveTo(hx,y+h*0.42); ctx.lineTo(hx,y+h*0.58); ctx.stroke();
+        }
       });
     }
   } else if(icon==='open_shelf'){
@@ -7540,14 +7606,14 @@ function applyEdgeShading(ctx, bounds){
 // getTilePattern's 'paver'/'floortile' branches -- every other texture
 // ignores it, and omitting it keeps the original fixed 1ft-per-tile default
 // for every existing call site and every already-saved plan.
-function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerFt, tileSizeFt){
+function fillMaterial(ctx, presetKey, bounds, overrideColor, overrideScalePxPerFt, tileSizeFt, furnitureOpts){
   const preset = PRESETS[presetKey];
   const texture = preset ? preset.texture : null;
   const baseColor = overrideColor || (preset ? preset.color : '#B5934C');
   const fallbackColor = baseColor+'CC';
   const scalePxPerFt = overrideScalePxPerFt || state.scalePxPerFt || 40;
   if(preset && preset.icon){
-    drawFurnitureIcon(ctx, preset.icon, bounds, baseColor);
+    drawFurnitureIcon(ctx, preset.icon, bounds, baseColor, furnitureOpts);
     return;
   }
   if(texture==='wood' || texture==='paver' || texture==='concrete' || texture==='concrete_plain' || texture==='gravel' || texture==='tile' || texture==='metal' || texture==='shingle' || texture==='stone' || texture==='floortile' || texture==='carpet'){
@@ -7902,7 +7968,7 @@ function drawElement(ctx, el, selected){
         ctx.fill();
       }
     } else {
-      fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color, undefined, el.tileSizeFt);
+      fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color, undefined, el.tileSizeFt, {doorCount:el.doorCount, handleStyle:el.handleStyle});
       ctx.beginPath();
       ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
       applyEdgeShading(ctx, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2});
@@ -9206,7 +9272,19 @@ function drawPolygonElement(ctx, el, selected){
   ctx.moveTo(el.points[0].x, el.points[0].y);
   for(let i=1;i<el.points.length;i++) ctx.lineTo(el.points[i].x, el.points[i].y);
   ctx.closePath();
+  // A furniture-icon preset (preset.icon set) doesn't fill the current path
+  // at all -- fillMaterial hands off to drawFurnitureIcon, which draws its
+  // OWN rounded-rect shape sized to the polygon's bounding box, ignoring the
+  // real traced outline entirely. For an irregular trace (an L-shaped area,
+  // say) that painted the full bounding rectangle over the plan -- a "big
+  // block" instead of the actual traced shape. Clipping to the already-set
+  // polygon path constrains it to the real outline; harmless for every
+  // texture-pattern branch (grass/tile/etc), which already fills within
+  // this same path itself.
+  ctx.save();
+  ctx.clip();
   fillMaterial(ctx, el.presetKey, polygonBounds(el.points), el.color, undefined, el.tileSizeFt);
+  ctx.restore();
   // Re-establish the polygon path -- fillMaterial's texture branches (grass
   // stripes, mulch plants, ...) reset the current path with their own
   // sub-drawing, so it can't be relied on to still be the polygon outline.
@@ -9857,6 +9935,30 @@ function renderElementsList(){
         dims.appendChild(parentSel);
       }
     }
+    // Door count and handle style are both purely cosmetic/hardware choices
+    // on the SAME wardrobe piece, not different furniture -- shown as
+    // post-placement editable options the same way post height and tile
+    // size already are, instead of doubling the Type dropdown with every
+    // door-count/handle combination. Unset el.doorCount/el.handleStyle
+    // default to the original look (2 doors, bar handles).
+    function appendWardrobeStyleControl(dims, el){
+      if(el.presetKey!=='wardrobe') return;
+      const doorSel = document.createElement('select');
+      doorSel.title = 'How many hinged doors this wardrobe has';
+      [['2','2 doors'],['1','1 door']].forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; doorSel.appendChild(o); });
+      doorSel.value = el.doorCount===1 ? '1' : '2';
+      doorSel.addEventListener('click', e=>e.stopPropagation());
+      doorSel.addEventListener('change', ()=>{ pushUndo(); el.doorCount = doorSel.value==='1' ? 1 : 2; drawOverlay(); });
+      dims.appendChild(doorSel);
+
+      const handleSel = document.createElement('select');
+      handleSel.title = 'Door handle style';
+      [['bar','Bar handles'],['knob','Round knobs']].forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; handleSel.appendChild(o); });
+      handleSel.value = el.handleStyle==='knob' ? 'knob' : 'bar';
+      handleSel.addEventListener('click', e=>e.stopPropagation());
+      handleSel.addEventListener('change', ()=>{ pushUndo(); el.handleStyle = handleSel.value==='knob' ? 'knob' : 'bar'; drawOverlay(); });
+      dims.appendChild(handleSel);
+    }
     // A post's own height was hardcoded to WALL_HEIGHT_FT_3D with no way
     // to change it at all -- unlike a wall or fence, which already have
     // their own editable height field. Shown for either pillar preset
@@ -10146,6 +10248,7 @@ function renderElementsList(){
       appendMaterialControl(dims, el);
       appendCutoutControls(dims, el);
       appendPostHeightControl(dims, el);
+      appendWardrobeStyleControl(dims, el);
     } else if(el.shape==='circle'){
       const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
       dIn.value = formatNum(fromFt(el.dFt,state.unit));
@@ -12110,22 +12213,42 @@ function build3DWardrobeMesh(el, baseColor, heightFt, pos){
   carcass.position.set(0, heightFt/2, 0);
   group.add(carcass);
   const padFt = 0.05;
-  const doorWFt = (el.wFt-padFt*3)/2;
   const doorThickFt = 0.04;
   const doorMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.08)), roughness:0.6});
   const handleMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.6)), roughness:0.3, metalness:0.5});
-  [-1, 1].forEach(side=>{
-    const doorCx = side*(padFt/2+doorWFt/2);
-    const door = new THREE.Mesh(new THREE.BoxGeometry(doorWFt, heightFt-padFt*2, doorThickFt), doorMat);
-    door.position.set(doorCx, heightFt/2, el.hFt/2+doorThickFt/2);
-    group.add(door);
-    const handleCx = side*(el.wFt*0.045);
-    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8), handleMat);
-    handle.rotation.x = Math.PI/2;
+  // Round knobs (el.handleStyle==='knob') vs the original bar handle
+  // (default, unset==='bar') -- purely a hardware-style choice on the same
+  // door, so it's a small per-element toggle (see appendWardrobeStyleControl)
+  // rather than a separate preset. Same true for door count below.
+  const round = el.handleStyle==='knob';
+  const addHandle = (handleCx)=>{
+    const handle = round
+      ? new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), handleMat)
+      : new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8), handleMat);
+    if(!round) handle.rotation.x = Math.PI/2;
     handle.position.set(handleCx, heightFt/2, el.hFt/2+doorThickFt+0.03);
     handle.castShadow = false; // thin hardware -- the door panel behind it already grounds this piece
     group.add(handle);
-  });
+  };
+  if(el.doorCount===1){
+    const doorWFt = el.wFt-padFt*2;
+    const door = new THREE.Mesh(new THREE.BoxGeometry(doorWFt, heightFt-padFt*2, doorThickFt), doorMat);
+    door.position.set(0, heightFt/2, el.hFt/2+doorThickFt/2);
+    group.add(door);
+    // No modelled hinge side for a single door -- handle sits near one
+    // outer edge (the usual "free edge" position), same inset convention
+    // as the sill/backset offsets used elsewhere in this file.
+    addHandle(doorWFt/2-el.wFt*0.06);
+  } else {
+    const doorWFt = (el.wFt-padFt*3)/2;
+    [-1, 1].forEach(side=>{
+      const doorCx = side*(padFt/2+doorWFt/2);
+      const door = new THREE.Mesh(new THREE.BoxGeometry(doorWFt, heightFt-padFt*2, doorThickFt), doorMat);
+      door.position.set(doorCx, heightFt/2, el.hFt/2+doorThickFt/2);
+      group.add(door);
+      addHandle(side*(el.wFt*0.045));
+    });
+  }
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
@@ -14339,6 +14462,31 @@ function isPositionIndoors3D(worldX, worldZ){
     (el.isRoom || ROOF_PRESETS_3D.has(el.presetKey)) && hitTest(el, px, py)
   );
 }
+// isPositionIndoors3D above is a real polygon hit-test against every room
+// and roof on the page -- correct, but wasteful to repeat 60 times a
+// second in the walk-mode render loop when the player hasn't moved far
+// enough for the answer to possibly have changed, including the common
+// case of just standing still, where it would otherwise re-test the exact
+// same point forever for no reason, competing with the render itself for
+// every frame's CPU budget. Only signals a recheck once the player has
+// moved a real distance since the last one -- an indoor/outdoor transition
+// only happens at a wall/doorway boundary, so catching it within half a
+// foot is imperceptible, unlike the CPU cost of testing it 60x/sec
+// regardless. Pulled out as its own function (rather than left inline in
+// the render loop) so the throttle decision itself can be unit-tested
+// directly, since the render loop closure it's called from isn't callable
+// without a full WebGL context.
+function shouldRecheckIndoors3D(walkX, walkZ){
+  const first = state3d.lastIndoorCheckX==null;
+  const dx = walkX-(first?walkX:state3d.lastIndoorCheckX);
+  const dz = walkZ-(first?walkZ:state3d.lastIndoorCheckZ);
+  if(first || dx*dx+dz*dz > 0.25){
+    state3d.lastIndoorCheckX = walkX;
+    state3d.lastIndoorCheckZ = walkZ;
+    return true;
+  }
+  return false;
+}
 function init3DScene(){
   if(state3d.renderer) teardown3DScene(); // never build a second scene/loop on top of a still-running one
   const canvas = preview3dCanvas;
@@ -14471,15 +14619,17 @@ function init3DScene(){
     if(state3d.mode==='walk'){
       updateWalkMovement(dt);
       updateWalkCamera3D();
-      // Only touch the scene when the indoor/outdoor state actually flips
-      // -- not a fresh THREE.Color (and fog colour) every single frame for
-      // no reason.
-      const indoors = isPositionIndoors3D(state3d.walk.x, state3d.walk.z);
-      if(indoors !== state3d.indoorsLast){
-        state3d.indoorsLast = indoors;
-        const sky = indoors ? SKY_COLOR_3D_INDOOR : SKY_COLOR_3D_OUTDOOR;
-        scene.background = new THREE.Color(sky);
-        if(scene.fog) scene.fog.color = new THREE.Color(sky);
+      if(shouldRecheckIndoors3D(state3d.walk.x, state3d.walk.z)){
+        // Only touch the scene when the indoor/outdoor state actually flips
+        // -- not a fresh THREE.Color (and fog colour) every single check
+        // for no reason.
+        const indoors = isPositionIndoors3D(state3d.walk.x, state3d.walk.z);
+        if(indoors !== state3d.indoorsLast){
+          state3d.indoorsLast = indoors;
+          const sky = indoors ? SKY_COLOR_3D_INDOOR : SKY_COLOR_3D_OUTDOOR;
+          scene.background = new THREE.Color(sky);
+          if(scene.fog) scene.fog.color = new THREE.Color(sky);
+        }
       }
     }
     renderer.render(scene, camera);
