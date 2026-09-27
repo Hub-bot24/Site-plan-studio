@@ -1244,6 +1244,10 @@ PRESETS.door_stacker = {label:'Door — Stacker (multi-panel)', color:OPENING_CO
 // slider is a normal-width solid internal door, same size class as a
 // hinged door, just a different opening mechanism).
 PRESETS.door_cavity = {label:'Door — Cavity slider (slides into wall)', color:OPENING_COLOR_DOOR, texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'cavity', widthM:0.82, heightM:2.04};
+// A sectional/roll-up garage door -- solid opaque panel sections that lift
+// up into the ceiling, never a swing or a sideways slide, and a standard
+// single-car width well beyond any of the doors above.
+PRESETS.door_garage = {label:'Door — Garage (sectional)', color:'#EDEAE0', texture:null, quick:'opening', isOpening:true, openingKind:'door', doorType:'garage', widthM:2.4, heightM:2.1};
 PRESETS.window_standard = {label:'Window', color:OPENING_COLOR_WINDOW, texture:null, quick:'opening', isOpening:true, openingKind:'window', widthM:1.2, heightM:1.2, sillM:0.9};
 PRESETS.opening_large = {label:'Large opening (no door/window fitted)', color:OPENING_COLOR_WINDOW, texture:null, quick:'opening', isOpening:true, openingKind:'opening', widthM:3.0, heightM:2.1};
 
@@ -3315,7 +3319,7 @@ function updateUnitLabels(){
 /* ============================ Type select population ============================ */
 const TYPE_GROUPS = [
   {label:'Walls (trace mode)', keys:['wall_interior','wall_exterior']},
-  {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','door_cavity','window_standard','opening_large']},
+  {label:'Doors & Windows (attach to a wall)', keys:['door_hinged','door_sliding','door_stacker','door_cavity','door_garage','window_standard','opening_large']},
   {label:'Site & landscaping', keys:['deck','patio','concrete','driveway','gravel','lawn','turf','gardenbed','hedge','pool','tree','patio_post','patio_post_square','custom']},
   {label:'Car', keys:['car_hatch_small','car_sedan_medium','car_sedan_large','car_suv_small','car_suv_medium','car_suv_large','car_ute_dualcab','car_ute_dualcab_lg','car_ute_singlecab','car_van','car_custom']},
   {label:'Fire pit', keys:['firepit_round_900','firepit_round_1200','firepit_square_900','firepit_rect_1200x700','firepit_custom']},
@@ -3432,6 +3436,14 @@ document.addEventListener('keydown', (e)=>{
   if(e.key==='Escape' && typeGalleryOverlay.classList.contains('visible')) closeTypeGallery();
 });
 
+// Tracks whatever updateAddFieldsForType itself last wrote into labelInput,
+// so a later type change can tell "the field still holds exactly what auto-
+// fill put there, safe to replace" apart from "the user actually typed
+// something" -- both look like a plain non-empty string otherwise, which is
+// why switching from e.g. Toilet to Wardrobe used to leave the stale
+// "Toilet" label sitting there: the old check only ever auto-filled an
+// EMPTY field, so the very first preset's name stuck around forever after.
+let lastAutoFilledLabel = '';
 function updateAddFieldsForType(){
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
@@ -3443,7 +3455,7 @@ function updateAddFieldsForType(){
   if(preset.wIn!=null){
     widthInput.value = formatNum(fromFt(preset.wIn/12, state.unit));
     heightInput.value = formatNum(fromFt(preset.hIn/12, state.unit));
-    if(!labelInput.value.trim()) labelInput.value = preset.name;
+    if(!labelInput.value.trim() || labelInput.value===lastAutoFilledLabel){ labelInput.value = preset.name; lastAutoFilledLabel = preset.name; }
   } else if(preset.wM!=null){
     // Same idea, for presets specified in metres (vehicles, fixed-size fire
     // pits) instead of inches -- toFt(_,'m') reuses the app's own m->ft
@@ -3451,13 +3463,13 @@ function updateAddFieldsForType(){
     // toggle would produce for that metric size.
     widthInput.value = formatNum(fromFt(toFt(preset.wM,'m'), state.unit));
     heightInput.value = formatNum(fromFt(toFt(preset.hM,'m'), state.unit));
-    if(!labelInput.value.trim()) labelInput.value = preset.name;
+    if(!labelInput.value.trim() || labelInput.value===lastAutoFilledLabel){ labelInput.value = preset.name; lastAutoFilledLabel = preset.name; }
   }
   if(preset.dM!=null){
     diameterInput.value = formatNum(fromFt(toFt(preset.dM,'m'), state.unit));
   } else if(preset.dIn!=null){
     diameterInput.value = formatNum(fromFt(preset.dIn/12, state.unit));
-    if(!labelInput.value.trim()) labelInput.value = preset.name;
+    if(!labelInput.value.trim() || labelInput.value===lastAutoFilledLabel){ labelInput.value = preset.name; lastAutoFilledLabel = preset.name; }
   }
   colorInput.value = preset.color;
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
@@ -8788,6 +8800,25 @@ function drawOpeningSymbol(ctx, o, a, b, nx, ny, half){
     ctx.lineTo(a.x-alx*width*0.8, a.y-aly*width*0.8);
     ctx.stroke();
     ctx.setLineDash([]);
+  } else if(o.openingKind==='door' && o.doorType==='garage'){
+    // A sectional garage door doesn't swing or slide sideways in plan --
+    // it's a solid vertical plane spanning the whole opening, shown as one
+    // bar along the wall's own centreline (distinct from sliding's offset
+    // overlapping lines) with a few short cross-ticks suggesting its own
+    // horizontal panel sections.
+    const width = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+    const alx = (b.x-a.x)/width, aly = (b.y-a.y)/width;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    const tickHalf = half*0.5;
+    [0.25, 0.5, 0.75].forEach(t=>{
+      const px = a.x+alx*width*t, py = a.y+aly*width*t;
+      ctx.beginPath();
+      ctx.moveTo(px+nx*tickHalf, py+ny*tickHalf);
+      ctx.lineTo(px-nx*tickHalf, py-ny*tickHalf);
+      ctx.stroke();
+    });
   }
   ctx.restore();
 }
@@ -11932,31 +11963,106 @@ function build3DToiletMesh(el, baseColor, pos){
 // fractions); frame/mattress/headboard/pillow HEIGHTS have no 2D equivalent
 // (a top-down icon carries no vertical information) and are reasonable
 // real-world estimates instead.
+// A bed used to be frame+mattress+headboard+2 flat pillows -- 6 plain
+// boxes, sitting flush on the floor with no bedding at all, and baseColor
+// only ever tinted the mattress (a barely-visible pale edge peeking past
+// the covers on a real bed) rather than the ONE surface a "bed colour"
+// choice actually means: the duvet. Real geometry throughout (a folded-
+// back duvet edge, a revealed sheet strip, a padded headboard panel, a
+// decorative bolster) -- the same "let real shapes read as detail instead
+// of a flat texture" approach every other builder in this file already
+// uses -- not a texture painted onto the same plain boxes.
 function build3DBedMesh(el, baseColor, heightFt, pos){
   const group = new THREE.Group();
+  const wFt = el.wFt, dFt = el.hFt;
+
+  // Real bed frames stand clear of the floor on short feet, not flush
+  // against it -- everything above (frame, mattress, bedding) shifts up by
+  // legHFt. The headboard alone keeps its own base at the floor, the way a
+  // real headboard (its own separate legs, or a wall mount) actually does.
+  const legHFt = 0.3;
+  const legMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.55)), roughness:0.6});
+  const legInsetFt = Math.min(0.22, wFt*0.06, dFt*0.06);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx,sz])=>{
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, legHFt, 0.1), legMat);
+    leg.position.set(sx*(wFt/2-legInsetFt), legHFt/2, sz*(dFt/2-legInsetFt));
+    leg.castShadow = false; // small hardware -- the frame above already grounds the bed with a real shadow
+    group.add(leg);
+  });
+
   const frameHFt = heightFt*0.4;
-  const frameMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.2)), roughness:0.8});
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, frameHFt, el.hFt), frameMat);
-  frame.position.set(0, frameHFt/2, 0);
+  const frameMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.35)), roughness:0.7});
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(wFt, frameHFt, dFt), frameMat);
+  frame.position.set(0, legHFt+frameHFt/2, 0);
   group.add(frame);
-  const mattMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.35)), roughness:0.9});
-  const mattress = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, heightFt-frameHFt, el.hFt), mattMat);
-  mattress.position.set(0, frameHFt+(heightFt-frameHFt)/2, 0);
+
+  // Mattress: always a neutral white/cream, same as a real mattress under
+  // any bedspread colour -- baseColor drives the duvet below instead.
+  const mattHFt = heightFt-frameHFt;
+  const mattMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#F2EFE6'), roughness:0.85});
+  const mattress = new THREE.Mesh(new THREE.BoxGeometry(wFt, mattHFt, dFt), mattMat);
+  const bedTopY = legHFt+frameHFt+mattHFt;
+  mattress.position.set(0, bedTopY-mattHFt/2, 0);
   group.add(mattress);
-  const hbDepthFt = el.hFt*0.07; // matches drawFurnitureIcon's own hbH ratio
+
+  const hbDepthFt = dFt*0.07; // matches drawFurnitureIcon's own hbH ratio
   const hbTopFt = heightFt*1.7;
-  const hbMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.4)), roughness:0.8});
-  const headboard = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, hbTopFt, hbDepthFt), hbMat);
-  headboard.position.set(0, hbTopFt/2, -el.hFt/2+hbDepthFt/2);
+  const hbMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.55)), roughness:0.75});
+  const headboard = new THREE.Mesh(new THREE.BoxGeometry(wFt, hbTopFt, hbDepthFt), hbMat);
+  headboard.position.set(0, hbTopFt/2, -dFt/2+hbDepthFt/2);
   group.add(headboard);
-  const pillowWFt = el.wFt*0.36, pillowDFt = el.hFt*0.22, gapFt = el.wFt*0.06, pillowHFt = 0.35;
+  // A padded, body-coloured inset panel -- a plain slab headboard reads as
+  // a flat door, not real upholstery.
+  const padInsetFt = Math.min(wFt*0.06, 0.3);
+  const padMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.9});
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(wFt-padInsetFt*2, hbTopFt*0.68, hbDepthFt*0.5), padMat);
+  pad.position.set(0, hbTopFt*0.56, -dFt/2+hbDepthFt*0.75);
+  group.add(pad);
+
+  const headZ = -dFt/2, footZ = dFt/2;
+  const foldLineZ = headZ + dFt*0.4;
+
+  // Flat sheet, revealed between the headboard and the duvet's own folded
+  // edge -- the classic "turned-down bed" look.
+  const sheetThickFt = 0.025;
+  const sheetStartZ = headZ+hbDepthFt;
+  const sheetLenFt = Math.max(0.1, foldLineZ-sheetStartZ);
+  const sheetMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#FBFAF5'), roughness:0.8});
+  const sheet = new THREE.Mesh(new THREE.BoxGeometry(wFt-0.04, sheetThickFt, sheetLenFt), sheetMat);
+  sheet.position.set(0, bedTopY+sheetThickFt/2, sheetStartZ+sheetLenFt/2);
+  group.add(sheet);
+
+  // Duvet/comforter -- covers the foot ~60% of the bed in the element's
+  // own colour (this IS what "bed colour" means in practice), with a real
+  // folded-back, doubled-up edge instead of a knife-edge crease.
+  const duvetThickFt = 0.2;
+  const duvetLenFt = footZ-foldLineZ;
+  const duvetMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
+  const duvet = new THREE.Mesh(new THREE.BoxGeometry(wFt-0.04, duvetThickFt, duvetLenFt), duvetMat);
+  duvet.position.set(0, bedTopY+duvetThickFt/2, foldLineZ+duvetLenFt/2);
+  group.add(duvet);
+  const foldLenFt = Math.min(dFt*0.09, duvetLenFt*0.35);
+  const fold = new THREE.Mesh(new THREE.BoxGeometry(wFt-0.04, duvetThickFt*1.7, foldLenFt), duvetMat);
+  fold.position.set(0, bedTopY+duvetThickFt*0.85, foldLineZ+foldLenFt*0.15);
+  group.add(fold);
+
+  // Sleeping pillows.
+  const pillowWFt = wFt*0.36, pillowDFt = dFt*0.22, gapFt = wFt*0.06, pillowHFt = 0.3;
   const pillowMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#F4F1EA'), roughness:0.9});
-  const pillowCz = -el.hFt/2+hbDepthFt+el.hFt*0.05+pillowDFt/2;
+  const pillowCz = headZ+hbDepthFt+dFt*0.05+pillowDFt/2;
   [-1, 1].forEach(side=>{
     const pillow = new THREE.Mesh(new THREE.BoxGeometry(pillowWFt, pillowHFt, pillowDFt), pillowMat);
-    pillow.position.set(side*(gapFt/2+pillowWFt/2), heightFt+pillowHFt/2, pillowCz);
+    pillow.position.set(side*(gapFt/2+pillowWFt/2), bedTopY+pillowHFt/2, pillowCz);
     group.add(pillow);
   });
+  // A styled decorative bolster across the front, in a lighter tint of the
+  // same colour -- the detail every real made-up/staged bed has.
+  const bolsterWFt = wFt*0.8, bolsterDFt = 0.16, bolsterHFt = 0.15;
+  const bolsterMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.2)), roughness:0.85});
+  const bolster = new THREE.Mesh(new THREE.BoxGeometry(bolsterWFt, bolsterHFt, bolsterDFt), bolsterMat);
+  bolster.position.set(0, bedTopY+bolsterHFt/2, pillowCz+pillowDFt/2+bolsterDFt/2+0.05);
+  group.add(bolster);
+
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
@@ -13706,6 +13812,35 @@ function addOpeningFrameMesh(group, widthFt, sillFt, headFt, frameDepthFt, frame
     group.add(jamb);
   });
 }
+// A sliding/stacker door's individual panel: a thin dark frame (rails top
+// and bottom, stiles either side) around a real glass pane -- the same
+// "panel + a few thin bars" language addOpeningFrameMesh/build3DGateMesh
+// already use, just sized to one leaf rather than the whole opening.
+// localX/depthOffset are in the CALLER's own already-positioned/rotated
+// local space (see build3DDoorLeafMesh's panelsGroup below), so this never
+// needs to know about the wall's own world position or angle at all.
+function addStackerPanelMesh(parentGroup, localX, depthOffset, panelWFt, heightFt, frameMat, glassMat){
+  const panelGroup = new THREE.Group();
+  const railThickFt = 0.08, frameDepthFt = 0.04;
+  [heightFt/2-railThickFt/2, -heightFt/2+railThickFt/2].forEach(railY=>{
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(panelWFt, railThickFt, frameDepthFt), frameMat);
+    rail.position.set(0, railY, 0);
+    rail.castShadow = false; // thin hardware -- the glass/frame below already grounds the panel
+    panelGroup.add(rail);
+  });
+  [-1, 1].forEach(side=>{
+    const stile = new THREE.Mesh(new THREE.BoxGeometry(railThickFt, heightFt-railThickFt*2, frameDepthFt), frameMat);
+    stile.position.set(side*(panelWFt/2-railThickFt/2), 0, 0);
+    stile.castShadow = false;
+    panelGroup.add(stile);
+  });
+  const glassWFt = Math.max(0.05, panelWFt-railThickFt*2);
+  const glassHFt = Math.max(0.05, heightFt-railThickFt*2);
+  const glass = new THREE.Mesh(new THREE.BoxGeometry(glassWFt, glassHFt, frameDepthFt*0.4), glassMat);
+  panelGroup.add(glass);
+  panelGroup.position.set(localX, 0, depthOffset);
+  parentGroup.add(panelGroup);
+}
 function build3DDoorLeafMesh(o, groundWFt, groundHFt){
   if(o.openingKind!=='door') return null;
   const wall = getElementById(o.hostWallId);
@@ -13793,23 +13928,65 @@ function build3DDoorLeafMesh(o, groundWFt, groundHFt){
     return outer;
   }
 
-  // Sliding/stacker: a panel slid to one side, sitting IN the wall's own
-  // plane like the wall itself (not swung into the room) -- a stacker's
-  // narrower fraction reads as more panels folded out of the way.
-  const panelFrac = o.doorType==='stacker' ? 0.25 : 0.42;
-  const panelLenFt = widthFt*panelFrac;
-  const midFt = (o.offsetFt-widthFt/2) + panelLenFt/2;
-  // Unlike the hinged leaf above, this never read o.color at all -- a
-  // sliding/stacker door was always the same fixed glass tint no matter
-  // what colour was actually set on it, the same "colour picker does
-  // nothing" gap the hinged leaf itself already had fixed once before.
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(panelLenFt, heightFt, leafThickFt),
-    new THREE.MeshStandardMaterial({color:new THREE.Color(o.color || '#BFD8E8'), roughness:0.15, transparent:true, opacity:0.45})
-  );
-  mesh.position.set(ax+ux*midFt, heightFt/2, az+uz*midFt);
-  mesh.rotation.y = -Math.atan2(dz, dx);
-  outer.add(mesh);
+  if(o.doorType==='garage'){
+    // A sectional/roll-up garage door: opaque horizontal panel bands --
+    // real geometry (separate stacked boxes with a genuine gap between
+    // them), the same "let geometry read as panelling instead of a fake
+    // texture" trick the pool umbrella's ribbed canopy already uses --
+    // shown raised into the head of the opening, the garage-door
+    // equivalent of every other door type's "shown open" convention (it
+    // lifts into the ceiling rather than sliding sideways or swinging in).
+    const sectionCount = 4;
+    const panelHFt = heightFt*0.3;
+    const gapFt = 0.02;
+    const sectionHFt = (panelHFt-gapFt*(sectionCount-1))/sectionCount;
+    const doorMat = new THREE.MeshStandardMaterial({color:new THREE.Color(o.color || '#EDEAE0'), roughness:0.55});
+    const panelGroup = new THREE.Group();
+    for(let i=0;i<sectionCount;i++){
+      const sy = (heightFt-panelHFt) + i*(sectionHFt+gapFt) + sectionHFt/2 - heightFt/2;
+      const section = new THREE.Mesh(new THREE.BoxGeometry(widthFt, sectionHFt, leafThickFt), doorMat);
+      section.position.set(0, sy, 0);
+      panelGroup.add(section);
+    }
+    panelGroup.position.set(ax+ux*o.offsetFt, heightFt/2, az+uz*o.offsetFt);
+    panelGroup.rotation.y = -Math.atan2(dz, dx);
+    outer.add(panelGroup);
+    return outer;
+  }
+
+  // Sliding/stacker: real, individually-framed glass panels slid to one
+  // side and bunched together -- a single undifferentiated tinted slab
+  // used to stand in for "the door", with no frame and no way to tell a
+  // 2-panel slider from a 3-panel stacker apart. Each real panel keeps its
+  // own true width (widthFt/panelCount) so it's correctly proportioned,
+  // not an arbitrarily narrow sliver; consecutive panels overlap deeply
+  // (only peekFrac of a panel's own width shows past the one behind it,
+  // the same "fanned stack" a real slid-open multi-panel door forms) with
+  // a small depth stagger per panel -- each rides its own parallel track,
+  // never truly coplanar with its neighbours. Unlike the hinged leaf
+  // above, this never read o.color at all -- a sliding/stacker door was
+  // always the same fixed glass tint no matter what colour was actually
+  // set on it, the same "colour picker does nothing" gap the hinged leaf
+  // itself already had fixed once before -- kept here as each panel's own
+  // glass tint, with the frame colour fixed (dark aluminium/bronze),
+  // exactly like every other builder's fixed-frame/coloured-body split.
+  const panelCount = o.doorType==='stacker' ? 3 : 2;
+  const eachPanelWFt = widthFt/panelCount;
+  const peekFrac = 0.4;
+  const stepFt = eachPanelWFt*peekFrac;
+  const trackGapFt = 0.035;
+  const leftEdgeFt = o.offsetFt-widthFt/2;
+  const panelFrameMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#2B2622'), roughness:0.45, metalness:0.35});
+  const glassMat = new THREE.MeshStandardMaterial({color:new THREE.Color(o.color || '#BFD8E8'), roughness:0.08, metalness:0.05, transparent:true, opacity:0.35});
+  const panelsGroup = new THREE.Group();
+  for(let i=0;i<panelCount;i++){
+    const localX = leftEdgeFt + eachPanelWFt/2 + i*stepFt;
+    const depthOffset = (i-(panelCount-1)/2)*trackGapFt;
+    addStackerPanelMesh(panelsGroup, localX, depthOffset, eachPanelWFt-0.02, heightFt, panelFrameMat, glassMat);
+  }
+  panelsGroup.position.set(ax, heightFt/2, az);
+  panelsGroup.rotation.y = -Math.atan2(dz, dx);
+  outer.add(panelsGroup);
   return outer;
 }
 // A window used to get NOTHING at all in the 3D preview -- just the bare
