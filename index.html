@@ -3436,6 +3436,14 @@ document.addEventListener('keydown', (e)=>{
   if(e.key==='Escape' && typeGalleryOverlay.classList.contains('visible')) closeTypeGallery();
 });
 
+// Tracks whatever updateAddFieldsForType itself last wrote into labelInput,
+// so a later type change can tell "the field still holds exactly what auto-
+// fill put there, safe to replace" apart from "the user actually typed
+// something" -- both look like a plain non-empty string otherwise, which is
+// why switching from e.g. Toilet to Wardrobe used to leave the stale
+// "Toilet" label sitting there: the old check only ever auto-filled an
+// EMPTY field, so the very first preset's name stuck around forever after.
+let lastAutoFilledLabel = '';
 function updateAddFieldsForType(){
   const preset = PRESETS[typeSelect.value];
   const isFence = preset.quick==='none';
@@ -3447,7 +3455,7 @@ function updateAddFieldsForType(){
   if(preset.wIn!=null){
     widthInput.value = formatNum(fromFt(preset.wIn/12, state.unit));
     heightInput.value = formatNum(fromFt(preset.hIn/12, state.unit));
-    if(!labelInput.value.trim()) labelInput.value = preset.name;
+    if(!labelInput.value.trim() || labelInput.value===lastAutoFilledLabel){ labelInput.value = preset.name; lastAutoFilledLabel = preset.name; }
   } else if(preset.wM!=null){
     // Same idea, for presets specified in metres (vehicles, fixed-size fire
     // pits) instead of inches -- toFt(_,'m') reuses the app's own m->ft
@@ -3455,13 +3463,13 @@ function updateAddFieldsForType(){
     // toggle would produce for that metric size.
     widthInput.value = formatNum(fromFt(toFt(preset.wM,'m'), state.unit));
     heightInput.value = formatNum(fromFt(toFt(preset.hM,'m'), state.unit));
-    if(!labelInput.value.trim()) labelInput.value = preset.name;
+    if(!labelInput.value.trim() || labelInput.value===lastAutoFilledLabel){ labelInput.value = preset.name; lastAutoFilledLabel = preset.name; }
   }
   if(preset.dM!=null){
     diameterInput.value = formatNum(fromFt(toFt(preset.dM,'m'), state.unit));
   } else if(preset.dIn!=null){
     diameterInput.value = formatNum(fromFt(preset.dIn/12, state.unit));
-    if(!labelInput.value.trim()) labelInput.value = preset.name;
+    if(!labelInput.value.trim() || labelInput.value===lastAutoFilledLabel){ labelInput.value = preset.name; lastAutoFilledLabel = preset.name; }
   }
   colorInput.value = preset.color;
   rectFields.style.display = preset.quick==='rect' ? 'flex' : 'none';
@@ -11955,31 +11963,106 @@ function build3DToiletMesh(el, baseColor, pos){
 // fractions); frame/mattress/headboard/pillow HEIGHTS have no 2D equivalent
 // (a top-down icon carries no vertical information) and are reasonable
 // real-world estimates instead.
+// A bed used to be frame+mattress+headboard+2 flat pillows -- 6 plain
+// boxes, sitting flush on the floor with no bedding at all, and baseColor
+// only ever tinted the mattress (a barely-visible pale edge peeking past
+// the covers on a real bed) rather than the ONE surface a "bed colour"
+// choice actually means: the duvet. Real geometry throughout (a folded-
+// back duvet edge, a revealed sheet strip, a padded headboard panel, a
+// decorative bolster) -- the same "let real shapes read as detail instead
+// of a flat texture" approach every other builder in this file already
+// uses -- not a texture painted onto the same plain boxes.
 function build3DBedMesh(el, baseColor, heightFt, pos){
   const group = new THREE.Group();
+  const wFt = el.wFt, dFt = el.hFt;
+
+  // Real bed frames stand clear of the floor on short feet, not flush
+  // against it -- everything above (frame, mattress, bedding) shifts up by
+  // legHFt. The headboard alone keeps its own base at the floor, the way a
+  // real headboard (its own separate legs, or a wall mount) actually does.
+  const legHFt = 0.3;
+  const legMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.55)), roughness:0.6});
+  const legInsetFt = Math.min(0.22, wFt*0.06, dFt*0.06);
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx,sz])=>{
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, legHFt, 0.1), legMat);
+    leg.position.set(sx*(wFt/2-legInsetFt), legHFt/2, sz*(dFt/2-legInsetFt));
+    leg.castShadow = false; // small hardware -- the frame above already grounds the bed with a real shadow
+    group.add(leg);
+  });
+
   const frameHFt = heightFt*0.4;
-  const frameMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.2)), roughness:0.8});
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, frameHFt, el.hFt), frameMat);
-  frame.position.set(0, frameHFt/2, 0);
+  const frameMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.35)), roughness:0.7});
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(wFt, frameHFt, dFt), frameMat);
+  frame.position.set(0, legHFt+frameHFt/2, 0);
   group.add(frame);
-  const mattMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.35)), roughness:0.9});
-  const mattress = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, heightFt-frameHFt, el.hFt), mattMat);
-  mattress.position.set(0, frameHFt+(heightFt-frameHFt)/2, 0);
+
+  // Mattress: always a neutral white/cream, same as a real mattress under
+  // any bedspread colour -- baseColor drives the duvet below instead.
+  const mattHFt = heightFt-frameHFt;
+  const mattMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#F2EFE6'), roughness:0.85});
+  const mattress = new THREE.Mesh(new THREE.BoxGeometry(wFt, mattHFt, dFt), mattMat);
+  const bedTopY = legHFt+frameHFt+mattHFt;
+  mattress.position.set(0, bedTopY-mattHFt/2, 0);
   group.add(mattress);
-  const hbDepthFt = el.hFt*0.07; // matches drawFurnitureIcon's own hbH ratio
+
+  const hbDepthFt = dFt*0.07; // matches drawFurnitureIcon's own hbH ratio
   const hbTopFt = heightFt*1.7;
-  const hbMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.4)), roughness:0.8});
-  const headboard = new THREE.Mesh(new THREE.BoxGeometry(el.wFt, hbTopFt, hbDepthFt), hbMat);
-  headboard.position.set(0, hbTopFt/2, -el.hFt/2+hbDepthFt/2);
+  const hbMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,-0.55)), roughness:0.75});
+  const headboard = new THREE.Mesh(new THREE.BoxGeometry(wFt, hbTopFt, hbDepthFt), hbMat);
+  headboard.position.set(0, hbTopFt/2, -dFt/2+hbDepthFt/2);
   group.add(headboard);
-  const pillowWFt = el.wFt*0.36, pillowDFt = el.hFt*0.22, gapFt = el.wFt*0.06, pillowHFt = 0.35;
+  // A padded, body-coloured inset panel -- a plain slab headboard reads as
+  // a flat door, not real upholstery.
+  const padInsetFt = Math.min(wFt*0.06, 0.3);
+  const padMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.9});
+  const pad = new THREE.Mesh(new THREE.BoxGeometry(wFt-padInsetFt*2, hbTopFt*0.68, hbDepthFt*0.5), padMat);
+  pad.position.set(0, hbTopFt*0.56, -dFt/2+hbDepthFt*0.75);
+  group.add(pad);
+
+  const headZ = -dFt/2, footZ = dFt/2;
+  const foldLineZ = headZ + dFt*0.4;
+
+  // Flat sheet, revealed between the headboard and the duvet's own folded
+  // edge -- the classic "turned-down bed" look.
+  const sheetThickFt = 0.025;
+  const sheetStartZ = headZ+hbDepthFt;
+  const sheetLenFt = Math.max(0.1, foldLineZ-sheetStartZ);
+  const sheetMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#FBFAF5'), roughness:0.8});
+  const sheet = new THREE.Mesh(new THREE.BoxGeometry(wFt-0.04, sheetThickFt, sheetLenFt), sheetMat);
+  sheet.position.set(0, bedTopY+sheetThickFt/2, sheetStartZ+sheetLenFt/2);
+  group.add(sheet);
+
+  // Duvet/comforter -- covers the foot ~60% of the bed in the element's
+  // own colour (this IS what "bed colour" means in practice), with a real
+  // folded-back, doubled-up edge instead of a knife-edge crease.
+  const duvetThickFt = 0.2;
+  const duvetLenFt = footZ-foldLineZ;
+  const duvetMat = new THREE.MeshStandardMaterial({color:new THREE.Color(baseColor), roughness:0.85});
+  const duvet = new THREE.Mesh(new THREE.BoxGeometry(wFt-0.04, duvetThickFt, duvetLenFt), duvetMat);
+  duvet.position.set(0, bedTopY+duvetThickFt/2, foldLineZ+duvetLenFt/2);
+  group.add(duvet);
+  const foldLenFt = Math.min(dFt*0.09, duvetLenFt*0.35);
+  const fold = new THREE.Mesh(new THREE.BoxGeometry(wFt-0.04, duvetThickFt*1.7, foldLenFt), duvetMat);
+  fold.position.set(0, bedTopY+duvetThickFt*0.85, foldLineZ+foldLenFt*0.15);
+  group.add(fold);
+
+  // Sleeping pillows.
+  const pillowWFt = wFt*0.36, pillowDFt = dFt*0.22, gapFt = wFt*0.06, pillowHFt = 0.3;
   const pillowMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#F4F1EA'), roughness:0.9});
-  const pillowCz = -el.hFt/2+hbDepthFt+el.hFt*0.05+pillowDFt/2;
+  const pillowCz = headZ+hbDepthFt+dFt*0.05+pillowDFt/2;
   [-1, 1].forEach(side=>{
     const pillow = new THREE.Mesh(new THREE.BoxGeometry(pillowWFt, pillowHFt, pillowDFt), pillowMat);
-    pillow.position.set(side*(gapFt/2+pillowWFt/2), heightFt+pillowHFt/2, pillowCz);
+    pillow.position.set(side*(gapFt/2+pillowWFt/2), bedTopY+pillowHFt/2, pillowCz);
     group.add(pillow);
   });
+  // A styled decorative bolster across the front, in a lighter tint of the
+  // same colour -- the detail every real made-up/staged bed has.
+  const bolsterWFt = wFt*0.8, bolsterDFt = 0.16, bolsterHFt = 0.15;
+  const bolsterMat = new THREE.MeshStandardMaterial({color:new THREE.Color(shadeColor(baseColor,0.2)), roughness:0.85});
+  const bolster = new THREE.Mesh(new THREE.BoxGeometry(bolsterWFt, bolsterHFt, bolsterDFt), bolsterMat);
+  bolster.position.set(0, bedTopY+bolsterHFt/2, pillowCz+pillowDFt/2+bolsterDFt/2+0.05);
+  group.add(bolster);
+
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
