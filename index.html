@@ -1319,6 +1319,7 @@ const FURNITURE_ITEMS = {
   tv_75:         {name:'75" TV',                 label:'TV — 75" (65×5 in)',                 wIn:65, hIn:5},
   tv_85:         {name:'85" TV',                 label:'TV — 85" (74×5 in)',                 wIn:74, hIn:5},
   table_side:    {name:'Side table',             label:'Side table (18×18 in)',              wIn:18, hIn:18},
+  table_side_solid: {name:'Nightstand (solid)',  label:'Nightstand — solid body (18×18 in)',  wIn:18, hIn:18},
   table_coffee:  {name:'Coffee table',           label:'Coffee table (48×24 in)',             wIn:48, hIn:24},
   table_dining4: {name:'Dining table (4-seat)',  label:'Dining table — 4 seat (36×36 in)',   wIn:36, hIn:36},
   table_dining6: {name:'Dining table (6-seat)',  label:'Dining table — 6 seat (72×40 in)',   wIn:72, hIn:40},
@@ -1332,9 +1333,11 @@ const FURNITURE_ITEMS = {
   armchair:      {name:'Armchair',               label:'Armchair (33×34 in)',                  wIn:33, hIn:34},
   dresser:       {name:'Dresser',                label:'Dresser (60×18 in)',                   wIn:60, hIn:18},
   wardrobe:      {name:'Wardrobe',               label:'Wardrobe (48×24 in)',                  wIn:48, hIn:24},
+  closet_rail:   {name:'Hanging rail',           label:'Walk-in closet hanging rail (36×24 in)', wIn:36, hIn:24},
   fridge:        {name:'Refrigerator',           label:'Refrigerator (36×30 in)',              wIn:36, hIn:30},
   kitchen_island:{name:'Kitchen island',         label:'Kitchen island (60×36 in)',            wIn:60, hIn:36},
   bath_vanity:   {name:'Bathroom vanity',        label:'Bathroom vanity (36×22 in)',           wIn:36, hIn:22},
+  bath_sink:     {name:'Bathroom sink',          label:'Bathroom sink — pedestal (20×18 in)',  wIn:20, hIn:18},
   toilet:        {name:'Toilet',                 label:'Toilet (20×28 in)',                    wIn:20, hIn:28},
   open_shelf:    {name:'Open shelving',          label:'Open shelving (36×14 in)',             wIn:36, hIn:14},
   shower:        {name:'Shower',                 label:'Shower (36×36 in)',                    wIn:36, hIn:36},
@@ -1346,12 +1349,12 @@ const FURNITURE_ITEMS = {
 const FURNITURE_ICONS = {
   bed_twin:'bed', bed_full:'bed', bed_queen:'bed', bed_king:'bed', bed_calking:'bed',
   tv_32:'tv', tv_43:'tv', tv_55:'tv', tv_65:'tv', tv_75:'tv', tv_85:'tv',
-  table_side:'table', table_coffee:'table', table_dining4:'table_dining', table_dining6:'table_dining', desk:'desk',
+  table_side:'table', table_side_solid:'dresser', table_coffee:'table', table_dining4:'table_dining', table_dining6:'table_dining', desk:'desk',
   table_dining_round4:'table_dining_round4', table_dining_round6:'table_dining_round6', table_dining_round8:'table_dining_round8',
   sofa_2seat:'sofa', sofa_3seat:'sofa', sofa_corner:'sofa_corner', armchair:'armchair',
-  dresser:'dresser', wardrobe:'wardrobe',
+  dresser:'dresser', wardrobe:'wardrobe', closet_rail:'closet_rail',
   fridge:'fridge', kitchen_island:'island',
-  bath_vanity:'vanity', toilet:'toilet',
+  bath_vanity:'vanity', bath_sink:'bath_sink', toilet:'toilet',
   open_shelf:'open_shelf',
   shower:'shower', bath_freestand:'bath_freestand',
   power_point:'power',
@@ -1360,11 +1363,20 @@ const FURNITURE_COLORS = {
   bed:'#DCD3C4', tv:'#20242A', table:'#9C7A54', table_dining:'#9C7A54', desk:'#9C7A54',
   table_dining_round4:'#9C7A54', table_dining_round6:'#9C7A54', table_dining_round8:'#9C7A54',
   sofa:'#6E7B8C', sofa_corner:'#6E7B8C', armchair:'#6E7B8C', dresser:'#8A7360', wardrobe:'#8A7360',
-  fridge:'#C7CDD1', island:'#B9B2A6', vanity:'#C9C2B4', toilet:'#E8ECED',
+  fridge:'#C7CDD1', island:'#B9B2A6', vanity:'#C9C2B4', bath_sink:'#F0F3F4', toilet:'#E8ECED',
   shower:'#BFD8E8', bath_freestand:'#F2F5F6',
-  open_shelf:'#8A7360',
+  open_shelf:'#8A7360', closet_rail:'#B8B2A4',
   power:'#EDE8DC',
 };
+// Furniture presets that behave as a straight run along a wall rather than
+// a single fixed-footprint object -- real open shelving and closet rails
+// are both sold/installed as separate straight units butted together at a
+// corner, not one continuously bent piece. Tracing one of these (see
+// startDrawBtn/finishDrawing) becomes an open polyline, like a fence/wall,
+// and each tap-to-tap segment turns into its own ordinary rect element at
+// the preset's own real depth -- full reuse of the normal rect-furniture
+// pipeline, so an L/U-shaped run needs zero new shape-rendering code.
+const LINEAR_RUN_PRESET_KEYS = new Set(['open_shelf','closet_rail']);
 Object.keys(FURNITURE_ITEMS).forEach(key=>{
   const item = FURNITURE_ITEMS[key];
   const icon = FURNITURE_ICONS[key];
@@ -1466,7 +1478,7 @@ PRESETS.pool_umbrella = {label:'Cantilever pool umbrella (Ø3.0 m)', color:POOL_
 // points) are simply left out.
 const CLEARANCE_IN = {
   bed:24, table:18, table_dining:36, desk:36, sofa:18, sofa_corner:18, armchair:18,
-  dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, toilet:24, open_shelf:18, shower:24, bath_freestand:24,
+  dresser:36, wardrobe:36, fridge:36, island:42, vanity:24, bath_sink:24, toilet:24, open_shelf:18, shower:24, bath_freestand:24, closet_rail:30,
   table_dining_round4:36, table_dining_round6:36, table_dining_round8:36,
 };
 // Recommended TV viewing distance, per screen diagonal -- the widely used
@@ -3507,7 +3519,7 @@ function updateAddFieldsForType(){
     openingSwingFieldWrap.style.display = preset.doorType==='hinged' ? 'flex' : 'none';
     updateOpeningHostHint();
   }
-  const isShelfRun = typeSelect.value==='open_shelf';
+  const isShelfRun = LINEAR_RUN_PRESET_KEYS.has(typeSelect.value);
   costFieldWrap.style.display = isDimension ? 'none' : 'block';
   startDrawBtn.textContent = isDimension ? 'Start measuring on plan' : (preset.isWall ? 'Start tracing walls' : (isFence ? 'Start drawing on plan' : 'Trace freeform outline'));
   pathHint.textContent = isDimension
@@ -3517,7 +3529,7 @@ function updateAddFieldsForType(){
       : (isFence
         ? 'Tap "Start drawing", then tap each point along the plan — the line can bend as many times as you like. Tap Finish when done.'
         : isShelfRun
-          ? 'Tap "Trace freeform outline", then tap a point at each corner of the shelf run — 2 points for a single straight run, 3 for an L along two walls, 4 for a U. Each straight stretch becomes its own shelf unit at a realistic depth, so a corner comes out as two real butted units meeting there, not one bent one. Tap Finish (or double-tap the last point) when done.'
+          ? 'Tap "Trace freeform outline", then tap a point at each corner of the run — 2 points for a single straight run, 3 for an L along two walls, 4 for a U. Each straight stretch becomes its own '+preset.label.toLowerCase()+' unit at a realistic depth, so a corner comes out as two real units meeting there, not one bent one. Tap Finish (or double-tap the last point) when done.'
           : 'For an irregular '+preset.label.toLowerCase()+' — not just a rectangle — tap "Trace freeform outline", then tap each corner (it closes automatically, needs at least 3 points). Renders with a realistic, to-scale '+preset.label.toLowerCase()+' texture either way.');
   costUnitLabel.textContent = isFence ? '$ / '+state.unit : '$ / sq '+state.unit;
   // Jobs like a pool or a roof are usually quoted as one flat number, not
@@ -4060,7 +4072,7 @@ startDrawBtn.addEventListener('click', ()=>{
   // fence/wall) rather than an auto-closed area, and finishDrawing below
   // splits it into one ordinary rect element per straight segment instead of
   // a single bent polygon shape.
-  const isShelfRun = typeSelect.value==='open_shelf';
+  const isShelfRun = LINEAR_RUN_PRESET_KEYS.has(typeSelect.value);
   const isDimension = typeSelect.value==='dimension';
   const typedLabel = labelInput.value.trim();
   state.drawing = {
@@ -4144,16 +4156,16 @@ function finishDrawing(){
       };
       state.elements.push(el);
     }
-  } else if(state.drawing.presetKey==='open_shelf'){
-    // Real open shelving is sold and installed as separate straight runs
-    // butted together at a corner, not one continuously bent unit -- so
-    // (matching the wall decomposition just above) each tap-to-tap segment
-    // becomes its own ORDINARY rect open_shelf element, sized to that
-    // segment's length and rotated to match its angle, at the preset's own
-    // real-world depth. This reuses the entire existing rect-furniture
-    // pipeline (2D icon, 3D mesh, sidebar controls, save/load) with no new
-    // code, and lets each run be independently edited afterwards, exactly
-    // like two separately-placed units would be.
+  } else if(LINEAR_RUN_PRESET_KEYS.has(state.drawing.presetKey)){
+    // Real open shelving and closet rails are both sold and installed as
+    // separate straight runs butted together at a corner, not one
+    // continuously bent unit -- so (matching the wall decomposition just
+    // above) each tap-to-tap segment becomes its own ORDINARY rect element,
+    // sized to that segment's length and rotated to match its angle, at the
+    // preset's own real-world depth. This reuses the entire existing
+    // rect-furniture pipeline (2D icon, 3D mesh, sidebar controls,
+    // save/load) with no new code, and lets each run be independently
+    // edited afterwards, exactly like two separately-placed units would be.
     const preset = PRESETS[state.drawing.presetKey];
     const depthFt = preset.hIn/12;
     for(let i=0;i<pts.length-1;i++){
@@ -5947,6 +5959,29 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor, opts){
     [x+short*0.05, x+w-short*0.05].forEach(sx=>{
       ctx.beginPath(); ctx.moveTo(sx,y+short*0.03); ctx.lineTo(sx,y+h-short*0.03); ctx.stroke();
     });
+  } else if(icon==='closet_rail'){
+    // An open walk-in space, not solid furniture -- a light dashed outline
+    // (never a filled block, unlike every enclosed cabinet icon) with the
+    // rail itself as a solid line near one edge and a row of hanging
+    // garments along it. Garments viewed from directly above read as small
+    // rounded blobs, not the tapered silhouette they'd show from the side.
+    roundRectPath(ctx,x,y,w,h,short*0.05);
+    ctx.strokeStyle = shadeColor(baseColor,-0.3);
+    ctx.setLineDash([short*0.05, short*0.04]); ctx.lineWidth=1.2;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const railY = y+h*0.18;
+    ctx.strokeStyle = shadeColor(baseColor,-0.55);
+    ctx.lineWidth = Math.max(1.5, short*0.03); ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(x+w*0.06, railY); ctx.lineTo(x+w*0.94, railY); ctx.stroke();
+    const palette = ['#2E3A52','#6B2B33','#4B5D3A','#8C7A5B','#3E3E3E'];
+    const n = Math.max(3, Math.round(w/(short*0.16)));
+    for(let i=0;i<n;i++){
+      const t = (i+0.5)/n;
+      const gx = x+w*0.06+t*w*0.88, gy = railY+h*0.16;
+      ctx.fillStyle = palette[i%palette.length];
+      ctx.beginPath(); ctx.ellipse(gx, gy, short*0.075, short*0.11, 0, 0, Math.PI*2); ctx.fill();
+    }
   } else if(icon==='recliner'){
     // A reclined chaise -- a fold line marking where the backrest hinges
     // up (the far ~38% of the length, matching the real 3D mesh's own
@@ -6077,6 +6112,19 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor, opts){
     roundRectPath(ctx, x+w/2-sw/2, y+h/2-sh/2, sw, sh, sh*0.2);
     ctx.fillStyle='rgba(0,0,0,0.18)'; ctx.fill();
     ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=1; ctx.stroke();
+    if(opts && opts.hasSink){
+      // A real basin+faucet, the same styling the vanity/bath_sink icons
+      // use, layered inside that same inset panel -- reads clearly as "this
+      // island has a sink" instead of an ambiguous dark rectangle. Unset/off
+      // leaves the existing plain inset panel above completely unchanged.
+      const scx=x+w/2, scy=y+h/2;
+      const brx=sw*0.36, bry=sh*0.3;
+      ctx.beginPath(); ctx.ellipse(scx,scy,brx,bry,0,0,Math.PI*2);
+      ctx.fillStyle='#DCE7EC'; ctx.fill();
+      ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=1; ctx.stroke();
+      ctx.fillStyle='#8FA6AE';
+      ctx.beginPath(); ctx.arc(scx,scy-sh*0.32,Math.max(1,brx*0.22),0,Math.PI*2); ctx.fill();
+    }
   } else if(icon==='vanity'){
     roundRectPath(ctx,x,y,w,h,short*0.1);
     ctx.fillStyle = shadeColor(baseColor,0.15);
@@ -6089,6 +6137,25 @@ function drawFurnitureIcon(ctx, icon, bounds, baseColor, opts){
     ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=1; ctx.stroke();
     ctx.fillStyle='#8FA6AE';
     ctx.beginPath(); ctx.arc(cx,cy-ry*0.35,rx*0.12,0,Math.PI*2); ctx.fill();
+  } else if(icon==='bath_sink'){
+    // A standalone pedestal/wall-hung basin -- no vanity cabinet box, so
+    // (unlike icon==='vanity' above) the outer shape IS the sink's own oval
+    // rim, not a rectangular cabinet top, with the same basin+faucet
+    // styling the vanity uses for a consistent plumbing-fixture look.
+    const scx=x+w/2, scy=y+h/2;
+    ctx.beginPath(); ctx.ellipse(scx,scy,w/2,h/2,0,0,Math.PI*2);
+    ctx.fillStyle = shadeColor(baseColor,0.05);
+    ctx.fill();
+    ctx.strokeStyle = shadeColor(baseColor,-0.3); ctx.lineWidth=1.4; ctx.stroke();
+    const srx=Math.min(w*0.34,short*0.42), sry=Math.min(h*0.36,short*0.42);
+    ctx.beginPath(); ctx.ellipse(scx,scy,srx,sry,0,0,Math.PI*2);
+    ctx.fillStyle='#DCE7EC'; ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.25)'; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle='#8FA6AE';
+    ctx.beginPath(); ctx.arc(scx,scy-sry*0.4,srx*0.14,0,Math.PI*2); ctx.fill();
+    // A faint pedestal hint peeking out below the basin, viewed from above.
+    ctx.beginPath(); ctx.ellipse(scx, y+h*0.92, w*0.14, h*0.06, 0, 0, Math.PI*2);
+    ctx.fillStyle = shadeColor(baseColor,-0.15); ctx.fill();
   } else if(icon==='toilet'){
     const tankH = h*0.32;
     roundRectPath(ctx,x+w*0.1,y,w*0.8,tankH,short*0.08);
@@ -6300,6 +6367,22 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short, opts){
       const sy = y+(h/tiers)*i;
       ctx.beginPath(); ctx.moveTo(x+short*0.04,sy); ctx.lineTo(x+w-short*0.04,sy); ctx.stroke();
     }
+  } else if(icon==='closet_rail'){
+    roundRectPath(ctx,x,y,w,h,short*0.05);
+    ctx.strokeStyle = BW_INK_SOFT;
+    ctx.setLineDash([short*0.05, short*0.04]); ctx.lineWidth=Math.max(1,short*0.008);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const railY = y+h*0.18;
+    ctx.strokeStyle = BW_INK; ctx.lineWidth=Math.max(1.2, short*0.02); ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(x+w*0.06, railY); ctx.lineTo(x+w*0.94, railY); ctx.stroke();
+    ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1;
+    const n = Math.max(3, Math.round(w/(short*0.16)));
+    for(let i=0;i<n;i++){
+      const t = (i+0.5)/n;
+      const gx = x+w*0.06+t*w*0.88, gy = railY+h*0.16;
+      ctx.beginPath(); ctx.ellipse(gx, gy, short*0.075, short*0.11, 0, 0, Math.PI*2); ctx.stroke();
+    }
   } else if(icon==='recliner'){
     roundRectPath(ctx,x,y,w,h,short*0.08);
     ctx.fillStyle = BW_PAPER; ctx.fill();
@@ -6370,6 +6453,13 @@ function drawFurnitureIconBW(ctx, icon, x, y, w, h, short, opts){
     const sw=w*0.28, sh=h*0.4;
     roundRectPath(ctx, x+w/2-sw/2, y+h/2-sh/2, sw, sh, sh*0.2);
     ctx.strokeStyle = BW_INK_SOFT; ctx.lineWidth=1; ctx.stroke();
+    if(opts && opts.hasSink){
+      const scx=x+w/2, scy=y+h/2;
+      const brx=sw*0.36, bry=sh*0.3;
+      ctx.beginPath(); ctx.ellipse(scx,scy,brx,bry,0,0,Math.PI*2);
+      ctx.strokeStyle = BW_INK; ctx.lineWidth=1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(scx,scy-sh*0.32,Math.max(1,brx*0.22),0,Math.PI*2); ctx.stroke();
+    }
   } else if(icon==='vanity'){
     roundRectPath(ctx,x,y,w,h,short*0.1);
     ctx.fillStyle = BW_PAPER; ctx.fill();
@@ -7968,7 +8058,7 @@ function drawElement(ctx, el, selected){
         ctx.fill();
       }
     } else {
-      fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color, undefined, el.tileSizeFt, {doorCount:el.doorCount, handleStyle:el.handleStyle});
+      fillMaterial(ctx, el.presetKey, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2}, el.color, undefined, el.tileSizeFt, {doorCount:el.doorCount, handleStyle:el.handleStyle, hasSink:el.hasSink});
       ctx.beginPath();
       ctx.rect(-wPx/2,-hPx/2,wPx,hPx);
       applyEdgeShading(ctx, {minX:-wPx/2,maxX:wPx/2,minY:-hPx/2,maxY:hPx/2});
@@ -9959,6 +10049,20 @@ function renderElementsList(){
       handleSel.addEventListener('change', ()=>{ pushUndo(); el.handleStyle = handleSel.value==='knob' ? 'knob' : 'bar'; drawOverlay(); });
       dims.appendChild(handleSel);
     }
+    // Not every kitchen island has a sink -- an opt-in toggle (default off,
+    // preserving the original plain-benchtop look for every already-placed
+    // island) rather than a separate preset, since it's a fixture choice on
+    // the same island, not different furniture. See build3DKitchenIslandMesh.
+    function appendKitchenSinkControl(dims, el){
+      if(el.presetKey!=='kitchen_island') return;
+      const sinkSel = document.createElement('select');
+      sinkSel.title = 'Whether this island has a sink built into the benchtop';
+      [['0','No sink'],['1','With sink']].forEach(([v,t])=>{ const o=document.createElement('option'); o.value=v; o.textContent=t; sinkSel.appendChild(o); });
+      sinkSel.value = el.hasSink ? '1' : '0';
+      sinkSel.addEventListener('click', e=>e.stopPropagation());
+      sinkSel.addEventListener('change', ()=>{ pushUndo(); el.hasSink = sinkSel.value==='1'; drawOverlay(); });
+      dims.appendChild(sinkSel);
+    }
     // A post's own height was hardcoded to WALL_HEIGHT_FT_3D with no way
     // to change it at all -- unlike a wall or fence, which already have
     // their own editable height field. Shown for either pillar preset
@@ -10249,6 +10353,7 @@ function renderElementsList(){
       appendCutoutControls(dims, el);
       appendPostHeightControl(dims, el);
       appendWardrobeStyleControl(dims, el);
+      appendKitchenSinkControl(dims, el);
     } else if(el.shape==='circle'){
       const dIn = document.createElement('input'); dIn.type='number'; dIn.step='0.1';
       dIn.value = formatNum(fromFt(el.dFt,state.unit));
@@ -11470,7 +11575,7 @@ const FURNITURE_HEIGHT_FT_3D = {
   bed:1.7, tv:1.6, table:2.3, table_dining:2.4, desk:2.4,
   table_dining_round4:2.4, table_dining_round6:2.4, table_dining_round8:2.4,
   sofa:2.6, sofa_corner:2.6, armchair:2.7,
-  dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, toilet:1.3, open_shelf:6.2,
+  dresser:2.8, wardrobe:6.0, fridge:5.7, island:3.0, vanity:2.6, bath_sink:2.6, toilet:1.3, open_shelf:6.2, closet_rail:5.8,
   shower:6.8, bath_freestand:1.75,
   hatch:4.7, sedan:4.8, suv:5.7, ute:5.9, ute_single:5.9, van:6.7,
   firepit_round:1.0, firepit_square:1.0,
@@ -11478,7 +11583,7 @@ const FURNITURE_HEIGHT_FT_3D = {
   recliner:1.6,
   pool_umbrella:8.6,
 };
-const HEIGHT_OVERRIDES_FT_3D = { table_coffee:1.5, table_side:2.3 };
+const HEIGHT_OVERRIDES_FT_3D = { table_coffee:1.5, table_side:2.3, table_side_solid:2.2 };
 function furnitureHeightFt3D(presetKey, icon){
   if(HEIGHT_OVERRIDES_FT_3D[presetKey]!=null) return HEIGHT_OVERRIDES_FT_3D[presetKey];
   return FURNITURE_HEIGHT_FT_3D[icon] != null ? FURNITURE_HEIGHT_FT_3D[icon] : 2.2;
@@ -11706,7 +11811,9 @@ function build3DFurnitureMesh(el, preset, groundWFt, groundHFt){
   if(preset.icon==='toilet') return build3DToiletMesh(el, baseColor, pos);
   if(preset.icon==='bed') return build3DBedMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='vanity') return build3DVanityMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='bath_sink') return build3DBathSinkMesh(el, heightFt, pos);
   if(preset.icon==='wardrobe') return build3DWardrobeMesh(el, baseColor, heightFt, pos);
+  if(preset.icon==='closet_rail') return build3DClosetRailMesh(el, pos);
   if(preset.icon==='dresser') return build3DDresserMesh(el, baseColor, heightFt, pos);
   if(preset.icon==='fridge') return build3DFridgeMesh(el, preset, baseColor, heightFt, pos);
   if(preset.icon==='open_shelf') return build3DOpenShelfMesh(el, baseColor, heightFt, pos);
@@ -12199,6 +12306,35 @@ function build3DVanityMesh(el, baseColor, heightFt, pos){
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
 }
+// A standalone sink for a powder room/ensuite where a full vanity cabinet
+// isn't wanted -- the same basin+faucet language as the vanity above
+// (same colours, same proportions), just on a slim pedestal instead of a
+// full cabinet box, since there's no storage underneath to enclose.
+function build3DBathSinkMesh(el, heightFt, pos){
+  const group = new THREE.Group();
+  const shortFt = Math.min(el.wFt, el.hFt);
+  const rxFt = Math.min(el.wFt*0.4, shortFt*0.5), ryFt = Math.min(el.hFt*0.42, shortFt*0.5);
+  const basinHFt = 0.3;
+  const basinMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#F4F6F7'), roughness:0.15});
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, basinHFt, 20), basinMat);
+  basin.scale.set(rxFt, 1, ryFt);
+  basin.position.set(0, heightFt, 0);
+  group.add(basin);
+  const pedestalMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#F4F6F7'), roughness:0.2});
+  const pedestalTopRFt = Math.min(rxFt, ryFt)*0.4;
+  const pedestalHFt = heightFt-basinHFt*0.3;
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(pedestalTopRFt*0.65, pedestalTopRFt, pedestalHFt, 14), pedestalMat);
+  pedestal.position.set(0, pedestalHFt/2, 0);
+  group.add(pedestal);
+  const faucetMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#8FA6AE'), roughness:0.3, metalness:0.6});
+  const faucet = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.4, 8), faucetMat);
+  faucet.position.set(0, heightFt+basinHFt+0.2, -ryFt*0.4);
+  faucet.castShadow = false; // tiny thin fixture -- the basin/pedestal below already ground it with a real shadow
+  group.add(faucet);
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
 // A wardrobe's real footprint IS just a box -- the realism gap isn't its
 // silhouette, it's that it currently shows no door seam and no handles at
 // all (the generic path only textures the TOP face, never seen at eye
@@ -12248,6 +12384,66 @@ function build3DWardrobeMesh(el, baseColor, heightFt, pos){
       group.add(door);
       addHandle(side*(el.wFt*0.045));
     });
+  }
+  group.position.set(pos.x, 0, pos.z);
+  group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
+  return group;
+}
+// An open walk-in closet rail: unlike every enclosed cabinet above, this is
+// mostly empty floor space with hardware and clothes overhead, not a solid
+// body -- two floor-to-rail end posts, a horizontal rod at the standard
+// single-rod hanging height (66in), and a row of hanging garments along it
+// for realism. The rod/posts are a fixed brushed-metal tone and the
+// garments cycle through a small fixed assortment of muted colours,
+// regardless of el.color -- real closet hardware isn't painted to match,
+// and an assortment of clothes has its own varied colours, not the item's
+// single colour swatch (same "fixed material regardless of baseColor"
+// reasoning as a bed's own always-cream mattress/sheet). No baseColor
+// param needed as a result, unlike every other builder above.
+function build3DClosetRailMesh(el, pos){
+  const group = new THREE.Group();
+  const railHFt = 5.5; // standard single-rod closet hanging height
+  const hwMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#C9CBCE'), roughness:0.35, metalness:0.7});
+  const postRFt = 0.04;
+  // Mounted near the back of the item's own footprint depth (the wall it
+  // runs along), with the rest of el.hFt as the clothes' hanging clearance
+  // and the aisle in front -- same "centreline is the traced wall line"
+  // convention open_shelf's own back panel already uses, just offset
+  // instead of centred since a rail's real depth is asymmetric (almost
+  // nothing behind it, most of the depth is clothes+aisle in front).
+  const railZFt = -el.hFt/2 + 0.15;
+  [-1, 1].forEach(side=>{
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(postRFt, postRFt, railHFt, 8), hwMat);
+    post.position.set(side*(el.wFt/2-postRFt), railHFt/2, railZFt);
+    group.add(post);
+  });
+  const rail = new THREE.Mesh(new THREE.CylinderGeometry(postRFt*0.75, postRFt*0.75, Math.max(0.1, el.wFt-postRFt*2), 10), hwMat);
+  rail.rotation.z = Math.PI/2;
+  rail.position.set(0, railHFt, railZFt);
+  group.add(rail);
+  // A small fixed assortment, not a random one -- deterministic output for
+  // the exact same element every time (same reasoning save/load and undo
+  // already depend on throughout this file: identical state must always
+  // redraw identically).
+  const palette = ['#2E3A52','#6B2B33','#3E3E3E','#8C7A5B','#4B5D3A','#D8D2C2'];
+  const clothesInsetFt = postRFt*3;
+  const usableWFt = Math.max(0.1, el.wFt-clothesInsetFt*2);
+  const count = Math.max(2, Math.min(14, Math.round(usableWFt/0.45)));
+  const garmentHFt = Math.min(2.6, railHFt-0.5);
+  const garmentTopY = railHFt-0.15;
+  const garmentZFt = railZFt+0.16;
+  const hookMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#8B8D90'), roughness:0.4, metalness:0.6});
+  for(let i=0;i<count;i++){
+    const t = count===1 ? 0.5 : i/(count-1);
+    const cx = -el.wFt/2+clothesInsetFt+t*usableWFt;
+    const garmentMat = new THREE.MeshStandardMaterial({color:new THREE.Color(palette[i%palette.length]), roughness:0.85});
+    const garment = new THREE.Mesh(new THREE.BoxGeometry(0.32, garmentHFt, 0.12), garmentMat);
+    garment.position.set(cx, garmentTopY-garmentHFt/2, garmentZFt);
+    group.add(garment);
+    const hook = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.14, 6), hookMat);
+    hook.position.set(cx, railHFt-0.07, railZFt+0.05);
+    hook.castShadow = false; // wire-thin hardware -- the garment right below it already grounds this piece
+    group.add(hook);
   }
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
@@ -12424,6 +12620,25 @@ function build3DKitchenIslandMesh(el, baseColor, heightFt, pos){
   const top = new THREE.Mesh(new THREE.BoxGeometry(el.wFt+overhangFt*2, topThickFt, el.hFt+overhangFt*2), topMat);
   top.position.set(0, cabinetHFt+topThickFt/2, 0);
   group.add(top);
+  // Not every island has a sink (plenty are a plain prep/dining bench), so
+  // this is an opt-in per-element toggle (see appendKitchenSinkControl) --
+  // unset/off keeps the exact plain-bench look above. Reuses the vanity's
+  // own basin+faucet colours for a consistent "plumbing fixture" look
+  // across the whole app, sized to and centred on this island's own top.
+  if(el.hasSink){
+    const sinkWFt = Math.min(el.wFt*0.32, 2.2);
+    const sinkDFt = Math.min(el.hFt*0.55, 1.3);
+    const sinkDepthFt = 0.22;
+    const basinMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#DCE7EC'), roughness:0.2});
+    const basin = new THREE.Mesh(new THREE.BoxGeometry(sinkWFt, sinkDepthFt, sinkDFt), basinMat);
+    basin.position.set(0, cabinetHFt+topThickFt+sinkDepthFt/2, 0);
+    group.add(basin);
+    const faucetMat = new THREE.MeshStandardMaterial({color:new THREE.Color('#8FA6AE'), roughness:0.3, metalness:0.6});
+    const faucet = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.45, 8), faucetMat);
+    faucet.position.set(0, cabinetHFt+topThickFt+sinkDepthFt+0.22, -sinkDFt/2-0.05);
+    faucet.castShadow = false; // thin fixture -- the basin/benchtop below already ground it
+    group.add(faucet);
+  }
   group.position.set(pos.x, 0, pos.z);
   group.rotation.y = -(el.rotationDeg||0)*Math.PI/180;
   return group;
