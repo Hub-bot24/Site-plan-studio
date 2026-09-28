@@ -1895,6 +1895,34 @@ pasteBtn.addEventListener('click', ()=>{
 });
 updatePasteBtnState();
 
+// Precise keyboard nudging: dragging with a mouse can't reliably land on an
+// exact real-world distance, but moving a cutout (or any shape) to line up
+// with something else on the plan often needs exactly that. Each arrow-key
+// press shifts the selected element by exactly 1 of the CURRENT display
+// unit -- 1 press = 1cm when the unit is set to cm, matching the ruler
+// exactly; Shift+arrow moves by 10 units for faster coarse positioning.
+// Returns false (does nothing) for a wall or opening: a wall's endpoints are
+// shared with whatever it's connected to (see the wall drag-editing's own
+// corner-follow logic), so a blind shift here would tear that join apart
+// instead of moving it cleanly, and an opening has no xPx/yPx/points of its
+// own at all -- it's positioned via offsetFt along its host wall instead.
+function nudgeSelectedElement(dxPx, dyPx){
+  const el = state.selectedId!=null ? getElementById(state.selectedId) : null;
+  if(!el || el.isWall || el.isOpening) return false;
+  const canMoveByPos = el.shape==='rect' || el.shape==='circle' || el.shape==='image';
+  const canMoveByPoints = Array.isArray(el.points) && el.points.length>0;
+  if(!canMoveByPos && !canMoveByPoints) return false;
+  pushUndo();
+  if(canMoveByPos){
+    el.xPx += dxPx;
+    el.yPx += dyPx;
+  } else {
+    el.points.forEach(p=>{ p.x += dxPx; p.y += dyPx; });
+  }
+  drawOverlay();
+  renderElementsList();
+  return true;
+}
 document.addEventListener('keydown', (e)=>{
   const tag = document.activeElement && document.activeElement.tagName;
   const typing = tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT';
@@ -1908,6 +1936,21 @@ document.addEventListener('keydown', (e)=>{
   } else if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='v' && state.clipboard){
     e.preventDefault();
     pasteBtn.click();
+  } else if((e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown') && state.selectedId!=null && !preview3dOverlay.classList.contains('visible')){
+    // The 3D preview's own walkthrough controls also bind arrow keys (see
+    // init3DScene's onKeyDown) -- skip entirely while it's open so the two
+    // don't both react to the same press.
+    // A fixed real-world 1cm step (10cm with Shift), not "1 of the current
+    // display unit" -- the unit toggle only ever offers Feet or Metres, and
+    // a full metre is much too coarse for nudging something into place.
+    // toFt() only ever handles ft/m (the only values state.unit can be);
+    // UNIT_TO_FT.cm is used directly instead, the same way the calibration
+    // flow already reads UNIT_TO_FT for units finer than the main toggle.
+    const stepFt = (e.shiftKey ? 10 : 1) * UNIT_TO_FT.cm;
+    const stepPx = stepFt*(state.scalePxPerFt||40);
+    const dx = e.key==='ArrowLeft' ? -stepPx : e.key==='ArrowRight' ? stepPx : 0;
+    const dy = e.key==='ArrowUp' ? -stepPx : e.key==='ArrowDown' ? stepPx : 0;
+    if(nudgeSelectedElement(dx, dy)) e.preventDefault();
   }
 });
 
