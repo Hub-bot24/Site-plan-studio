@@ -14794,6 +14794,21 @@ function init3DScene(){
   sun.shadow.bias = -0.0015;
   const shadowSpan = Math.max(groundWFt, groundHFt)*0.75;
   Object.assign(sun.shadow.camera, {left:-shadowSpan, right:shadowSpan, top:shadowSpan, bottom:-shadowSpan, near:1, far:Math.max(groundWFt,groundHFt)*2});
+  // Nothing that casts a shadow ever moves -- no furniture animates, the sun
+  // doesn't track a time of day, only the camera moves during a walkthrough
+  // -- so the 2048x2048 shadow depth pass (a full second render of every
+  // shadow-casting mesh in the scene, from the light's point of view) never
+  // needs to run more than once. Left on its three.js default (autoUpdate),
+  // that full extra render happened on EVERY frame regardless, forever,
+  // which on a scene with this many individual furniture/door/roof meshes
+  // is real, substantial, and entirely wasted GPU work. needsUpdate is
+  // consumed once by the loop's first render call below and immediately
+  // cleared right after -- not left for three.js's own reset behaviour,
+  // which this doesn't rely on either way -- and re-armed only on the one
+  // event that actually changes what should cast a shadow: the roof
+  // visibility toggle (see roofVisibleInput below).
+  sun.shadow.autoUpdate = false;
+  sun.shadow.needsUpdate = true;
   scene.add(sun);
   scene.add(new THREE.HemisphereLight(0xbfd6ff, 0x2a2318, 0.35));
 
@@ -14857,6 +14872,7 @@ function init3DScene(){
   state3d.renderer = renderer;
   state3d.scene = scene;
   state3d.camera = camera;
+  state3d.sun = sun;
   state3d.groundWFt = groundWFt;
   state3d.groundHFt = groundHFt;
   state3d.collisionRects = computeWallCollisionRects(groundWFt, groundHFt);
@@ -14891,6 +14907,11 @@ function init3DScene(){
       }
     }
     renderer.render(scene, camera);
+    // This render call is what actually consumes a pending needsUpdate flag
+    // (set once above, or by the roof toggle) -- clear it right after so the
+    // NEXT frame's render, with autoUpdate off, skips the shadow depth pass
+    // entirely instead of recomputing an unchanged shadow map forever.
+    sun.shadow.needsUpdate = false;
   };
   loop();
 }
@@ -14959,6 +14980,12 @@ roofVisibleInput.addEventListener('change', ()=>{
   state3d.showRoof = roofVisibleInput.checked;
   if(state3d.scene){
     state3d.scene.traverse(obj=>{ if(obj.userData && obj.userData.isRoof) obj.visible = state3d.showRoof; });
+    // The shadow map's own autoUpdate is off (see init3DScene) since nothing
+    // that casts a shadow normally moves -- but a roof's visibility is the
+    // one thing that genuinely changes what should be in it (a hidden roof
+    // must stop casting one), so this is the one place that re-arms a
+    // single recompute rather than leaving the shadow stale.
+    if(state3d.sun) state3d.sun.shadow.needsUpdate = true;
   }
 });
 
